@@ -1,0 +1,8 @@
+{
+  "name": "cos",
+  "description": "Local marketplace for the cos chief-of-staff plugin.",
+  "owner": { "name": "Gabriel (delitefully)" },
+  "plugins": [
+    { "name": "cos", "source": "./", "description": "Chief of staff for herdr: worker launch, status hooks, board and supervision." }
+  ]
+}
