@@ -1,5 +1,5 @@
 #!/bin/sh
-# athena worker status hook. Does nothing unless this session is a athena worker.
+# athena worker status hook. Does nothing unless this session is an athena worker.
 [ -f "${ATHENA_STATE_DIR:-$HOME/.local/state/athena}/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
 if [ -z "${ATHENA_WORKER:-}" ]; then
 	root="${ATHENA_WORKTREE_ROOT:-$HOME/Developer/.worktrees}"
