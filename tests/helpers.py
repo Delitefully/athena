@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 COS_VARS = (
     "COS_STATE_DIR", "COS_WORKTREE_ROOT", "COS_HERDR", "COS_HQ", "COS_MIN_COL",
     "COS_MAX_WORKERS", "COS_WORKER", "COS_QUOTA_FILE", "COS_HQ_PANE", "COS_PLUGIN_DIR",
-    "FAKE_HERDR_SCENARIO", "FAKE_HERDR_LOG",
+    "FAKE_HERDR_SCENARIO", "FAKE_HERDR_LOG", "COS_EXIT_GRACE", "COS_HQ_CWD",
 )
 
 
@@ -44,4 +44,5 @@ def isolated_env(tmp):
         "COS_HERDR": str(ROOT / "tests" / "fake_herdr.py"),
         "FAKE_HERDR_LOG": str(tmp / "herdr.log"),
         "FAKE_HERDR_SCENARIO": str(tmp / "scenario.json"),
+        "COS_EXIT_GRACE": "0",
     })
