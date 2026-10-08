@@ -1,0 +1,6 @@
+{
+  "name": "cos",
+  "description": "Chief of staff: launches visible worker Claude sessions in herdr worktree spaces from Linear tickets and supervises them to merge-ready PRs.",
+  "version": "0.1.0",
+  "author": { "name": "Gabriel (delitefully)" }
+}

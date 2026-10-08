@@ -1,0 +1,17 @@
+#!/bin/sh
+# Prepare a platform worktree like platform's .config/wt.toml does: copy the
+# gitignored env files and certs from the main checkout, then install deps.
+# Runs in the new worktree with COS_REPO set to the main checkout.
+set -eu
+main="$COS_REPO"
+wt=$(pwd)
+copy_file() { [ -f "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp "$main/$1" "$wt/$1" || true; }
+copy_dir() { [ -d "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp -R "$main/$1" "$wt/$1" || true; }
+copy_file applications/.env
+copy_dir minikube/certs
+copy_file schemas/.env.local
+copy_dir .vscode
+copy_file services/detectionEngine/.env
+if command -v pnpm >/dev/null 2>&1 && [ -d "$wt/applications" ]; then
+	pnpm -C "$wt/applications" install --prefer-offline
+fi
