@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from athena_lib import gitops, herdr, ledger, status
+from athena_lib import gitops, herdr, hq, ledger, status
 from athena_lib.retire import workspace_owned
 from athena_lib.spawn import space_label
 
@@ -68,6 +68,7 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
 
 
 def keep_labels():
+    hq.keep_label()
     for w in ledger.live():
         ws = w.get("workspace")
         if not ws:

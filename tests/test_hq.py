@@ -27,7 +27,10 @@ class HqTest(unittest.TestCase):
         result = hq.hq(cwd=str(self.cwd), start_board=False)
         self.assertTrue(result["created"])
         calls = logged_calls(self.tmp.name)
-        self.assertEqual([c[:2] for c in calls], [["workspace", "create"], ["agent", "start"], ["agent", "prompt"]])
+        verbs = [c[:2] for c in calls]
+        self.assertEqual(verbs[:2], [["workspace", "create"], ["agent", "start"]])
+        self.assertEqual(verbs[-1], ["agent", "prompt"])
+        self.assertIn(["pane", "rename", "w8:p1", "athena"], calls)
         start = calls[1]
         claude = start[start.index("--") + 1:]
         self.assertEqual(claude[claude.index("--name") + 1], "athena")
@@ -53,6 +56,24 @@ class HqTest(unittest.TestCase):
         verbs = [c[:2] for c in logged_calls(self.tmp.name)]
         self.assertNotIn(["workspace", "create"], verbs)
         self.assertIn(["agent", "start"], verbs)
+
+    def test_keep_label_renames_drifted_space_and_pane(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude", "name": "athena"}}}},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena-hq-status-watch"}}}},
+            {"match": ["pane", "get", "w8:p1"], "stdout": {"result": {"pane": {"pane_id": "w8:p1"}}}},
+        ])
+        hq.keep_label()
+        calls = logged_calls(self.tmp.name)
+        self.assertIn(["workspace", "rename", "w8", "athena"], calls)
+        self.assertIn(["pane", "rename", "w8:p1", "athena"], calls)
+
+    def test_keep_label_leaves_a_pane_it_does_not_own(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"name": "other"}}}}])
+        hq.keep_label()
+        self.assertEqual([c[:2] for c in logged_calls(self.tmp.name)], [["agent", "get"]])
 
     def test_claim_removed_when_start_fails(self):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "trust dialog"}})
