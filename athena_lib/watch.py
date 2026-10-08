@@ -69,13 +69,19 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
 
 def step(prev, fetch=False, with_pr=True):
     """One watch tick: send goals that were waiting for a ready Claude, then diff. Returns (snapshot, lines)."""
-    lines = []
+    lines, missing = [], []
+    told = set((prev or {}).get("missing", []))
     for r in spawn.deliver_pending():
         if r["outcome"] == "sent":
             lines.append(f"{r['name']} goal sent")
         elif r["outcome"] == "unconfirmed":
             lines.append(f"{r['name']} goal unconfirmed ({r.get('error')}): check its pane, do not resend blindly")
+        elif r["outcome"] == "missing":
+            missing.append(r["name"])
+            if r["name"] not in told:
+                lines.append(f"{r['name']} goal not sent: {r['problem']}")
     cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
+    cur["missing"] = missing
     return cur, lines + ([] if prev is None else diff(prev, cur))
 
 

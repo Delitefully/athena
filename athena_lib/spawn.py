@@ -178,15 +178,22 @@ def _report_metadata(workspace, linear):
         pass
 
 
-def _agent_status(name, pane):
-    """The status of the agent in the worker's pane, only if it is the worker's agent; else None."""
+def _agent(name, pane):
+    """(status, problem) of the agent in the worker's pane. A different or missing agent is a problem, never a target."""
     try:
         agent = herdr.call("agent", "get", pane, timeout=10).get("agent", {})
-    except herdr.HerdrError:
-        return None
+    except herdr.HerdrError as exc:
+        if exc.code == "agent_not_found":
+            return None, f"no agent named {name} in pane {pane} ({exc.code})"
+        return None, None
     if agent.get("name") != name or agent.get("pane_id") != pane:
-        return None
-    return agent.get("agent_status")
+        found = agent.get("name") or "an unnamed agent"
+        return None, f"no agent named {name} in pane {pane} (found {found} in {agent.get('pane_id')})"
+    return agent.get("agent_status"), None
+
+
+def _agent_status(name, pane):
+    return _agent(name, pane)[0]
 
 
 def _blocked_at_startup(name, pane, exc) -> bool:
@@ -248,8 +255,8 @@ def _goal_lock(name):
 def deliver(name) -> dict:
     """Send a worker's pending goal once its Claude is ready, at most once, to its own pane only.
 
-    Outcomes: sent, waiting (not ready yet), unconfirmed (herdr may have typed it; never resent),
-    not-pending, busy (another sender holds the lock).
+    Outcomes: sent, waiting (not ready yet), missing (no agent of this worker's in its pane),
+    unconfirmed (herdr may have typed it; never resent), not-pending, busy (another sender holds the lock).
     """
     with _goal_lock(name) as locked:
         if not locked:
@@ -258,12 +265,13 @@ def deliver(name) -> dict:
         if not w or w.get("state") != "live" or not w.get("goal_pending"):
             return {"name": name, "outcome": "not-pending"}
         pane = w.get("pane")
-        agent_status = _agent_status(name, pane) if pane else None
+        agent_status, problem = _agent(name, pane) if pane else (None, f"{name} has no pane")
+        if problem:
+            return {"name": name, "outcome": "missing", "problem": problem}
         if agent_status not in READY:
-            return {"name": name, "outcome": "waiting",
-                    "agent_status": agent_status or f"no agent named {name} in pane {pane}"}
+            return {"name": name, "outcome": "waiting", "agent_status": agent_status}
         goal = w["goal_pending"]
-        ledger.append("update", name, goal_pending=None, prompt="sending")  # written first: a crash cannot resend
+        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver")  # written first: a crash cannot resend
         try:
             herdr.call("agent", "prompt", pane, goal)
         except herdr.HerdrError as exc:
@@ -289,6 +297,9 @@ def resume(name) -> dict:
     if outcome == "waiting":
         raise SpawnError(f"{name} is not ready for its goal (herdr: {result.get('agent_status')}); if it shows a "
                          f"startup prompt, the human answers it in its space; then retry")
+    if outcome == "missing":
+        raise SpawnError(f"{result['problem']}: athena sends the goal only to the agent it started. If Claude was "
+                         f"restarted there by hand, retire {name} and spawn it again")
     if outcome == "busy":
         raise SpawnError(f"another athena process is sending {name}'s goal right now")
     return result

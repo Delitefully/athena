@@ -127,7 +127,11 @@ def cmd_resume(a):
 
 
 def cmd_retire(a):
-    _print(retire.retire(a.name, force=a.force, keep_worktree=a.keep_worktree))
+    result = retire.retire(a.name, force=a.force, keep_worktree=a.keep_worktree)
+    _print(result)
+    if result.get("space_left_open"):
+        print(f"{a.name} is retired, but herdr did not remove space {result['space_left_open']} "
+              f"({result['herdr_error']}): close it by hand", file=sys.stderr)
     if board.running_pid():
         return 0
     try:

@@ -124,9 +124,9 @@ class DeliverTest(PendingBase):
     def test_foreign_agent_never_gets_the_goal(self):
         self.spawn_blocked()
         self.set_agent("idle", name="someone-else")
-        self.assertEqual(spawn.deliver("plt-1")["outcome"], "waiting")
+        self.assertEqual(spawn.deliver("plt-1")["outcome"], "missing")
         self.set_agent("idle", pane="w4:p2")
-        self.assertEqual(spawn.deliver("plt-1")["outcome"], "waiting")
+        self.assertEqual(spawn.deliver("plt-1")["outcome"], "missing")
         self.assertEqual(self.prompts(), [])
         self.assertIn(["agent", "get", "w9:p1"], logged_calls(self.tmp.name))
 
@@ -161,6 +161,18 @@ class DeliverTest(PendingBase):
         self.assertFalse(seen["goal_pending"])
         self.assertEqual(seen["prompt"], "sending")
         self.assertEqual(ledger.workers()["plt-1"]["prompt"], "unconfirmed: cli_timeout")
+
+    def test_other_agent_in_pane_is_reported_once(self):
+        self.spawn_blocked()
+        self.set_agent("idle", name="claude")
+        _, lines = watch.step(None, with_pr=False)
+        self.assertEqual(len([l for l in lines if "no agent named plt-1" in l]), 1)
+        prev, lines = watch.step({"workers": {}, "mains": {}, "missing": ["plt-1"]}, with_pr=False)
+        self.assertEqual([l for l in lines if "no agent named plt-1" in l], [])
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            spawn.resume("plt-1")
+        self.assertIn("no agent named plt-1 in pane w9:p1", str(ctx.exception))
+        self.assertEqual(self.prompts(), [])
 
     def test_rejected_as_blocked_stays_pending(self):
         self.spawn_blocked()
@@ -262,12 +274,49 @@ class RetirePendingTest(PendingBase):
         with self.assertRaises(retire.RetireError) as ctx:
             retire.retire("plt-1")
         self.assertIn("athena retire plt-1", str(ctx.exception))
+        self.assertIn("--keep-worktree", str(ctx.exception))
         w = ledger.workers()["plt-1"]
         self.assertEqual(w["state"], "live")
         self.assertIn("cli_timeout", w["cleanup_error"])
         self.assertTrue(self.wt.exists())
         self.assertEqual(self.prompts(), [])
         retire.retire("plt-1")
+        self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
+
+    def test_retire_force_ends_tracking_when_herdr_refuses(self):
+        self.spawn_blocked()
+        git(self.repo, "worktree", "add", "-q", "-b", "gabriel/plt-1-fix", str(self.wt), "main")
+        self.set_agent("blocked", [{"match": ["workspace", "get", "w9"],
+                                    "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
+                                   {"match": ["worktree", "remove"], "stdout": "", "stderr": err("refused"), "exit": 1}])
+        result = retire.retire("plt-1", force=True)
+        self.assertEqual(result["space_left_open"], "w9")
+        w = ledger.workers()["plt-1"]
+        self.assertEqual(w["state"], "retired")
+        self.assertIn("refused", w["cleanup_error"])
+
+    def test_retire_missing_checkout_closes_owned_space(self):
+        """The checkout was deleted outside athena; herdr's worktree remove would fail forever."""
+        ledger.append("spawn", "plt-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="gabriel/plt-1-fix",
+                      workspace="w9", pane="w9:p1", terminal="t")
+        self.set_agent("idle", [{"match": ["workspace", "get", "w9"],
+                                 "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
+                                {"match": ["worktree", "remove"], "stdout": "", "stderr": err("not_a_working_tree"),
+                                 "exit": 1}])
+        result = retire.retire("plt-1")
+        calls = logged_calls(self.tmp.name)
+        self.assertIn(["workspace", "close", "w9"], calls)
+        self.assertEqual([c for c in calls if c[:2] == ["worktree", "remove"]], [])
+        self.assertTrue(result["removed"])
+        self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
+
+    def test_retire_missing_checkout_foreign_space_untouched(self):
+        ledger.append("spawn", "plt-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="gabriel/plt-1-fix",
+                      workspace="w9", pane="w9:p1", terminal="t")
+        self.set_agent("idle", [{"match": ["workspace", "get", "w9"],
+                                 "stdout": {"result": {"workspace": {"worktree": {"checkout_path": "/elsewhere"}}}}}])
+        retire.retire("plt-1")
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] in (["workspace", "close"], ["worktree", "remove"])], [])
         self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
 
     def test_retire_pending_keep_worktree_closes_pane(self):
@@ -281,6 +330,20 @@ class RetirePendingTest(PendingBase):
 
 
 class HardFailureTest(PendingBase):
+    def run_spawn(self):
+        """Like real herdr, worktree create makes the checkout."""
+        original = spawn._create_worktree
+
+        def create(repo, branch, path, label):
+            git(repo, "worktree", "add", "-q", "-b", branch, str(path), "main")
+            return CREATED["result"]
+
+        spawn._create_worktree = create
+        try:
+            return super().run_spawn()
+        finally:
+            spawn._create_worktree = original
+
     def owned(self):
         return {"match": ["workspace", "get", "w9"],
                 "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}}
@@ -323,28 +386,27 @@ class HardFailureTest(PendingBase):
                        {"match": ["agent", "get"], "stdout": "", "stderr": err("agent_not_found"), "exit": 1},
                        {"match": ["worktree", "remove"], "stdout": "", "stderr": err("busy"), "exit": 1},
                        self.owned()])
-        original = spawn._create_worktree
-
-        def create(repo, branch, path, label):
-            git(repo, "worktree", "add", "-q", "-b", branch, str(path), "main")
-            return CREATED["result"]
-
-        spawn._create_worktree = create
-        try:
-            with self.assertRaises(spawn.SpawnError) as ctx:
-                self.run_spawn()
-        finally:
-            spawn._create_worktree = original
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            self.run_spawn()
         self.assertIn("athena retire plt-1", str(ctx.exception))
         w = ledger.workers()["plt-1"]
         self.assertEqual((w["state"], w["cleaned"]), ("failed", False))
         self.assertIn("busy", w["cleanup_error"])
         self.assertEqual([x["name"] for x in ledger.leftovers()], ["plt-1"])
 
+    def test_hard_failure_without_checkout_closes_space(self):
+        self.scenario([{"match": ["agent", "start"], "stdout": "", "stderr": err("pane_not_found"), "exit": 1},
+                       {"match": ["agent", "get"], "stdout": "", "stderr": err("agent_not_found"), "exit": 1},
+                       self.owned()])
+        with self.assertRaises(spawn.SpawnError):
+            PendingBase.run_spawn(self)
+        self.assertIn(["workspace", "close", "w9"], logged_calls(self.tmp.name))
+        self.assertTrue(ledger.workers()["plt-1"]["cleaned"])
+
     def test_create_failure_leaves_nothing(self):
         self.scenario([{"match": ["worktree", "create"], "stdout": "", "stderr": err("git_failed"), "exit": 1}])
         with self.assertRaises(spawn.SpawnError):
-            self.run_spawn()
+            PendingBase.run_spawn(self)
         w = ledger.workers()["plt-1"]
         self.assertEqual((w["state"], w["cleaned"]), ("failed", True))
         self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["worktree", "remove"]], [])
@@ -383,12 +445,15 @@ class CliPendingTest(PendingBase):
 
     def test_status_shows_interrupted_send(self):
         ledger.append("spawn", "plt-3", pane="w3:p1")
-        ledger.append("update", "plt-3", prompt="sending")
+        ledger.append("update", "plt-3", prompt="sending", goal_send="deliver")
         ledger.append("spawn", "plt-4", pane="w4:p1")
-        ledger.append("update", "plt-4", prompt="unconfirmed: cli_timeout")
+        ledger.append("update", "plt-4", prompt="unconfirmed: cli_timeout", goal_send="deliver")
+        ledger.append("spawn", "plt-5", pane="w5:p1")
+        ledger.append("update", "plt-5", prompt="unconfirmed: timeout")
         out = self.cli("status")
         self.assertIn("goal sending", out.stdout)
         self.assertIn("goal unconfirmed: cli_timeout", out.stdout)
+        self.assertNotIn("goal unconfirmed: timeout", out.stdout)  # spawn's post-goal wait, not a deliver send
 
     def test_status_lists_leftovers(self):
         ledger.append("failed", "plt-2", reason="boom", cleaned=False, workspace="w3", path="/x")
