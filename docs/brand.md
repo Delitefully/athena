@@ -13,7 +13,7 @@ A trefoil knot made from one continuous thread: three loops, and every crossing 
 Usage:
 
 - Keep clear space of half the mark's height on every side.
-- Smallest size: 16 px for the mark, 120 px wide for the lockup.
+- Smallest size: 24 px for the mark (below that the crossings smudge), 120 px wide for the lockup.
 - The mark is always one colour: madder on light, lit madder on dark. Never outline it, add a gradient or shadow, or change the crossings.
 - The wordmark is lower case `athena`. Do not set it in another typeface or retype it; use the outlined files.
 
@@ -23,7 +23,7 @@ Usage:
 |---|---|---|
 | Linen | `#F3EEE4` | Light ground |
 | Indigo | `#1E2350` | Ink and the wordmark on light |
-| Madder | `#B8321F` | athena's thread on light. Only athena is red. |
+| Madder | `#B8321F` | athena's thread on light. Only athena is red: its thread, its replies, its knot. |
 | Indigo night | `#14172E` | Dark ground |
 | Linen, lit | `#ECE5D6` | Ink and the wordmark on dark |
 | Madder, lit | `#E0573D` | athena's thread on dark |
@@ -33,15 +33,15 @@ Contrast (WCAG 2): indigo on linen 12.9:1, madder on linen 5.2:1, linen-lit on i
 
 ## Type
 
-- **Wordmark: Instrument Serif** (Instrument, SIL Open Font License 1.1). A condensed display serif with calm contrast: it reads like a name signed on a letter rather than a tool, and its tall narrow stems echo warp threads. The wordmark is outlined to paths, so nothing depends on installed fonts.
-- **Labels and captions: Instrument Sans** (Instrument, SIL Open Font License 1.1), weight 500 to 600, also outlined in the graphics.
+- **Wordmark: Instrument Serif** (Instrument, SIL Open Font License 1.1, https://github.com/Instrument/instrument-serif). A condensed display serif with calm contrast: it reads like a name signed on a letter rather than a tool, and its tall narrow stems echo warp threads. The wordmark is outlined to paths, so nothing depends on installed fonts.
+- **Labels and captions: Instrument Sans** (Instrument, SIL Open Font License 1.1, https://github.com/Instrument/instrument-sans), weight 500 to 600, also outlined in the graphics.
 - No monospace in the brand. Code stays in code blocks.
 
 ## Motion
 
 The three README graphics (`assets/one-thread.svg`, `ticket-path.svg`, `watch.svg`) share one protagonist, the red thread, and these rules:
 
-1. Only athena is red. Workers, lines and labels stay neutral.
+1. Only athena is red: its thread, its replies and its knot. Workers, people, events and labels stay ink; an event that matters is full ink, routine progress is muted.
 2. Things appear by a moving edge (the thread drawing itself, a line running in) in the direction of cause and effect, never by a uniform fade.
 3. Easing: arrivals `cubic-bezier(.16,1,.3,1)`; exits `cubic-bezier(.7,0,.84,0)` at about 60% of the entry time; travel `cubic-bezier(.65,0,.35,1)`; one small overshoot `cubic-bezier(.34,1.4,.64,1)` at most per scene. Linear only for the steady stream of routine progress.
 4. Stagger 60 to 110 ms, never all at once. Hold at least 600 ms after each arrival.
@@ -60,4 +60,5 @@ Checking a change:
 
 - `xmllint --noout assets/*.svg`, and `grep -nE '<script|foreignObject|@import' assets/*.svg` should find nothing. A grep for `http` matches only the `xmlns="http://www.w3.org/2000/svg"` declaration.
 - Render frames by seeking the CSS animations (`document.getAnimations()`), in light and dark. Check reduced motion through `<img>` with Chrome's real `--force-prefers-reduced-motion` flag; DevTools media emulation does not reach SVG images.
-- Over/under crossings: where the thread passes under a line, the gap must span the thread's full width along that line, about `(halo / 2) / |slope| + (thread / 2) · √(1 + 1/slope²)`. A fixed width leaves notches at shallow crossings.
+- Check at device pixel ratio 2 as well as 1 (`--force-device-scale-factor=2`), since that is GitHub on a Mac. Draw-on strokes use `pathLength="1"` with `stroke-dasharray:1 2`, and rest at offsets of ±1.5 when hidden: at exactly ±1 a zero-length dash sits on an end point and paints its round cap as a stray dot.
+- Over/under crossings: where the thread passes under a line, a static mask cuts the thread and its halo; the line itself is never redrawn, so it keeps one clean edge. The cut must span the thread's full width along the line, about `(halo / 2) / |slope| + (thread / 2) · √(1 + 1/slope²)`; a fixed width leaves notches at shallow crossings.
