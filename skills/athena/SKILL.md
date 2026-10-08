@@ -51,7 +51,7 @@ NOTES: <repo quirks, people to avoid pinging, model choice>
 ```
 athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-4512> \
   --title "<short title>" --brief ~/.local/state/athena/drafts/<name>.md \
-  --goal "<NAME> is done when: (1) each ACCEPTANCE item in the brief is shown met in this transcript, (2) <VERIFY> was run and its passing output is shown, (3) the branch is pushed and a draft PR exists with its URL printed, (4) the final message ends with a ATHENA-REPORT line. If a FORBIDDEN item, a missing credential or an ambiguity the brief does not settle stops you, end with a ATHENA-REPORT whose status is BLOCKED. Stop after <TIMEBOX>."
+  --goal "<NAME> is done when: (1) each ACCEPTANCE item in the brief is shown met in this transcript, (2) <VERIFY> was run and its passing output is shown, (3) the branch is pushed and a draft PR exists with its URL printed, (4) the final message ends with an ATHENA-REPORT line. If a FORBIDDEN item, a missing credential or an ambiguity the brief does not settle stops you, end with an ATHENA-REPORT whose status is BLOCKED. Stop after <TIMEBOX>."
 ```
 
 `athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (5 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
