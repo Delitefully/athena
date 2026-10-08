@@ -11,7 +11,7 @@ Taken on 2026-10-07 from the Chief of Staff Blueprint (https://claude.ai/artifac
 | D5 | Who merges | platform and infrastructure: the user. Other repos: the chief of staff after the user's explicit go, pinned with `--match-head-commit`. |
 | D6 | Launch confirmation | Show a launch card and launch, unless the brief has gaps. |
 | D7 | Default models | Workers Opus at high effort; reviewers a fresh Opus; Fable for hard design consults. |
-| D8 | Concurrency | 4 live workers by default, 5 at most (`--force`); no new launch above 85% of the 5-hour quota (`--ignore-quota` overrides, only when the human says so). |
+| D8 | Concurrency | 4 live workers by default, 6 at most (`--force`); no new launch above 85% of the 5-hour quota (`--ignore-quota` overrides, only when the human says so). |
 | D9 | keepwarm | Off in workers (per-worker settings), on in the chief of staff. |
 | D10 | herdr 0.9.3 | At a quiet moment before relying on the board. herdr is a Homebrew install, so `herdr update --handoff` is unavailable; `brew upgrade herdr` then a server restart. The user picks the moment. |
 | D11 | Main checkouts not on main | The chief of staff proposes a cleanup per repo; the user confirms each. `athena preflight` refuses to launch until a checkout is clean and on main. |

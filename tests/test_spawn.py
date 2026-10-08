@@ -79,10 +79,19 @@ class SpawnTest(unittest.TestCase):
 
     def test_hard_cap_ignores_force(self):
         self.scenario()
+        for i in range(6):
+            ledger.append("spawn", f"w{i}", pane=f"w{i}:p1")
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            self.run_spawn(force=True)
+        self.assertIn("hard cap is 6", str(ctx.exception))
+
+    def test_force_allows_a_sixth_worker(self):
+        self.scenario()
         for i in range(5):
             ledger.append("spawn", f"w{i}", pane=f"w{i}:p1")
         with self.assertRaises(spawn.SpawnError):
-            self.run_spawn(force=True)
+            self.run_spawn()
+        self.assertEqual(self.run_spawn(force=True)["name"], "plt-1")
 
     def test_spawn_refuses_when_quota_high(self):
         self.scenario()
