@@ -124,10 +124,26 @@ class SyncTest(unittest.TestCase):
         self.scenario(330)
         board.sync()
         ledger.append("retire", "b")
-        self.scenario(330)
+        self.scenario(330, [
+            {"match": ["pane", "get", "w1:p7"], "stdout": {"result": {"pane": {"pane_id": "w1:p7", "label": "board:a"}}}},
+            {"match": ["pane", "get", "w1:p8"], "stdout": {"result": {"pane": {"pane_id": "w1:p8", "label": "board:b"}}}},
+        ])
         board.sync()
         closes = [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "close"]]
         self.assertEqual(sorted(c[2] for c in closes), ["w1:p7", "w1:p8"])
+
+    def test_never_closes_a_pane_that_is_not_ours(self):
+        self.scenario(330)
+        board.sync()
+        ledger.append("retire", "b")
+        # After a herdr restart, w1:p7 now belongs to one of the user's own panes.
+        self.scenario(330, [
+            {"match": ["pane", "get", "w1:p7"], "stdout": {"result": {"pane": {"pane_id": "w1:p7", "label": "my editor"}}}},
+            {"match": ["pane", "get", "w1:p8"], "stdout": {"result": {"pane": {"pane_id": "w1:p8"}}}},
+        ])
+        board.sync()
+        board.clear()
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "close"]], [])
 
     def test_sync_uses_urgency_when_narrow(self):
         ledger.append("spawn", "c", pane="w4:p1", terminal="term_c", workspace="w4")
