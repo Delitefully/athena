@@ -38,6 +38,7 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 | `athena watch` | One line per change, for Monitor |
 | `athena pr <name>` | PR summary |
 | `athena nudge <name> <text>` | Type a slash command into a worker |
+| `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
 | `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space |
 | `athena hq` | Create or focus hq |
 
