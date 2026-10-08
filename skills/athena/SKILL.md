@@ -54,7 +54,7 @@ athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-
   --goal "<NAME> is done when: (1) each ACCEPTANCE item in the brief is shown met in this transcript, (2) <VERIFY> was run and its passing output is shown, (3) the branch is pushed and a draft PR exists with its URL printed, (4) the final message ends with an ATHENA-REPORT line. If a FORBIDDEN item, a missing credential or an ambiguity the brief does not settle stops you, end with an ATHENA-REPORT whose status is BLOCKED. Stop after <TIMEBOX>."
 ```
 
-`athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (5 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
+`athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (6 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 
 Exit code 3 means the worker is live but pending: its Claude stopped at a startup prompt (for example "Is this a project you trust?"), so its goal is not sent yet. Tell the human the space and the prompt from the message; they answer it in its column, never you. `athena watch` sends the goal once the worker is ready (`athena resume <w>` sends it by hand). `athena status` shows it as `goal pending (startup prompt)`; `athena retire <w>` works on it. Any other launch failure removes its space, or `athena status` lists it with the `athena retire` command to run.
 
