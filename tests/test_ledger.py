@@ -2,7 +2,7 @@ import tempfile
 import unittest
 
 from tests import helpers
-from cos_lib import ledger, paths
+from athena_lib import ledger, paths
 
 
 class LedgerTest(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Where cos keeps things. Every location can be moved with an environment variable."""
+"""Where athena keeps things. Every location can be moved with an environment variable."""
 import hashlib
 import os
 import re
@@ -13,33 +13,33 @@ def _env_path(var, default):
 
 
 def state_dir() -> Path:
-    return _env_path("COS_STATE_DIR", "~/.local/state/cos")
+    return _env_path("ATHENA_STATE_DIR", "~/.local/state/athena")
 
 
 def worktree_root() -> Path:
-    return _env_path("COS_WORKTREE_ROOT", "~/Developer/.worktrees")
+    return _env_path("ATHENA_WORKTREE_ROOT", "~/Developer/.worktrees")
 
 
 def quota_file() -> Path:
     return _env_path(
-        "COS_QUOTA_FILE", "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json"
+        "ATHENA_QUOTA_FILE", "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json"
     )
 
 
 def herdr_bin() -> str:
-    return os.environ.get("COS_HERDR") or "herdr"
+    return os.environ.get("ATHENA_HERDR") or "herdr"
 
 
 def hq_name() -> str:
-    return os.environ.get("COS_HQ") or "cos"
+    return os.environ.get("ATHENA_HQ") or "athena"
 
 
 def min_col() -> int:
-    return int(os.environ.get("COS_MIN_COL") or 70)
+    return int(os.environ.get("ATHENA_MIN_COL") or 70)
 
 
 def max_workers() -> int:
-    return min(int(os.environ.get("COS_MAX_WORKERS") or 4), 5)
+    return min(int(os.environ.get("ATHENA_MAX_WORKERS") or 4), 5)
 
 
 def ensure(sub: str = "") -> Path:

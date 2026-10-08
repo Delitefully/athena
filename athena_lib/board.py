@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from cos_lib import herdr, ledger, paths, status
+from athena_lib import herdr, ledger, paths, status
 
 
 def _clamp(r):
@@ -95,7 +95,7 @@ def save(data):
 
 
 def hq_pane():
-    pane = os.environ.get("COS_HQ_PANE")
+    pane = os.environ.get("ATHENA_HQ_PANE")
     if pane:
         return pane
     try:
@@ -157,7 +157,7 @@ def _lock():
 
 
 def _hq_owned(pane_id) -> bool:
-    """The HQ id may be stale after a herdr restart: only use it while it runs the cos agent."""
+    """The HQ id may be stale after a herdr restart: only use it while it runs the athena agent."""
     try:
         agent = herdr.call("agent", "get", pane_id, timeout=10).get("agent", {})
     except herdr.HerdrError:
@@ -176,9 +176,9 @@ def sync(force=False) -> dict:
 def _sync(force) -> dict:
     hq = hq_pane()
     if not hq:
-        raise RuntimeError("no HQ pane: run `cos hq` first, or set COS_HQ_PANE")
-    if not os.environ.get("COS_HQ_PANE") and not _hq_owned(hq):
-        raise RuntimeError(f"pane {hq} no longer runs the {paths.hq_name()} agent; run `cos hq`")
+        raise RuntimeError("no HQ pane: run `athena hq` first, or set ATHENA_HQ_PANE")
+    if not os.environ.get("ATHENA_HQ_PANE") and not _hq_owned(hq):
+        raise RuntimeError(f"pane {hq} no longer runs the {paths.hq_name()} agent; run `athena hq`")
     layout = herdr.call("pane", "layout", "--pane", hq).get("layout", {})
     width = int(layout.get("area", {}).get("width") or 0)
     live = ledger.live()
@@ -260,7 +260,7 @@ def running_pid():
     except (OSError, ValueError):
         return None
     cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return pid if "cos_lib.cli board watch" in cmd else None
+    return pid if "athena_lib.cli board watch" in cmd else None
 
 
 def start_watcher():
@@ -268,7 +268,7 @@ def start_watcher():
     if pid:
         return pid
     log = open(paths.ensure("logs") / "board.log", "a")
-    proc = subprocess.Popen([sys.executable, "-m", "cos_lib.cli", "board", "watch"], stdout=log, stderr=log,
+    proc = subprocess.Popen([sys.executable, "-m", "athena_lib.cli", "board", "watch"], stdout=log, stderr=log,
                             cwd=str(paths.PLUGIN_ROOT), env=dict(os.environ, PYTHONPATH=str(paths.PLUGIN_ROOT)),
                             start_new_session=True)
     _pidfile().write_text(str(proc.pid))

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
-from cos_lib import board, hookstatus, ledger, paths
+from athena_lib import board, hookstatus, ledger, paths
 
 
 def W(name, urgency=3, spawned=0):
@@ -68,7 +68,7 @@ class SyncTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
-        self.env.set("COS_HQ_PANE", "w1:p1")
+        self.env.set("ATHENA_HQ_PANE", "w1:p1")
         ledger.append("spawn", "a", pane="w2:p1", terminal="term_a", workspace="w2")
         ledger.append("spawn", "b", pane="w3:p1", terminal="term_b", workspace="w3")
 

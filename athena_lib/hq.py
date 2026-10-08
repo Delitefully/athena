@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from cos_lib import board, herdr, paths
+from athena_lib import board, herdr, paths
 
 
 def _file():
@@ -28,11 +28,11 @@ def _alive(pane):
 def _claude_args():
     settings = paths.ensure("settings") / "hq.json"
     settings.write_text(json.dumps({"crossSessionInbound": "accept",
-                                    "env": {"COS_ROLE": "hq", "COS_STATE_DIR": str(paths.state_dir())}}, indent=2))
+                                    "env": {"ATHENA_ROLE": "hq", "ATHENA_STATE_DIR": str(paths.state_dir())}}, indent=2))
     args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
             "--settings", str(settings)]
-    if os.environ.get("COS_PLUGIN_DIR"):
-        args += ["--plugin-dir", os.environ["COS_PLUGIN_DIR"]]
+    if os.environ.get("ATHENA_PLUGIN_DIR"):
+        args += ["--plugin-dir", os.environ["ATHENA_PLUGIN_DIR"]]
     return args
 
 
@@ -46,12 +46,12 @@ def _workspace_is_hq(record) -> bool:
         ws = herdr.call("workspace", "get", record["workspace"], timeout=10).get("workspace", {})
     except (herdr.HerdrError, KeyError):
         return False
-    return ws.get("label") == "hq"
+    return ws.get("label") == "athena"
 
 
 def _routine():
     herdr.call("agent", "prompt", paths.hq_name(),
-               "Start your HQ routine: run `cos status`, start `cos watch` under Monitor, then tell me what is live and wait.")
+               "Start your HQ routine: run `athena status`, start `athena watch` under Monitor, then tell me what is live and wait.")
 
 
 def hq(cwd=None, focus=True, start_board=True) -> dict:
@@ -71,12 +71,12 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
         if start_board:
             board.start_watcher()
         return {**current, "created": False, "restarted": True}
-    cwd = os.path.realpath(os.path.expanduser(cwd or os.environ.get("COS_HQ_CWD") or "~/Developer"))
+    cwd = os.path.realpath(os.path.expanduser(cwd or os.environ.get("ATHENA_HQ_CWD") or "~/Developer"))
     claim = paths.claim_file(cwd)
     claim.parent.mkdir(parents=True, exist_ok=True)
     claim.write_text("hq\n")
     try:
-        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", "hq", "--focus" if focus else "--no-focus")
+        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", "athena", "--focus" if focus else "--no-focus")
         pane = created["root_pane"]["pane_id"]
         _start_agent(pane)
     finally:

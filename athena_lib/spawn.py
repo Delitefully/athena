@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from cos_lib import gitops, herdr, ledger, paths, quota
+from athena_lib import gitops, herdr, ledger, paths, quota
 
 HARD_CAP = 5
 
@@ -39,7 +39,7 @@ def _run_setup(repo, path, name):
     if not script.exists():
         return None
     log = paths.ensure("logs") / f"{name}-setup.log"
-    env = dict(os.environ, COS_REPO=str(repo), COS_WORKTREE=str(path))
+    env = dict(os.environ, ATHENA_REPO=str(repo), ATHENA_WORKTREE=str(path))
     with open(log, "w") as out:
         proc = subprocess.run(["sh", str(script)], cwd=str(path), env=env, stdout=out, stderr=subprocess.STDOUT, timeout=1800)
     if proc.returncode != 0:
@@ -49,8 +49,8 @@ def _run_setup(repo, path, name):
 
 def _write_settings(name, brief):
     settings = {
-        "env": {"COS_WORKER": name, "COS_HQ": paths.hq_name(), "COS_STATE_DIR": str(paths.state_dir()),
-                "COS_BRIEF": str(brief)},
+        "env": {"ATHENA_WORKER": name, "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
+                "ATHENA_BRIEF": str(brief)},
         "crossSessionInbound": "accept",
         "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
     }
@@ -64,14 +64,14 @@ def build_goal(condition, name, brief):
     if text.startswith("/goal "):
         text = text[len("/goal "):]
     suffix = (f" Your brief is {brief}; read it first. Report to the session named {paths.hq_name()} with SendMessage, "
-              f"and end your final message with a COS-REPORT line.")
+              f"and end your final message with a ATHENA-REPORT line.")
     return ("/goal " + text + suffix)[:3990]
 
 
 def claude_args(name, model, effort, settings):
     args = ["--name", name, "--model", model, "--effort", effort,
             "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "worker.md"), "--settings", str(settings)]
-    plugin_dir = os.environ.get("COS_PLUGIN_DIR")
+    plugin_dir = os.environ.get("ATHENA_PLUGIN_DIR")
     if plugin_dir:
         args += ["--plugin-dir", plugin_dir]
     return args
@@ -119,15 +119,15 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
         herdr.call("agent", "prompt", name, goal_text)
     except herdr.HerdrError as exc:
         ledger.append("update", name, prompt=f"failed: {exc.code}")
-        raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: cos nudge {name} '<goal>'")
+        raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: athena nudge {name} '<goal>'")
     try:
         herdr.call("agent", "wait", name, "--until", "working", "--until", "blocked", "--timeout", "30000", timeout=60)
         record["prompt"] = "accepted"
     except herdr.HerdrError as exc:
         record["prompt"] = f"unconfirmed: {exc.code}"
-    tokens = ["--token", "cos=worker"] + (["--token", f"linear={linear}"] if linear else [])
+    tokens = ["--token", "athena=worker"] + (["--token", f"linear={linear}"] if linear else [])
     try:
-        herdr.call("workspace", "report-metadata", record["workspace"], "--source", "cos", *tokens)
+        herdr.call("workspace", "report-metadata", record["workspace"], "--source", "athena", *tokens)
     except herdr.HerdrError:
         pass
     ledger.append("update", name, prompt=record["prompt"])

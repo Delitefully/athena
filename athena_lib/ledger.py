@@ -1,9 +1,9 @@
-"""Append-only record of worker lifecycles. Only cos commands write it; anyone may read it."""
+"""Append-only record of worker lifecycles. Only athena commands write it; anyone may read it."""
 import json
 import os
 import time
 
-from cos_lib import paths
+from athena_lib import paths
 
 TERMINAL = {"retire": "retired", "failed": "failed"}
 

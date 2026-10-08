@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers
-from cos_lib import hookstatus, ledger, paths
+from athena_lib import hookstatus, ledger, paths
 
 HOOK = helpers.ROOT / "hooks" / "worker-status"
 
@@ -44,7 +44,7 @@ class HookStatusTest(unittest.TestCase):
 
     def test_worker_found_by_env(self):
         proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt), "prompt": "secret text"},
-                        {"COS_WORKER": "abc-102"}, cwd=self.wt)
+                        {"ATHENA_WORKER": "abc-102"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
         st = self.status("abc-102")
         self.assertEqual(st["state"], "working")
@@ -56,14 +56,14 @@ class HookStatusTest(unittest.TestCase):
         self.assertEqual(self.status("abc-102")["state"], "working")
 
     def test_stop_with_report_sets_done(self):
-        msg = 'All green.\nCOS-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'
+        msg = 'All green.\nATHENA-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'
         hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "abc-102")
         st = self.status("abc-102")
         self.assertEqual(st["state"], "done")
         self.assertEqual(st["report"]["pr"], "https://x/1")
 
     def test_blocked_report(self):
-        msg = 'COS-REPORT {"status":"BLOCKED","concerns":["needs creds"]}'
+        msg = 'ATHENA-REPORT {"status":"BLOCKED","concerns":["needs creds"]}'
         hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "abc-102")
         self.assertEqual(self.status("abc-102")["state"], "blocked")
 
@@ -72,7 +72,7 @@ class HookStatusTest(unittest.TestCase):
         self.assertEqual(self.status("abc-102")["state"], "idle")
 
     def test_report_survives_later_prompt(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'COS-REPORT {"status":"DONE"}'}, "abc-102")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "abc-102")
         hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-102")
         st = self.status("abc-102")
         self.assertEqual(st["state"], "working")
@@ -87,7 +87,7 @@ class HookStatusTest(unittest.TestCase):
         self.assertEqual(self.status("abc-103")["state"], "blocked")
 
     def test_idle_prompt_does_not_override_done(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'COS-REPORT {"status":"DONE"}'}, "abc-102")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "abc-102")
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "waiting"}, "abc-102")
         self.assertEqual(self.status("abc-102")["state"], "done")
 
@@ -101,18 +101,18 @@ class HookStatusTest(unittest.TestCase):
 
     def test_hook_noop_without_ledger(self):
         (paths.state_dir() / "ledger.jsonl").unlink()
-        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, {"COS_WORKER": "abc-102"}, cwd=self.wt)
+        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, {"ATHENA_WORKER": "abc-102"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(self.status("abc-102"))
 
     def test_garbage_stdin_exits_zero(self):
-        proc = run_hook("{not json", {"COS_WORKER": "abc-102"}, cwd=self.wt)
+        proc = run_hook("{not json", {"ATHENA_WORKER": "abc-102"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
 
     def test_parse_report_takes_last(self):
-        text = 'COS-REPORT {"status":"BLOCKED"}\nlater\nCOS-REPORT {"status":"DONE"}'
+        text = 'ATHENA-REPORT {"status":"BLOCKED"}\nlater\nATHENA-REPORT {"status":"DONE"}'
         self.assertEqual(hookstatus.parse_report(text)["status"], "DONE")
-        self.assertIsNone(hookstatus.parse_report("COS-REPORT {broken"))
+        self.assertIsNone(hookstatus.parse_report("ATHENA-REPORT {broken"))
 
 
 if __name__ == "__main__":

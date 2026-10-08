@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""cos launcher: resolves its own symlink so it works from ~/.local/bin."""
+"""athena launcher: resolves its own symlink so it works from ~/.local/bin."""
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
 
-from cos_lib.cli import main  # noqa: E402
+from athena_lib.cli import main  # noqa: E402
 
 sys.exit(main())

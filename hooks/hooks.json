@@ -1,5 +1,5 @@
 {
-  "description": "cos worker status: writes ~/.local/state/cos/workers/<name>.json for cos worker sessions only.",
+  "description": "athena worker status: writes ~/.local/state/athena/workers/<name>.json for athena worker sessions only.",
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],

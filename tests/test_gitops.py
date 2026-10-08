@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tests import helpers
 from tests.gitrepo import git, make_repo, push_from_clone
-from cos_lib import gitops
+from athena_lib import gitops
 
 
 class GitopsTest(unittest.TestCase):
@@ -76,7 +76,7 @@ class GitopsTest(unittest.TestCase):
     def test_backup_ref(self):
         sha = git(self.repo, "rev-parse", "HEAD")
         ref = gitops.backup_ref(self.repo, "abc-104", sha)
-        self.assertTrue(ref.startswith("refs/cos-backup/abc-104/"))
+        self.assertTrue(ref.startswith("refs/athena-backup/abc-104/"))
         self.assertEqual(git(self.repo, "rev-parse", ref), sha)
 
 

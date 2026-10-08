@@ -107,6 +107,6 @@ def unpushed(worktree) -> dict:
 
 
 def backup_ref(repo, name, sha) -> str:
-    ref = f"refs/cos-backup/{name}/{int(time.time())}"
+    ref = f"refs/athena-backup/{name}/{int(time.time())}"
     git(repo, "update-ref", ref, sha)
     return ref
