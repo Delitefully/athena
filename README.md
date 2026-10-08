@@ -5,8 +5,6 @@
 
 A chief of staff for Claude Code in [herdr](https://herdr.dev). One Claude session named athena, in a herdr space of the same name, takes Linear tickets, launches a visible worker Claude for each in its own git worktree and herdr space, shows the workers as columns beside itself, and supervises them to merge-ready PRs. The human can type into any worker at any time.
 
-Design and decisions: `docs/decisions.md`. Plan: `docs/plans/2026-10-07-athena-v1.md`. Brand: `docs/brand.md`.
-
 ## How it works
 
 ![athena's red thread weaves through three workers, takes one worker's question to you, and ties off when the work merges](assets/one-thread.svg)
