@@ -1,6 +1,7 @@
 """Launch one worker: preflight, worktree space, Claude with its brief and settings, then its /goal."""
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,6 +27,29 @@ def _check_capacity(name, force, ignore_quota=False):
     allowed, why = quota.gate()
     if not allowed and not ignore_quota:
         raise SpawnError(f"not launching: {why}")
+
+
+def _drop_ids(text, ids):
+    for i in ids:
+        text = re.sub(rf"[\[(]?\b{re.escape(i)}\b[\])]?\s*[:·|—–-]?\s*", " ", text, flags=re.I)
+    return " ".join(text.split()).strip(" :·|—–-")
+
+
+def space_label(name, title=None, linear=None, branch=None):
+    """The herdr space label: the title, never the ticket id.
+
+    herdr already shows the Linear id (the linear metadata token) under the label,
+    so an id in the label would show it twice. Without a title, the branch slug
+    stands in; the worker name is the last resort.
+    """
+    ids = [i for i in {name, linear} if i]
+    label = _drop_ids(title or "", ids)
+    if not label and branch:
+        slug = branch.rsplit("/", 1)[-1]
+        for i in ids:
+            slug = re.sub(rf"^{re.escape(i)}[-_]?", "", slug, flags=re.I)
+        label = _drop_ids(slug.replace("-", " ").replace("_", " "), ids)
+    return (label or name)[:48]
 
 
 def _create_worktree(repo, branch, path, label):
@@ -93,7 +117,7 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
     path.parent.mkdir(parents=True, exist_ok=True)
     claim = paths.claim_file(str(path))
     claim.parent.mkdir(parents=True, exist_ok=True)
-    label = f"{name} {title}".strip()[:48] if title else name
+    label = space_label(name, title, linear, branch)
     record = {"repo": str(repo), "branch": branch, "path": os.path.realpath(path), "linear": linear,
               "title": title, "model": model, "effort": effort}
     claim.write_text(name + "\n")

@@ -48,7 +48,7 @@ class SpawnTest(unittest.TestCase):
         wt = paths.worktree_path(self.repo, "you/abc-102-fix")
         self.assertIn(str(wt), create)
         self.assertEqual(create[create.index("--base") + 1], "origin/main")
-        self.assertEqual(create[create.index("--label") + 1], "abc-102 fix it")
+        self.assertEqual(create[create.index("--label") + 1], "fix it")
         start = calls[1]
         self.assertEqual(start[:3], ["agent", "start", "abc-102"])
         claude = start[start.index("--") + 1:]
@@ -158,3 +158,28 @@ class SpawnTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpaceLabelTest(unittest.TestCase):
+    def test_title_alone(self):
+        self.assertEqual(spawn.space_label("abc-108", "Settings page keeps the filter", "ABC-108"),
+                         "Settings page keeps the filter")
+
+    def test_ticket_id_stripped_from_title(self):
+        for title in ("ABC-108: Fix the dialog", "abc-108 Fix the dialog", "[ABC-108] Fix the dialog",
+                      "Fix the dialog (ABC-108)", "Fix the dialog · abc-108"):
+            self.assertEqual(spawn.space_label("abc-108", title, "ABC-108"), "Fix the dialog", title)
+
+    def test_other_hyphenated_words_kept(self):
+        self.assertEqual(spawn.space_label("abc-109", "Export keeps column order", "ABC-109"),
+                         "Export keeps column order")
+
+    def test_branch_slug_without_title(self):
+        self.assertEqual(spawn.space_label("abc-108", None, "ABC-108",
+                                           "you/abc-108-settings-filter"), "endpoints tab editing")
+
+    def test_name_is_last_resort(self):
+        self.assertEqual(spawn.space_label("abc-102", "ABC-102", "ABC-102", "abc-102"), "abc-102")
+
+    def test_truncated(self):
+        self.assertEqual(len(spawn.space_label("abc-102", "x" * 80)), 48)
