@@ -48,7 +48,7 @@ class SpawnTest(unittest.TestCase):
         wt = paths.worktree_path(self.repo, "gabriel/plt-1-fix")
         self.assertIn(str(wt), create)
         self.assertEqual(create[create.index("--base") + 1], "origin/main")
-        self.assertEqual(create[create.index("--label") + 1], "plt-1 fix it")
+        self.assertEqual(create[create.index("--label") + 1], "fix it")
         start = calls[1]
         self.assertEqual(start[:3], ["agent", "start", "plt-1"])
         claude = start[start.index("--") + 1:]
@@ -158,3 +158,28 @@ class SpawnTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpaceLabelTest(unittest.TestCase):
+    def test_title_alone(self):
+        self.assertEqual(spawn.space_label("plt-4365", "Edit-group dialog keeps member identity", "PLT-4365"),
+                         "Edit-group dialog keeps member identity")
+
+    def test_ticket_id_stripped_from_title(self):
+        for title in ("PLT-4365: Fix the dialog", "plt-4365 Fix the dialog", "[PLT-4365] Fix the dialog",
+                      "Fix the dialog (PLT-4365)", "Fix the dialog · plt-4365"):
+            self.assertEqual(spawn.space_label("plt-4365", title, "PLT-4365"), "Fix the dialog", title)
+
+    def test_other_hyphenated_words_kept(self):
+        self.assertEqual(spawn.space_label("plt-4366", "macOS 27 browser-ext reads 0", "PLT-4366"),
+                         "macOS 27 browser-ext reads 0")
+
+    def test_branch_slug_without_title(self):
+        self.assertEqual(spawn.space_label("plt-4365", None, "PLT-4365",
+                                           "gabriel/plt-4365-endpoints-tab-editing"), "endpoints tab editing")
+
+    def test_name_is_last_resort(self):
+        self.assertEqual(spawn.space_label("plt-1", "PLT-1", "PLT-1", "plt-1"), "plt-1")
+
+    def test_truncated(self):
+        self.assertEqual(len(spawn.space_label("plt-1", "x" * 80)), 48)
