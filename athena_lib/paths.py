@@ -39,7 +39,7 @@ def min_col() -> int:
 
 
 def max_workers() -> int:
-    return min(int(os.environ.get("ATHENA_MAX_WORKERS") or 4), 5)
+    return min(int(os.environ.get("ATHENA_MAX_WORKERS") or 4), 6)
 
 
 def ensure(sub: str = "") -> Path:
