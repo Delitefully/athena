@@ -194,8 +194,9 @@ def _fail(name, record, exc) -> str:
     ledger.append("failed", name, reason=str(exc), cleaned=False, **record)
     try:
         removed = retire.remove_worktree(record, force=True)
-        cleaned = removed["removed"] or not (record.get("workspace") or os.path.isdir(record.get("path") or ""))
-        why = removed.get("herdr_error")
+        why = removed.get("herdr_error")  # herdr kept our space open: its Claude may still run there
+        made = record.get("workspace") or os.path.isdir(record.get("path") or "")
+        cleaned = not why and (removed["removed"] or not made)
     except (gitops.GitError, OSError, subprocess.SubprocessError) as cleanup_exc:
         cleaned, why = False, str(cleanup_exc)
     ledger.append("update", name, cleaned=cleaned, cleanup_error=why if not cleaned else None)

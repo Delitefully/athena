@@ -232,6 +232,30 @@ class HardFailureTest(PendingBase):
         self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
         self.assertEqual(ledger.leftovers(), [])
 
+    def test_space_herdr_would_not_close_is_not_cleaned(self):
+        """The checkout exists, herdr refuses to remove our space: removing the checkout alone leaves the space."""
+        self.scenario([{"match": ["agent", "start"], "stdout": "", "stderr": err("pane_not_found"), "exit": 1},
+                       {"match": ["agent", "get"], "stdout": "", "stderr": err("agent_not_found"), "exit": 1},
+                       {"match": ["worktree", "remove"], "stdout": "", "stderr": err("busy"), "exit": 1},
+                       self.owned()])
+        original = spawn._create_worktree
+
+        def create(repo, branch, path, label):
+            git(repo, "worktree", "add", "-q", "-b", branch, str(path), "main")
+            return CREATED["result"]
+
+        spawn._create_worktree = create
+        try:
+            with self.assertRaises(spawn.SpawnError) as ctx:
+                self.run_spawn()
+        finally:
+            spawn._create_worktree = original
+        self.assertIn("athena retire plt-1", str(ctx.exception))
+        w = ledger.workers()["plt-1"]
+        self.assertEqual((w["state"], w["cleaned"]), ("failed", False))
+        self.assertIn("busy", w["cleanup_error"])
+        self.assertEqual([x["name"] for x in ledger.leftovers()], ["plt-1"])
+
     def test_create_failure_leaves_nothing(self):
         self.scenario([{"match": ["worktree", "create"], "stdout": "", "stderr": err("git_failed"), "exit": 1}])
         with self.assertRaises(spawn.SpawnError):
