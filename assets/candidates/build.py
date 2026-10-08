@@ -1,13 +1,17 @@
 """Build logo-mark, light/dark lockups and the social card from one candidate.
 
-usage: build.py <candidate.png> <outdir> [bg.png]
-"""
-import os
-import sys
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+usage: build.py <candidate.png> <outdir> [bg.png] [--font-dir DIR]
 
-FONT = os.path.expanduser('~/Library/Fonts/FiraCodeNerdFontMono-SemiBold.ttf')
-FONT_REG = os.path.expanduser('~/Library/Fonts/FiraCodeNerdFontMono-Regular.ttf')
+The wordmark and tagline are set in FiraCode Nerd Font Mono (SemiBold and
+Regular), looked up in --font-dir, default ~/Library/Fonts. The assets in
+assets/ came from: build.py assets/candidates/v7.png assets assets/candidates/bg-b.png
+"""
+import argparse
+import os
+from PIL import Image, ImageDraw, ImageFont
+
+FONT_FILES = ('FiraCodeNerdFontMono-SemiBold.ttf', 'FiraCodeNerdFontMono-Regular.ttf')
+FONT = FONT_REG = None  # set from --font-dir in main
 SLATE = (46, 56, 66)
 TEAL = (43, 165, 140)
 GREY = (138, 150, 163)
@@ -43,9 +47,9 @@ def fit(im, size):
 
 
 def mark_png(m, out):
-    m = fit(m, 420)
-    c = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
-    c.paste(m, ((512 - m.width) // 2, (512 - m.height) // 2), m)
+    m = fit(m, 840)
+    c = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+    c.paste(m, ((1024 - m.width) // 2, (1024 - m.height) // 2), m)
     c.save(out)
 
 
@@ -86,9 +90,15 @@ def social(dark_lockup, bg, out, tagline):
 
 
 if __name__ == '__main__':
-    src, outdir = sys.argv[1], sys.argv[2]
-    bg = sys.argv[3] if len(sys.argv) > 3 else None
-    m = trim(Image.open(src).convert('RGBA'))
+    ap = argparse.ArgumentParser(description='Build the logo assets from one mark candidate.')
+    ap.add_argument('candidate')
+    ap.add_argument('outdir')
+    ap.add_argument('bg', nargs='?', help='background plate for the social card')
+    ap.add_argument('--font-dir', default=os.path.expanduser('~/Library/Fonts'))
+    a = ap.parse_args()
+    FONT, FONT_REG = (os.path.join(a.font_dir, f) for f in FONT_FILES)
+    outdir, bg = a.outdir, a.bg
+    m = trim(Image.open(a.candidate).convert('RGBA'))
     md = lift(m)
     mark_png(m, f'{outdir}/logo-mark.png')
     lockup(m, TEXT_LIGHT, f'{outdir}/logo-lockup.png')

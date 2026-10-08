@@ -83,7 +83,7 @@ text{fill:#D6DDE4}
 
 <!-- stops -->
 <text class="b" x="70" y="114">ticket</text>
-<text class="dim" x="70" y="132">ABC-101</text>
+<text class="dim" x="70" y="132">abc-101</text>
 <text class="dim" x="70" y="147">in Linear</text>
 
 <text class="b" x="206" y="114">brief</text>

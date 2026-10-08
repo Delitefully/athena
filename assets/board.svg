@@ -78,8 +78,8 @@ text{fill:#D6DDE4}
 .w2{opacity:0;animation:w2 12s linear infinite}.b2{animation:b2 12s linear infinite}
 @keyframes w1{0%,54%{opacity:1}55%,100%{opacity:0}}
 @keyframes d1{0%,54%{opacity:0}55%,98%{opacity:1}100%{opacity:0}}
-@keyframes w2{0%,25%{opacity:1}26%,77%{opacity:0}78%,100%{opacity:1}}
-@keyframes b2{0%,25%{opacity:0}26%,77%{opacity:1}78%,100%{opacity:0}}
+@keyframes w2{0%,25%{opacity:1}26%,83%{opacity:0}84%,100%{opacity:1}}
+@keyframes b2{0%,25%{opacity:0}26%,83%{opacity:1}84%,100%{opacity:0}}
 .pulse{animation:pulse 2s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .caret{animation:caret 1s steps(1) infinite}

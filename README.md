@@ -24,7 +24,7 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 ## Use
 
 - `prefix+shift+c` (or `athena hq`): open or focus the hq space. The chief of staff starts with its brief (`hq.md`) and the `athena` skill.
-- Tell it what to start: "start PLT-4512 and PLT-4520". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
+- Tell it what to start: "start abc-101 and abc-102". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
 - `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq.
 
 ## Commands
