@@ -21,27 +21,32 @@ def _clamp(r):
     return max(0.1, min(0.9, r))
 
 
+def _hq_ratio(width, min_col, cols):
+    """HQ takes an equal share with the `cols` worker columns beside it, and never less than min_col."""
+    return _clamp(max(min_col / width, 1 / (cols + 1))) if width else 0.5
+
+
 def plan(width: int, min_col: int, workers: list) -> dict:
     """workers: [{name, urgency, spawned}]. Columns keep spawn order so they do not shuffle."""
     by_spawn = sorted(workers, key=lambda w: (w.get("spawned") or 0, w["name"]))
     names = [w["name"] for w in by_spawn]
     n = len(names)
-    hq_ratio = _clamp(min_col / width) if width else 0.5
     if n == 0:
         return {"mode": "empty", "rows": [], "hidden": [], "hq_ratio": 1.0}
     avail = width - min_col
     if avail < min_col:
         return {"mode": "hq-only", "rows": [], "hidden": names, "hq_ratio": 1.0}
     if avail / n >= min_col:
-        return {"mode": "columns", "rows": [names], "hidden": [], "hq_ratio": hq_ratio}
+        return {"mode": "columns", "rows": [names], "hidden": [], "hq_ratio": _hq_ratio(width, min_col, n)}
     if n > 1 and avail / math.ceil(n / 2) >= min_col:
         top = math.ceil(n / 2)
-        return {"mode": "rows", "rows": [names[:top], names[top:]], "hidden": [], "hq_ratio": hq_ratio}
+        return {"mode": "rows", "rows": [names[:top], names[top:]], "hidden": [], "hq_ratio": _hq_ratio(width, min_col, top)}
     k = max(1, int(avail // min_col))
     urgent = sorted(by_spawn, key=lambda w: (w.get("urgency", 3), w.get("spawned") or 0))[:k]
     keep = {w["name"] for w in urgent}
     shown = [x for x in names if x in keep]
-    return {"mode": "subset", "rows": [shown], "hidden": [x for x in names if x not in keep], "hq_ratio": hq_ratio}
+    return {"mode": "subset", "rows": [shown], "hidden": [x for x in names if x not in keep],
+            "hq_ratio": _hq_ratio(width, min_col, len(shown))}
 
 
 def _chain(start, names, prefix, ops):

@@ -17,7 +17,7 @@ class PlanTest(unittest.TestCase):
         p = board.plan(360, 70, [W("a", 3, 1), W("b", 0, 2), W("c", 3, 3), W("d", 1, 4)])
         self.assertEqual(p["mode"], "columns")
         self.assertEqual(p["rows"], [["a", "b", "c", "d"]])
-        self.assertAlmostEqual(p["hq_ratio"], 70 / 360)
+        self.assertAlmostEqual(p["hq_ratio"], 1 / 5)  # an equal share with the four columns
         self.assertEqual(board.plan(330, 70, [W("a"), W("b"), W("c"), W("d")])["mode"], "rows")
 
     def test_plan_rows_when_medium(self):
@@ -41,15 +41,19 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(p["rows"], [])
         self.assertEqual(board.plan(300, 70, [])["mode"], "empty")
 
-    def test_hq_ratio_clamped(self):
-        self.assertAlmostEqual(board.plan(150, 70, [W("a")])["hq_ratio"], 70 / 150)
-        self.assertAlmostEqual(board.plan(1000, 70, [W("a")])["hq_ratio"], 0.1)
+    def test_hq_ratio_equal_share(self):
+        self.assertAlmostEqual(board.plan(150, 70, [W("a")])["hq_ratio"], 0.5)
+        self.assertAlmostEqual(board.plan(1000, 70, [W("a")])["hq_ratio"], 0.5)
+        self.assertAlmostEqual(board.plan(554, 70, [W("a"), W("b"), W("c")])["hq_ratio"], 0.25)
+        rows = board.plan(230, 70, [W("a"), W("b"), W("c"), W("d")])
+        self.assertAlmostEqual(rows["hq_ratio"], 1 / 3)  # beside two columns of two rows
+        self.assertAlmostEqual(board.plan(180, 70, [W("a"), W("b"), W("c")])["hq_ratio"], 0.5)  # subset of one
 
     def test_ops_equal_ratios(self):
         p = board.plan(400, 70, [W("a", spawned=1), W("b", spawned=2), W("c", spawned=3), W("d", spawned=4)])
         ops = board.ops(p, "w1:p1")
         splits = [o for o in ops if o[0] == "split"]
-        self.assertEqual(splits[0][1:4], ("w1:p1", "right", round(70 / 400, 4)))
+        self.assertEqual(splits[0][1:4], ("w1:p1", "right", 0.2))
         self.assertEqual([round(o[3], 4) for o in splits[1:]], [0.25, 0.3333, 0.5])
         self.assertEqual([o[1] for o in ops if o[0] == "attach"], ["c0", "c1", "c2", "c3"])
         self.assertEqual([o[2] for o in ops if o[0] == "attach"], ["a", "b", "c", "d"])
@@ -58,7 +62,7 @@ class PlanTest(unittest.TestCase):
         p = board.plan(230, 70, [W("a", spawned=1), W("b", spawned=2), W("c", spawned=3)])
         ops = board.ops(p, "hq")
         splits = [o[:4] for o in ops if o[0] == "split"]
-        self.assertEqual(splits[0], ("split", "hq", "right", round(70 / 230, 4)))
+        self.assertEqual(splits[0], ("split", "hq", "right", round(1 / 3, 4)))
         self.assertEqual(splits[1][2:], ("down", 0.5))
         attaches = {o[2]: o[1] for o in ops if o[0] == "attach"}
         self.assertEqual(sorted(attaches), ["a", "b", "c"])
