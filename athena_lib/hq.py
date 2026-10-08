@@ -41,12 +41,35 @@ def _start_agent(pane):
                "--", *_claude_args(), timeout=200)
 
 
+LABEL = "athena"
+
+
+def keep_label(record=None, owned=False):
+    """Name the hq space and its Claude pane `athena`, and keep them so.
+
+    The renamer plugin retitles a space from its first prompt, and an unlabelled pane shows
+    its agent kind (`claude`) on its border. `owned` skips the check that the pane still runs
+    the athena agent, for a pane this call's caller just created.
+    """
+    record = record if record is not None else load()
+    ws, pane = record.get("workspace"), record.get("pane")
+    if not ws or not pane or not (owned or _alive(pane)):
+        return
+    try:
+        if herdr.call("workspace", "get", ws, timeout=10).get("workspace", {}).get("label") != LABEL:
+            herdr.call("workspace", "rename", ws, LABEL, timeout=10)
+        if herdr.call("pane", "get", pane, timeout=10).get("pane", {}).get("label") != LABEL:
+            herdr.call("pane", "rename", pane, LABEL, timeout=10)
+    except herdr.HerdrError:
+        pass
+
+
 def _workspace_is_hq(record) -> bool:
     try:
         ws = herdr.call("workspace", "get", record["workspace"], timeout=10).get("workspace", {})
     except (herdr.HerdrError, KeyError):
         return False
-    return ws.get("label") == "athena"
+    return ws.get("label") == LABEL
 
 
 def _routine():
@@ -57,6 +80,7 @@ def _routine():
 def hq(cwd=None, focus=True, start_board=True) -> dict:
     current = load()
     if current.get("pane") and _alive(current["pane"]):
+        keep_label(current, owned=True)
         if focus and current.get("workspace"):
             herdr.call("workspace", "focus", current["workspace"])
         if start_board:
@@ -65,6 +89,7 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
     if current.get("pane") and _workspace_is_hq(current):
         # The hq space survived but its Claude did not (exited, or a herdr restart): restart it there.
         _start_agent(current["pane"])
+        keep_label(current, owned=True)
         _routine()
         if focus:
             herdr.call("workspace", "focus", current["workspace"])
@@ -76,7 +101,7 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
     claim.parent.mkdir(parents=True, exist_ok=True)
     claim.write_text("hq\n")
     try:
-        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", "athena", "--focus" if focus else "--no-focus")
+        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", LABEL, "--focus" if focus else "--no-focus")
         pane = created["root_pane"]["pane_id"]
         _start_agent(pane)
     finally:
@@ -84,6 +109,7 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
     record = {"pane": pane, "workspace": created["workspace"]["workspace_id"],
               "terminal": created["root_pane"].get("terminal_id"), "cwd": cwd}
     _file().write_text(json.dumps(record, indent=2))
+    keep_label(record, owned=True)
     _routine()
     if start_board:
         board.start_watcher()
