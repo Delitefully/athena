@@ -1,0 +1,10 @@
+{
+  "description": "cos worker status: writes ~/.local/state/cos/workers/<name>.json for cos worker sessions only.",
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }]
+  }
+}
