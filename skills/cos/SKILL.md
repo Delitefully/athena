@@ -10,7 +10,7 @@ description: Chief-of-staff procedures for the hq session - turning Linear ticke
 ## 1. Session start (and after a restart or compaction)
 
 1. `cos status --pr` to see every live worker, its state, git and PR.
-2. Start the watcher with the Monitor tool: command `cos watch`, so each change arrives as a line. Re-arm it after a restart; Monitor is not restored on resume.
+2. Start the watcher with the Monitor tool: command `cos watch`, `timeout_ms` 1800000 (the maximum). Each change arrives as a line. Monitor expires after 30 minutes and sends one expiry notice: re-arm it every time, and after a restart (Monitor is not restored on resume). Workers' SendMessage reports wake you independently of the watcher.
 3. `cos board on` if the board watcher is not running (`cos board show` lists columns).
 4. Tell the human, in at most five lines: what needs them, then one line per worker.
 
