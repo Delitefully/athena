@@ -1,23 +1,23 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.png">
-  <img src="assets/logo-lockup.png" alt="athena" width="420">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.svg">
+  <img src="assets/logo-lockup.svg" alt="athena" width="360">
 </picture>
 
 A chief of staff for Claude Code in [herdr](https://herdr.dev). One Claude session named athena, in a herdr space of the same name, takes Linear tickets, launches a visible worker Claude for each in its own git worktree and herdr space, shows the workers as columns beside itself, and supervises them to merge-ready PRs. The human can type into any worker at any time.
 
-Design and decisions: `docs/decisions.md`. Plan: `docs/plans/2026-10-07-athena-v1.md`.
+Design and decisions: `docs/decisions.md`. Plan: `docs/plans/2026-10-07-athena-v1.md`. Brand: `docs/brand.md`.
 
-## What it looks like
+## How it works
 
-![A herdr window: the sidebar of spaces, the athena pane, and three worker columns](assets/board.svg)
+![athena's red thread weaves through three workers, takes one worker's question to you, and ties off when the work merges](assets/one-thread.svg)
 
 athena sits in its own space with the workers as columns beside it. It launches each ticket with a launch card, and when a worker gets stuck or finishes, a watch line appears and athena acts on it. When a worker needs a decision, athena asks you in its own pane and passes your answer on. Each worker is a full Claude session, so you can also type into its column directly.
 
-![A ticket's path: ticket, brief, spawn, worker, draft PR, review, ready](assets/lifecycle.svg)
+![A ticket's path: brief, a worker on its own worktree branch builds, tests and pushes, draft PR, review sends a finding back, ready](assets/ticket-path.svg)
 
 A ticket becomes a brief and a worker in its own worktree. The worker builds, tests, pushes and opens a draft PR. athena checks CI, has a fresh reviewer read the diff, and sends findings back until the PR is ready. Then it asks you: you merge, or tell athena to.
 
-![athena watch lines, each with what athena does about it](assets/watch.svg)
+![athena watch: routine progress streams by quietly; athena acts on a blocked worker, a failed check, a finished worker and a moved main](assets/watch.svg)
 
 `athena watch` prints one line per change, and athena reacts to each: it asks you about a blocked worker, sends a failed check back to its worker, starts a review on DONE, and asks a repo's workers to rebase when its main moves. Routine progress stays quiet.
 
