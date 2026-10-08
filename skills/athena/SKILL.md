@@ -56,6 +56,8 @@ athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-
 
 `athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (5 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 
+Exit code 3 means the worker is live but pending: its Claude stopped at a startup prompt (for example "Is this a project you trust?"), so its goal is not sent yet. Tell the human the space and the prompt from the message; they answer it in its column, never you. `athena watch` sends the goal once the worker is ready (`athena resume <w>` sends it by hand). `athena status` shows it as `goal pending (startup prompt)`; `athena retire <w>` works on it. Any other launch failure removes its space, or `athena status` lists it with the `athena retire` command to run.
+
 8. Move the Linear issue to In Progress. After launch, SendMessage the worker nothing; its goal is running. Subscribe for its next idle with SendMessage `notify_when_idle` only when you need to know (for example after a nudge).
 
 ## 3. Reacting to `athena watch` lines
@@ -63,6 +65,7 @@ athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-
 | Line | Do |
 |---|---|
 | `<w> state ...->blocked` | `athena status`; read its summary. A permission prompt: tell the human which worker and what it wants, they answer in its column. A `NEED:` question: answer if it is within the brief; otherwise ask the human with your recommendation and relay the answer. |
+| `<w> ... (startup prompt)` | A pending worker: tell the human which space and prompt; they answer it there. `<w> goal sent` follows on its own; a later `->idle` or `->working` is normal. |
 | `<w> report DONE` / `DONE_WITH_CONCERNS` | Run section 4 (verify and review). |
 | `<w> report NEEDS_CONTEXT` / `BLOCKED` | Supply the context or escalate; then SendMessage the worker. |
 | `<w> state ...->idle` without a report | It stopped early. `herdr agent read <w> --source visible --lines 40`, then nudge with SendMessage: what is left of the goal. Twice idle with no progress: tell the human. |
