@@ -14,7 +14,7 @@ class SpawnError(Exception):
     pass
 
 
-def _check_capacity(name, force):
+def _check_capacity(name, force, ignore_quota=False):
     live = ledger.live()
     if any(w["name"] == name for w in live):
         raise SpawnError(f"a worker named {name} is already live")
@@ -24,7 +24,7 @@ def _check_capacity(name, force):
     if len(live) >= cap and not force:
         raise SpawnError(f"{len(live)} workers are live; the cap is {cap} (use --force to go up to {HARD_CAP})")
     allowed, why = quota.gate()
-    if not allowed and not force:
+    if not allowed and not ignore_quota:
         raise SpawnError(f"not launching: {why}")
 
 
@@ -78,11 +78,12 @@ def claude_args(name, model, effort, settings):
 
 
 def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="opus", effort="high",
-          force=False, setup=True):
+          force=False, setup=True, ignore_quota=False):
     repo = Path(os.path.expanduser(str(repo))).resolve()
     if not paths.valid_name(name):
         raise SpawnError(f"invalid worker name {name!r}: use lowercase letters, digits, - and _ (max 32)")
-    _check_capacity(name, force)
+    _check_capacity(name, force, ignore_quota)
+    ledger.touch()
     pre = gitops.preflight(repo)
     if not pre["ok"]:
         raise SpawnError(f"preflight failed for {repo}: " + "; ".join(pre["problems"]))
@@ -112,8 +113,13 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
         ledger.append("failed", name, reason=str(exc), **record)
         raise SpawnError(f"launch of {name} failed: {exc}") from exc
     claim.unlink(missing_ok=True)
+    ledger.append("spawn", name, **record)
     goal_text = build_goal(goal, name, brief)
-    herdr.call("agent", "prompt", name, goal_text)
+    try:
+        herdr.call("agent", "prompt", name, goal_text)
+    except herdr.HerdrError as exc:
+        ledger.append("update", name, prompt=f"failed: {exc.code}")
+        raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: cos nudge {name} '<goal>'")
     try:
         herdr.call("agent", "wait", name, "--until", "working", "--until", "blocked", "--timeout", "30000", timeout=60)
         record["prompt"] = "accepted"
@@ -124,5 +130,5 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
         herdr.call("workspace", "report-metadata", record["workspace"], "--source", "cos", *tokens)
     except herdr.HerdrError:
         pass
-    ledger.append("spawn", name, **record)
+    ledger.append("update", name, prompt=record["prompt"])
     return {"name": name, **record}

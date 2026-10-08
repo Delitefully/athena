@@ -1,5 +1,6 @@
 #!/bin/sh
 # cos worker status hook. Does nothing unless this session is a cos worker.
+[ -f "${COS_STATE_DIR:-$HOME/.local/state/cos}/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
 if [ -z "${COS_WORKER:-}" ]; then
 	root="${COS_WORKTREE_ROOT:-$HOME/Developer/.worktrees}"
 	real_root=$(cd "$root" 2>/dev/null && pwd -P) || { cat >/dev/null; exit 0; }

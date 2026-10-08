@@ -6,7 +6,7 @@ set -eu
 main="$COS_REPO"
 wt=$(pwd)
 copy_file() { [ -f "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp "$main/$1" "$wt/$1" || true; }
-copy_dir() { [ -d "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp -R "$main/$1" "$wt/$1" || true; }
+copy_dir() { [ -d "$main/$1" ] && [ ! -e "$wt/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp -R "$main/$1" "$wt/$1" || true; }
 copy_file applications/.env
 copy_dir minikube/certs
 copy_file schemas/.env.local

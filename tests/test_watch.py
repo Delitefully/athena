@@ -62,6 +62,20 @@ class WatchTest(unittest.TestCase):
         self.assertIn("c new worker (working)", lines)
         self.assertIn("platform main moved 1a2b3c4..4d5e6f7", lines)
 
+    def test_snapshot_keeps_pr_when_gh_fails(self):
+        import tempfile as _t
+        tmp = _t.TemporaryDirectory()
+        env = helpers.isolated_env(tmp.name)
+        try:
+            ledger.append("spawn", "a", pane="w2:p1")
+            prev = {"workers": {"a": {"state": "working", "pr": {"checks": "pending", "url": "u"}, "report": None}}}
+            cur = watch.snapshot(with_pr=False, prev=prev)
+            self.assertEqual(cur["workers"]["a"]["pr"]["url"], "u")
+            self.assertNotIn("a pr opened u", watch.diff(prev, cur))
+        finally:
+            env.restore()
+            tmp.cleanup()
+
     def test_diff_retired_and_quiet(self):
         prev = {"workers": {"a": {"state": "working", "pr": None, "report": None}}, "mains": {}}
         self.assertEqual(watch.diff(prev, prev), [])

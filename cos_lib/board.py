@@ -3,6 +3,8 @@
 `plan` and `ops` are pure. `sync` reads herdr and the ledger, and rebuilds the columns only when the
 plan changes and no board column has focus. Columns run `herdr terminal attach <terminal> --takeover`.
 """
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -136,10 +138,47 @@ def _key(p):
     return json.dumps({"mode": p["mode"], "rows": p["rows"], "hq": round(p["hq_ratio"], 2)}, sort_keys=True)
 
 
+class BoardBusy(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def _lock():
+    """One board writer at a time: the watcher, spawn and retire may all call sync."""
+    f = open(paths.ensure() / "board.lock", "w")
+    try:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise BoardBusy("another board sync is running")
+        yield
+    finally:
+        f.close()
+
+
+def _hq_owned(pane_id) -> bool:
+    """The HQ id may be stale after a herdr restart: only use it while it runs the cos agent."""
+    try:
+        agent = herdr.call("agent", "get", pane_id, timeout=10).get("agent", {})
+    except herdr.HerdrError:
+        return False
+    return agent.get("name") == paths.hq_name() or agent.get("label") == paths.hq_name()
+
+
 def sync(force=False) -> dict:
+    try:
+        with _lock():
+            return _sync(force)
+    except BoardBusy:
+        return {"skipped": "another board sync is running", "changed": False, "postponed": False}
+
+
+def _sync(force) -> dict:
     hq = hq_pane()
     if not hq:
         raise RuntimeError("no HQ pane: run `cos hq` first, or set COS_HQ_PANE")
+    if not os.environ.get("COS_HQ_PANE") and not _hq_owned(hq):
+        raise RuntimeError(f"pane {hq} no longer runs the {paths.hq_name()} agent; run `cos hq`")
     layout = herdr.call("pane", "layout", "--pane", hq).get("layout", {})
     width = int(layout.get("area", {}).get("width") or 0)
     live = ledger.live()
@@ -157,43 +196,55 @@ def sync(force=False) -> dict:
         return result
     for c in columns:
         _close_owned(c)
+    save({"hq": hq, "key": None, "columns": [], "width": width, "ts": time.time()})
     terminals = {w["name"]: w["terminal"] for w in workers}
-    refs = {}
-    new_columns = []
-    for op in ops(p, hq):
-        if op[0] == "split":
-            _, target, direction, ratio, ref = op
-            target_id = refs.get(target, target)
-            created = herdr.call("pane", "split", target_id, "--direction", direction, "--ratio", str(ratio), "--no-focus")
-            refs[ref] = created["pane"]["pane_id"]
-        else:
-            _, ref, name = op
-            pane_id = refs[ref]
-            command = " ".join(shlex.quote(a) for a in herdr.argv("terminal", "attach", terminals[name], "--takeover"))
-            try:
+    refs, created, new_columns = {}, [], []
+    try:
+        for op in ops(p, hq):
+            if op[0] == "split":
+                _, target, direction, ratio, ref = op
+                pane_id = herdr.call("pane", "split", refs.get(target, target), "--direction", direction,
+                                     "--ratio", str(ratio), "--no-focus")["pane"]["pane_id"]
+                refs[ref] = pane_id
+                created.append(pane_id)
+            else:
+                _, ref, name = op
+                pane_id = refs[ref]
                 herdr.call("pane", "rename", pane_id, f"board:{name}", timeout=15)
+                command = " ".join(shlex.quote(a) for a in herdr.argv("terminal", "attach", terminals[name], "--takeover"))
+                herdr.call("pane", "run", pane_id, command, timeout=15)
+                new_columns.append({"pane": pane_id, "name": name, "terminal": terminals[name]})
+    except (herdr.HerdrError, KeyError) as exc:
+        for pane_id in created:  # created by this run, so ours even if not yet labelled
+            try:
+                herdr.call("pane", "close", pane_id, timeout=15)
             except herdr.HerdrError:
                 pass
-            herdr.call("pane", "run", pane_id, command, timeout=15)
-            new_columns.append({"pane": pane_id, "name": name, "terminal": terminals[name]})
+        save({"hq": hq, "key": None, "columns": [], "width": width, "ts": time.time(), "error": str(exc)})
+        raise RuntimeError(f"board rebuild failed and was rolled back: {exc}") from exc
     save({"hq": hq, "key": key, "columns": new_columns, "width": width, "ts": time.time()})
     result["changed"] = True
     return result
 
 
 def clear():
-    saved = load()
-    for c in saved.get("columns", []):
-        _close_owned(c)
-    save({})
+    with contextlib.suppress(BoardBusy):
+        with _lock():
+            for c in load().get("columns", []):
+                _close_owned(c)
+            save({})
 
 
 def watch(interval=2.0):
+    last_error = None
     while True:
         try:
             sync()
-        except Exception as exc:  # keep watching; report once per error kind
-            print(f"board: {exc}", file=sys.stderr, flush=True)
+            last_error = None
+        except Exception as exc:  # keep watching; log each distinct error once
+            if str(exc) != last_error:
+                print(f"board: {exc}", file=sys.stderr, flush=True)
+                last_error = str(exc)
         time.sleep(interval)
 
 
@@ -202,12 +253,14 @@ def _pidfile():
 
 
 def running_pid():
+    """The pid in the pidfile, only if that process really is our board watcher."""
     try:
         pid = int(_pidfile().read_text().strip())
         os.kill(pid, 0)
-        return pid
     except (OSError, ValueError):
         return None
+    cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    return pid if "cos_lib.cli board watch" in cmd else None
 
 
 def start_watcher():

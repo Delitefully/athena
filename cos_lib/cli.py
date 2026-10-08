@@ -20,8 +20,10 @@ def cmd_preflight(a):
 def cmd_spawn(a):
     goal = Path(a.goal_file).read_text() if a.goal_file else a.goal
     result = spawn.spawn(a.repo, a.branch, a.name, a.brief, goal, linear=a.linear, title=a.title, model=a.model,
-                         effort=a.effort, force=a.force, setup=not a.no_setup)
+                         effort=a.effort, force=a.force, setup=not a.no_setup, ignore_quota=a.ignore_quota)
     _print(result)
+    if board.running_pid():
+        return 0
     try:
         board.sync()
     except Exception as exc:  # the board is optional; HQ may not exist yet
@@ -94,12 +96,17 @@ def cmd_pr(a):
 
 
 def cmd_nudge(a):
+    if a.name not in {w["name"] for w in ledger.live()}:
+        print(f"{a.name} is not a live cos worker", file=sys.stderr)
+        return 2
     _print(herdr.call("agent", "prompt", a.name, " ".join(a.text)))
     return 0
 
 
 def cmd_retire(a):
     _print(retire.retire(a.name, force=a.force, keep_worktree=a.keep_worktree))
+    if board.running_pid():
+        return 0
     try:
         board.sync(force=True)
     except Exception:
@@ -135,6 +142,7 @@ def parser():
     s.add_argument("--effort", default="high")
     s.add_argument("--force", action="store_true")
     s.add_argument("--no-setup", action="store_true")
+    s.add_argument("--ignore-quota", action="store_true", help="launch even above the 5-hour quota gate")
     s.set_defaults(func=cmd_spawn)
 
     s = sub.add_parser("status", help="merged status of live workers")

@@ -49,7 +49,7 @@ def _file(name):
 
 def read(name):
     try:
-        with open(_file(name)) as f:
+        with open(paths.state_dir() / "workers" / f"{name}.json") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None

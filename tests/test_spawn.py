@@ -91,6 +91,18 @@ class SpawnTest(unittest.TestCase):
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
         self.assertIn("quota", str(ctx.exception))
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn(force=True)
+        self.assertEqual(self.run_spawn(ignore_quota=True)["name"], "plt-1")
+
+    def test_prompt_failure_leaves_worker_tracked(self):
+        err = {"error": {"code": "agent_not_found", "message": "gone"}}
+        self.scenario([{"match": ["agent", "prompt"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            self.run_spawn()
+        self.assertIn("cos nudge plt-1", str(ctx.exception))
+        w = ledger.workers()["plt-1"]
+        self.assertEqual((w["state"], w["prompt"]), ("live", "failed: agent_not_found"))
 
     def test_spawn_refuses_dirty_main(self):
         self.scenario()
