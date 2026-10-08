@@ -8,6 +8,7 @@ import time
 
 from athena_lib import gitops, herdr, ledger, status
 from athena_lib.retire import workspace_owned
+from athena_lib.spawn import space_label
 
 
 def _short(sha):
@@ -71,7 +72,7 @@ def keep_labels():
         ws = w.get("workspace")
         if not ws:
             continue
-        want = f"{w['name']} {w.get('title') or ''}".strip()[:48]
+        want = space_label(w["name"], w.get("title"), w.get("linear"), w.get("branch"))
         if not workspace_owned(ws, w.get("path")):
             continue
         try:
