@@ -47,3 +47,7 @@ claude plugin install cos@cos
 ## Environment
 
 `COS_STATE_DIR`, `COS_WORKTREE_ROOT` (default `~/Developer/.worktrees`), `COS_HERDR`, `COS_HQ` (default `cos`), `COS_MIN_COL` (70), `COS_MAX_WORKERS` (4, hard cap 5), `COS_PLUGIN_DIR` (load the plugin from a directory in workers), `COS_HQ_PANE`.
+
+## Update after editing
+
+The `cos` CLI and the prompt files (`hq.md`, `worker.md`) run from this repository. The hooks and the `cos` skill run from the plugin cache: bump `version` in `.claude-plugin/plugin.json`, then `claude plugin marketplace update cos && claude plugin update cos@cos`, and restart the sessions that should pick it up.
