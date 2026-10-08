@@ -29,6 +29,24 @@ def agent_owned(name) -> bool:
     return agent.get("name") == name
 
 
+def remove_worktree(worker, force=False) -> dict:
+    """Remove the worker's space through herdr when it is still ours (that also stops its Claude), else the checkout."""
+    path, repo = worker.get("path"), worker.get("repo")
+    out = {"removed": False}
+    if workspace_owned(worker.get("workspace"), path):
+        args = ["worktree", "remove", "--workspace", worker["workspace"]] + (["--force"] if force else [])
+        try:
+            herdr.call(*args, timeout=60)
+            out["removed"] = True
+            return out
+        except herdr.HerdrError as exc:
+            out["herdr_error"] = str(exc)
+    if path and os.path.isdir(path) and repo:
+        gitops.git(repo, "worktree", "remove", *(["--force"] if force else []), path)
+        out["removed"] = True
+    return out
+
+
 def retire(name, force=False, keep_worktree=False) -> dict:
     worker = ledger.workers().get(name)
     if not worker or worker.get("state") not in ("live", "failed"):
@@ -54,22 +72,20 @@ def retire(name, force=False, keep_worktree=False) -> dict:
             if wip:
                 result["wip_backup"] = f"refs/athena-backup/{name}/{int(time.time())}-wip"
                 gitops.git(repo, "update-ref", result["wip_backup"], wip)
-    if agent_owned(name):
+    if worker.get("goal_pending"):
+        # Its Claude may sit at a startup prompt: typing /exit there could answer it. Closing the pane stops it.
+        if keep_worktree and workspace_owned(worker.get("workspace"), path) and worker.get("pane"):
+            try:
+                herdr.call("pane", "close", worker["pane"], timeout=15)
+            except herdr.HerdrError:
+                pass
+    elif agent_owned(name):
         try:
             herdr.call("agent", "prompt", name, "/exit", timeout=15)
             time.sleep(float(os.environ.get("ATHENA_EXIT_GRACE", "2")))
         except herdr.HerdrError:
             pass
-    if not keep_worktree and exists:
-        if workspace_owned(worker.get("workspace"), path):
-            args = ["worktree", "remove", "--workspace", worker["workspace"]] + (["--force"] if force else [])
-            try:
-                herdr.call(*args, timeout=60)
-                result["removed"] = True
-            except herdr.HerdrError as exc:
-                result["herdr_error"] = str(exc)
-        if not result["removed"] and repo:
-            gitops.git(repo, "worktree", "remove", *(["--force"] if force else []), path)
-            result["removed"] = True
+    if not keep_worktree:
+        result.update(remove_worktree(worker, force=force))
     ledger.append("retire", name, backup=result["backup"], wip_backup=result["wip_backup"], removed=result["removed"])
     return result

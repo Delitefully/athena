@@ -10,7 +10,9 @@ def urgency(state: str) -> int:
 
 
 def quick_state(worker) -> str:
-    """Hook state only: cheap enough for the board loop."""
+    """Hook state only: cheap enough for the board loop. A pending worker needs the human, so it counts as blocked."""
+    if worker.get("goal_pending"):
+        return "blocked"
     hook = hookstatus.read(worker["name"]) or {}
     return hook.get("state") or "unknown"
 
@@ -22,7 +24,8 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "pane": worker.get("pane"), "workspace": worker.get("workspace"),
            "state": hook.get("state") or "unknown", "summary": hook.get("summary", ""),
            "report": hook.get("report"), "last_report": hook.get("last_report"),
-           "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None}
+           "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
+           "pending": bool(worker.get("goal_pending")), "detail": None}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})
@@ -35,7 +38,12 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
             out["git"]["head"] = gitops.git(worker["path"], "rev-parse", "--short", "HEAD", check=False)
         except gitops.GitError:
             out["git"] = None
-    if out["state"] in ("unknown", "starting") and out["herdr"] in ("blocked", "working", "idle", "done"):
+    if out["pending"]:
+        # Its goal waits for a ready Claude: blocked means a startup prompt only the human may answer.
+        out["state"] = "blocked" if out["herdr"] == "blocked" else "starting"
+        out["detail"] = "startup prompt" if out["state"] == "blocked" else "goal pending"
+        out["state_source"] = "pending"
+    elif out["state"] in ("unknown", "starting") and out["herdr"] in ("blocked", "working", "idle", "done"):
         out["state"] = out["herdr"]
         out["state_source"] = "herdr"
     else:

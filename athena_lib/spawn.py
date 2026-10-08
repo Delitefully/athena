@@ -1,4 +1,6 @@
 """Launch one worker: preflight, worktree space, Claude with its brief and settings, then its /goal."""
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -6,9 +8,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from athena_lib import gitops, herdr, ledger, paths, quota
+from athena_lib import gitops, herdr, ledger, paths, quota, retire
 
 HARD_CAP = 5
+STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
+NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 
 
 class SpawnError(Exception):
@@ -121,6 +125,7 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
     record = {"repo": str(repo), "branch": branch, "path": os.path.realpath(path), "linear": linear,
               "title": title, "model": model, "effort": effort}
     claim.write_text(name + "\n")
+    pending = None
     try:
         created = _create_worktree(repo, branch, path, label)
         record.update(workspace=created["workspace"]["workspace_id"], pane=created["root_pane"]["pane_id"],
@@ -130,15 +135,25 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
         brief = paths.ensure("briefs") / f"{name}.md"
         shutil.copyfile(brief_path, brief)
         settings = _write_settings(name, brief)
-        herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
-                   "--", *claude_args(name, model, effort, settings), timeout=200)
+        try:
+            herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
+                       "--", *claude_args(name, model, effort, settings), timeout=200)
+        except herdr.HerdrError as exc:
+            if not _blocked_at_startup(name, exc):
+                raise
+            pending = str(exc)
     except (herdr.HerdrError, gitops.GitError, SpawnError, OSError, KeyError, subprocess.SubprocessError) as exc:
         claim.unlink(missing_ok=True)
-        ledger.append("failed", name, reason=str(exc), **record)
-        raise SpawnError(f"launch of {name} failed: {exc}") from exc
+        raise SpawnError(_fail(name, record, exc)) from exc
     claim.unlink(missing_ok=True)
-    ledger.append("spawn", name, **record)
     goal_text = build_goal(goal, name, brief)
+    if pending:
+        ledger.append("spawn", name, goal_pending=goal_text, pending_reason=pending, **record)
+        _report_metadata(record["workspace"], linear)
+        screen = _screen(name)
+        return {"name": name, **record, "pending": True, "label": label, "screen": screen,
+                "message": pending_message(name, label, record, screen)}
+    ledger.append("spawn", name, **record)
     try:
         herdr.call("agent", "prompt", name, goal_text)
     except herdr.HerdrError as exc:
@@ -149,10 +164,123 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
         record["prompt"] = "accepted"
     except herdr.HerdrError as exc:
         record["prompt"] = f"unconfirmed: {exc.code}"
-    tokens = ["--token", "athena=worker"] + (["--token", f"linear={linear}"] if linear else [])
-    try:
-        herdr.call("workspace", "report-metadata", record["workspace"], "--source", "athena", *tokens)
-    except herdr.HerdrError:
-        pass
+    _report_metadata(record["workspace"], linear)
     ledger.append("update", name, prompt=record["prompt"])
     return {"name": name, **record}
+
+
+def _report_metadata(workspace, linear):
+    tokens = ["--token", "athena=worker"] + (["--token", f"linear={linear}"] if linear else [])
+    try:
+        herdr.call("workspace", "report-metadata", workspace, "--source", "athena", *tokens)
+    except herdr.HerdrError:
+        pass
+
+
+def _agent_status(name):
+    try:
+        return herdr.call("agent", "get", name, timeout=10).get("agent", {}).get("agent_status")
+    except herdr.HerdrError:
+        return None
+
+
+def _blocked_at_startup(name, exc) -> bool:
+    """herdr says agent_not_ready when Claude stops at a startup prompt; for other errors, ask herdr."""
+    return exc.code in STARTUP_BLOCKED or _agent_status(name) == "blocked"
+
+
+def _fail(name, record, exc) -> str:
+    """Record a failed launch, then remove what it made. Returns the error message."""
+    ledger.append("failed", name, reason=str(exc), cleaned=False, **record)
+    try:
+        removed = retire.remove_worktree(record, force=True)
+        cleaned = removed["removed"] or not (record.get("workspace") or os.path.isdir(record.get("path") or ""))
+        why = removed.get("herdr_error")
+    except (gitops.GitError, OSError, subprocess.SubprocessError) as cleanup_exc:
+        cleaned, why = False, str(cleanup_exc)
+    ledger.append("update", name, cleaned=cleaned, cleanup_error=why if not cleaned else None)
+    if cleaned:
+        return f"launch of {name} failed: {exc}"
+    return f"launch of {name} failed: {exc}; its space could not be removed ({why}): athena retire {name}"
+
+
+def _screen(name) -> str:
+    try:
+        return herdr.text("agent", "read", name, "--source", "visible", "--lines", "40", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def pending_message(name, label, record, screen="") -> str:
+    lines = [line.strip() for line in (screen or "").splitlines() if line.strip()]
+    if "trust" in (screen or "").lower():
+        what = f"Claude asks whether you trust the folder {record.get('path')}"
+    elif lines:
+        what = f"Claude shows: {lines[-1][:120]}"
+    else:
+        what = "Claude is waiting at a startup prompt"
+    return (f"{name} is waiting at a startup prompt. {what}. Open the space \"{label}\" (pane {record.get('pane')}, "
+            f"or its board column) and answer it yourself; athena never answers it. Its goal is sent once Claude "
+            f"is ready, by athena watch, or by hand with: athena resume {name}")
+
+
+@contextlib.contextmanager
+def _goal_lock(name):
+    """One sender per worker: watch processes and resume may race."""
+    f = open(paths.ensure("locks") / f"{name}.lock", "w")
+    try:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        f.close()
+
+
+def deliver(name) -> dict:
+    """Send a worker's pending goal once its Claude is idle, at most once.
+
+    Outcomes: sent, waiting (not ready yet), unconfirmed (herdr may have typed it; never resent),
+    not-pending, busy (another sender holds the lock).
+    """
+    with _goal_lock(name) as locked:
+        if not locked:
+            return {"name": name, "outcome": "busy"}
+        w = ledger.workers().get(name)
+        if not w or w.get("state") != "live" or not w.get("goal_pending"):
+            return {"name": name, "outcome": "not-pending"}
+        agent_status = _agent_status(name)
+        if agent_status != "idle":
+            return {"name": name, "outcome": "waiting", "agent_status": agent_status}
+        goal = w["goal_pending"]
+        ledger.append("update", name, goal_pending=None, prompt="sending")  # written first: a crash cannot resend
+        try:
+            herdr.call("agent", "prompt", name, goal)
+        except herdr.HerdrError as exc:
+            if exc.code in NOT_SENT:
+                ledger.append("update", name, goal_pending=goal, prompt=f"not sent: {exc.code}")
+                return {"name": name, "outcome": "waiting", "agent_status": exc.code}
+            ledger.append("update", name, prompt=f"unconfirmed: {exc.code}", pending_reason=None)
+            return {"name": name, "outcome": "unconfirmed", "error": str(exc)}
+        ledger.append("update", name, prompt="sent", pending_reason=None)
+        return {"name": name, "outcome": "sent"}
+
+
+def deliver_pending() -> list:
+    return [deliver(w["name"]) for w in ledger.live() if w.get("goal_pending")]
+
+
+def resume(name) -> dict:
+    """Send a pending goal by hand, once the human has answered the startup prompt."""
+    result = deliver(name)
+    outcome = result["outcome"]
+    if outcome == "not-pending":
+        raise SpawnError(f"{name} has no pending goal (not a live worker, or its goal was already sent)")
+    if outcome == "waiting":
+        raise SpawnError(f"{name} is not ready (herdr: {result.get('agent_status')}); answer its startup prompt "
+                         f"in its space first, then retry")
+    if outcome == "busy":
+        raise SpawnError(f"another athena process is sending {name}'s goal right now")
+    return result

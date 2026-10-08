@@ -6,6 +6,8 @@ from pathlib import Path
 
 from athena_lib import board, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
 
+PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
+
 
 def _print(data):
     print(json.dumps(data, indent=2, default=str))
@@ -21,22 +23,29 @@ def cmd_spawn(a):
     goal = Path(a.goal_file).read_text() if a.goal_file else a.goal
     result = spawn.spawn(a.repo, a.branch, a.name, a.brief, goal, linear=a.linear, title=a.title, model=a.model,
                          effort=a.effort, force=a.force, setup=not a.no_setup, ignore_quota=a.ignore_quota)
-    _print(result)
+    _print({k: v for k, v in result.items() if k != "screen"})
+    code = 0
+    if result.get("pending"):
+        print(result["message"], file=sys.stderr)
+        code = PENDING
     if board.running_pid():
-        return 0
+        return code
     try:
         board.sync()
     except Exception as exc:  # the board is optional; HQ may not exist yet
         print(f"board not updated: {exc}", file=sys.stderr)
-    return 0
+    return code
 
 
 def cmd_status(a):
     rows = [status.collect(w, with_pr=a.pr) for w in ledger.live()]
     rows.sort(key=lambda r: (r["urgency"], r["name"]))
+    left = ledger.leftovers()
     if a.json:
         _print(rows)
         return 0
+    for w in left:
+        print(f"{w['name']:<12}  failed    space not removed ({w.get('cleanup_error') or 'unknown'}): athena retire {w['name']}")
     if not rows:
         print("no live workers")
         return 0
@@ -50,6 +59,8 @@ def cmd_status(a):
         report = r.get("report") or {}
         if report:
             bits.append(f"report={report.get('status')}")
+        if r.get("pending"):
+            bits.append(f"goal pending ({r['detail']})")
         print("  ".join(bits))
         if r.get("summary"):
             print("    " + r["summary"].replace("\n", " ")[-160:])
@@ -96,10 +107,20 @@ def cmd_pr(a):
 
 
 def cmd_nudge(a):
-    if a.name not in {w["name"] for w in ledger.live()}:
+    live = {w["name"]: w for w in ledger.live()}
+    if a.name not in live:
         print(f"{a.name} is not a live athena worker", file=sys.stderr)
         return 2
+    if live[a.name].get("goal_pending"):
+        print(f"{a.name} has not received its goal yet and may be at a startup prompt; the human answers that in its "
+              f"space, then: athena resume {a.name}", file=sys.stderr)
+        return 2
     _print(herdr.call("agent", "prompt", a.name, " ".join(a.text)))
+    return 0
+
+
+def cmd_resume(a):
+    _print(spawn.resume(a.name))
     return 0
 
 
@@ -167,6 +188,10 @@ def parser():
     s.add_argument("name")
     s.add_argument("text", nargs="+")
     s.set_defaults(func=cmd_nudge)
+
+    s = sub.add_parser("resume", help="send the goal of a worker that waited at a startup prompt")
+    s.add_argument("name")
+    s.set_defaults(func=cmd_resume)
 
     s = sub.add_parser("retire", help="back up, stop and remove a worker")
     s.add_argument("name")
