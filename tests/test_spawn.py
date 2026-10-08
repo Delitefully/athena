@@ -112,17 +112,26 @@ class SpawnTest(unittest.TestCase):
         self.assertIn("modified tracked files", str(ctx.exception))
 
     def test_spawn_failure_removes_claim(self):
-        err = {"error": {"code": "agent_not_ready", "message": "blocked during startup"}}
+        err = {"error": {"code": "pane_not_found", "message": "gone"}}
         self.scenario([{"match": ["agent", "start"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
-        self.assertIn("agent_not_ready", str(ctx.exception))
+        self.assertIn("pane_not_found", str(ctx.exception))
         wt = paths.worktree_path(self.repo, "gabriel/plt-1-fix")
         self.assertFalse(paths.claim_file(str(wt)).exists())
         w = ledger.workers()["plt-1"]
         self.assertEqual(w["state"], "failed")
         self.assertEqual(w["pane"], "w9:p1")
         self.assertEqual(ledger.live(), [])
+
+    def test_startup_prompt_is_not_a_failure(self):
+        err = {"error": {"code": "agent_not_ready", "message": "blocked during startup"}}
+        self.scenario([{"match": ["agent", "start"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
+        result = self.run_spawn()
+        self.assertTrue(result["pending"])
+        wt = paths.worktree_path(self.repo, "gabriel/plt-1-fix")
+        self.assertFalse(paths.claim_file(str(wt)).exists())
+        self.assertEqual([w["name"] for w in ledger.live()], ["plt-1"])
 
     def test_claim_written_before_worktree_create(self):
         wt = paths.worktree_path(self.repo, "gabriel/plt-1-fix")

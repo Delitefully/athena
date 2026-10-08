@@ -6,9 +6,8 @@ import os
 import sys
 import time
 
-from athena_lib import gitops, herdr, hq, ledger, status
+from athena_lib import gitops, herdr, hq, ledger, spawn, status
 from athena_lib.retire import workspace_owned
-from athena_lib.spawn import space_label
 
 
 def _short(sha):
@@ -20,11 +19,12 @@ def diff(prev: dict, cur: dict) -> list:
     pw, cw = prev.get("workers", {}), cur.get("workers", {})
     for name, now in cw.items():
         before = pw.get(name)
+        detail = f" ({now['detail']})" if now.get("detail") else ""
         if before is None:
-            lines.append(f"{name} new worker ({now.get('state')})")
+            lines.append(f"{name} new worker ({now.get('state')}{', ' + now['detail'] if now.get('detail') else ''})")
             continue
         if before.get("state") != now.get("state"):
-            lines.append(f"{name} state {before.get('state')}->{now.get('state')}")
+            lines.append(f"{name} state {before.get('state')}->{now.get('state')}{detail}")
         rep_now = (now.get("report") or {}).get("status")
         rep_before = (before.get("report") or {}).get("status")
         if rep_now and rep_now != rep_before:
@@ -57,7 +57,7 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
-        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"]}
+        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"]}
         repo = w.get("repo")
         if repo and repo not in mains:
             if fetch:
@@ -67,13 +67,31 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
     return {"workers": workers, "mains": mains}
 
 
+def step(prev, fetch=False, with_pr=True):
+    """One watch tick: send goals that were waiting for a ready Claude, then diff. Returns (snapshot, lines)."""
+    lines, missing = [], []
+    told = set((prev or {}).get("missing", []))
+    for r in spawn.deliver_pending():
+        if r["outcome"] == "sent":
+            lines.append(f"{r['name']} goal sent")
+        elif r["outcome"] == "unconfirmed":
+            lines.append(f"{r['name']} goal unconfirmed ({r.get('error')}): check its pane, do not resend blindly")
+        elif r["outcome"] == "missing":
+            missing.append(r["name"])
+            if r["name"] not in told:
+                lines.append(f"{r['name']} goal not sent: {r['problem']}")
+    cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
+    cur["missing"] = missing
+    return cur, lines + ([] if prev is None else diff(prev, cur))
+
+
 def keep_labels():
     hq.keep_label()
     for w in ledger.live():
         ws = w.get("workspace")
         if not ws:
             continue
-        want = space_label(w["name"], w.get("title"), w.get("linear"), w.get("branch"))
+        want = spawn.space_label(w["name"], w.get("title"), w.get("linear"), w.get("branch"))
         if not workspace_owned(ws, w.get("path")):
             continue
         try:
@@ -92,14 +110,13 @@ def run(interval=20, fetch_every=120):
         if fetch:
             last_fetch = time.time()
         try:
-            cur = snapshot(fetch=fetch, prev=prev)
-            if prev is None:
-                names = ", ".join(f"{n}={v['state']}" for n, v in cur["workers"].items()) or "no live workers"
+            first = prev is None
+            prev, lines = step(prev, fetch=fetch)
+            if first:
+                names = ", ".join(f"{n}={v['state']}" for n, v in prev["workers"].items()) or "no live workers"
                 print(f"watching: {names}", flush=True)
-            else:
-                for line in diff(prev, cur):
-                    print(line, flush=True)
-            prev = cur
+            for line in lines:
+                print(line, flush=True)
             keep_labels()
         except Exception as exc:
             print(f"watch error: {exc}", file=sys.stderr, flush=True)

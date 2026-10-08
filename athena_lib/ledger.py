@@ -77,3 +77,8 @@ def find_by_path(cwd: str):
         if path and (real == path or real.startswith(path.rstrip("/") + "/")):
             return w
     return None
+
+
+def leftovers() -> list:
+    """Failed launches whose space or worktree may still exist: retire them."""
+    return [w for w in workers().values() if w.get("state") == "failed" and w.get("cleaned") is False]
