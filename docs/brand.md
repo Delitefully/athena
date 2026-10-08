@@ -54,3 +54,10 @@ Technical constraints, so the files render on GitHub through `<img>`:
 - The un-animated state is the most explanatory frame. Motion lives inside `@media (prefers-reduced-motion: no-preference)`, so reduced motion shows that still. (SMIL ignores reduced motion, so avoid it.)
 - Light and dark come from `@media (prefers-color-scheme: dark)` variables, with the graphic's own ground.
 - 960 px wide, under 60 KB each, labels outlined, tickets fictional (`abc-101`).
+- Inside `<img>`, the colour scheme follows the reader's OS or browser, not GitHub's theme toggle. Each graphic carries its own ground, so it always stays self-consistent.
+
+Checking a change:
+
+- `xmllint --noout assets/*.svg`, and `grep -nE '<script|foreignObject|@import' assets/*.svg` should find nothing. A grep for `http` matches only the `xmlns="http://www.w3.org/2000/svg"` declaration.
+- Render frames by seeking the CSS animations (`document.getAnimations()`), in light and dark. Check reduced motion through `<img>` with Chrome's real `--force-prefers-reduced-motion` flag; DevTools media emulation does not reach SVG images.
+- Over/under crossings: where the thread passes under a line, the gap must span the thread's full width along that line, about `(halo / 2) / |slope| + (thread / 2) · √(1 + 1/slope²)`. A fixed width leaves notches at shallow crossings.
