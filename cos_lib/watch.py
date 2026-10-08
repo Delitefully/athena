@@ -7,6 +7,7 @@ import sys
 import time
 
 from cos_lib import gitops, herdr, ledger, status
+from cos_lib.retire import workspace_owned
 
 
 def _short(sha):
@@ -49,11 +50,13 @@ def diff(prev: dict, cur: dict) -> list:
     return lines
 
 
-def snapshot(fetch=False, with_pr=True) -> dict:
+def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
     workers, mains = {}, {}
+    before = (prev or {}).get("workers", {})
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
-        workers[w["name"]] = {"state": s["state"], "pr": s["pr"], "report": s["report"]}
+        pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
+        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"]}
         repo = w.get("repo")
         if repo and repo not in mains:
             if fetch:
@@ -69,6 +72,8 @@ def keep_labels():
         if not ws:
             continue
         want = f"{w['name']} {w.get('title') or ''}".strip()[:48]
+        if not workspace_owned(ws, w.get("path")):
+            continue
         try:
             current = herdr.call("workspace", "get", ws, timeout=10).get("workspace", {}).get("label")
             if current and current != want:
@@ -85,7 +90,7 @@ def run(interval=20, fetch_every=120):
         if fetch:
             last_fetch = time.time()
         try:
-            cur = snapshot(fetch=fetch)
+            cur = snapshot(fetch=fetch, prev=prev)
             if prev is None:
                 names = ", ".join(f"{n}={v['state']}" for n, v in cur["workers"].items()) or "no live workers"
                 print(f"watching: {names}", flush=True)

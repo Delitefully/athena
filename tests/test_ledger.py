@@ -40,6 +40,15 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(ledger.workers()["a"]["state"], "live")
         self.assertEqual(ledger.workers()["a"]["pane"], "w9:p1")
 
+    def test_failed_respawn_does_not_inherit_old_ids(self):
+        ledger.append("spawn", "a", pane="w2:p1", workspace="w2")
+        ledger.append("retire", "a")
+        ledger.append("failed", "a", reason="create failed", path="/new")
+        w = ledger.workers()["a"]
+        self.assertEqual(w["state"], "failed")
+        self.assertNotIn("pane", w)
+        self.assertNotIn("workspace", w)
+
     def test_ledger_tolerates_corrupt_line(self):
         ledger.append("spawn", "a", pane="w1:p1")
         with open(paths.state_dir() / "ledger.jsonl", "a") as f:

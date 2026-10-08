@@ -145,6 +145,35 @@ class SyncTest(unittest.TestCase):
         board.clear()
         self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "close"]], [])
 
+    def test_split_failure_rolls_back(self):
+        err = '{"error":{"code":"split_failed","message":"no room"}}'
+        write_scenario(self.tmp.name, [
+            {"match": ["pane", "layout"], "stdout": {"result": {"layout": {"area": {"width": 330}}}}},
+            {"match": ["pane", "split"], "stdout": {"result": {"pane": {"pane_id": "w1:p7"}}}, "times": 1},
+            {"match": ["pane", "split"], "stdout": "", "stderr": err, "exit": 1},
+        ])
+        with self.assertRaises(RuntimeError):
+            board.sync()
+        self.assertIn(["pane", "close", "w1:p7"], logged_calls(self.tmp.name))
+        self.assertEqual(board.load()["columns"], [])
+
+    def test_stale_hq_refused(self):
+        self.env.restore()
+        self.env = helpers.isolated_env(self.tmp.name)
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w1:p1"}))
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"name": "claude-w1"}}}}])
+        with self.assertRaises(RuntimeError) as ctx:
+            board.sync()
+        self.assertIn("no longer runs", str(ctx.exception))
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "split"]], [])
+
+    def test_sync_skips_when_locked(self):
+        import fcntl
+        with open(paths.ensure() / "board.lock", "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            self.scenario(330)
+            self.assertIn("skipped", board.sync())
+
     def test_sync_uses_urgency_when_narrow(self):
         ledger.append("spawn", "c", pane="w4:p1", terminal="term_c", workspace="w4")
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "x"}, "b")

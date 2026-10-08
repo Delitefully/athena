@@ -12,6 +12,10 @@ def _file():
     return paths.ensure() / "ledger.jsonl"
 
 
+def _read_file():
+    return paths.state_dir() / "ledger.jsonl"
+
+
 def append(event: str, name: str, **fields) -> dict:
     record = {"ts": time.time(), "event": event, "name": name, **fields}
     line = json.dumps(record, sort_keys=True) + "\n"
@@ -23,9 +27,13 @@ def append(event: str, name: str, **fields) -> dict:
     return record
 
 
+def touch():
+    _file().touch(exist_ok=True)
+
+
 def events():
     try:
-        with open(_file()) as f:
+        with open(_read_file()) as f:
             for line in f:
                 try:
                     yield json.loads(line)
@@ -46,6 +54,8 @@ def workers() -> dict:
         fields = {k: v for k, v in ev.items() if k not in ("event", "ts")}
         if kind == "spawn":
             out[name] = {**fields, "state": "live", "spawned": ev.get("ts")}
+        elif kind == "failed":
+            out[name] = {**fields, "state": "failed"}
         elif name in out:
             out[name].update(fields)
             if kind in TERMINAL:

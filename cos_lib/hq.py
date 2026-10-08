@@ -20,9 +20,38 @@ def load():
 def _alive(pane):
     try:
         agent = herdr.call("agent", "get", pane, timeout=10).get("agent", {})
-        return agent.get("agent") == "claude"
+        return agent.get("name") == paths.hq_name()
     except herdr.HerdrError:
         return False
+
+
+def _claude_args():
+    settings = paths.ensure("settings") / "hq.json"
+    settings.write_text(json.dumps({"crossSessionInbound": "accept",
+                                    "env": {"COS_ROLE": "hq", "COS_STATE_DIR": str(paths.state_dir())}}, indent=2))
+    args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
+            "--settings", str(settings)]
+    if os.environ.get("COS_PLUGIN_DIR"):
+        args += ["--plugin-dir", os.environ["COS_PLUGIN_DIR"]]
+    return args
+
+
+def _start_agent(pane):
+    herdr.call("agent", "start", paths.hq_name(), "--kind", "claude", "--pane", pane, "--timeout", "120000",
+               "--", *_claude_args(), timeout=200)
+
+
+def _workspace_is_hq(record) -> bool:
+    try:
+        ws = herdr.call("workspace", "get", record["workspace"], timeout=10).get("workspace", {})
+    except (herdr.HerdrError, KeyError):
+        return False
+    return ws.get("label") == "hq"
+
+
+def _routine():
+    herdr.call("agent", "prompt", paths.hq_name(),
+               "Start your HQ routine: run `cos status`, start `cos watch` under Monitor, then tell me what is live and wait.")
 
 
 def hq(cwd=None, focus=True, start_board=True) -> dict:
@@ -33,6 +62,15 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
         if start_board:
             board.start_watcher()
         return {**current, "created": False}
+    if current.get("pane") and _workspace_is_hq(current):
+        # The hq space survived but its Claude did not (exited, or a herdr restart): restart it there.
+        _start_agent(current["pane"])
+        _routine()
+        if focus:
+            herdr.call("workspace", "focus", current["workspace"])
+        if start_board:
+            board.start_watcher()
+        return {**current, "created": False, "restarted": True}
     cwd = os.path.realpath(os.path.expanduser(cwd or os.environ.get("COS_HQ_CWD") or "~/Developer"))
     claim = paths.claim_file(cwd)
     claim.parent.mkdir(parents=True, exist_ok=True)
@@ -40,22 +78,13 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
     try:
         created = herdr.call("workspace", "create", "--cwd", cwd, "--label", "hq", "--focus" if focus else "--no-focus")
         pane = created["root_pane"]["pane_id"]
-        settings = paths.ensure("settings") / "hq.json"
-        settings.write_text(json.dumps({"crossSessionInbound": "accept",
-                                        "env": {"COS_ROLE": "hq", "COS_STATE_DIR": str(paths.state_dir())}}, indent=2))
-        args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
-                "--settings", str(settings)]
-        if os.environ.get("COS_PLUGIN_DIR"):
-            args += ["--plugin-dir", os.environ["COS_PLUGIN_DIR"]]
-        herdr.call("agent", "start", paths.hq_name(), "--kind", "claude", "--pane", pane, "--timeout", "120000",
-                   "--", *args, timeout=200)
+        _start_agent(pane)
     finally:
         claim.unlink(missing_ok=True)
     record = {"pane": pane, "workspace": created["workspace"]["workspace_id"],
               "terminal": created["root_pane"].get("terminal_id"), "cwd": cwd}
     _file().write_text(json.dumps(record, indent=2))
-    herdr.call("agent", "prompt", paths.hq_name(),
-               "Start your HQ routine: run `cos status`, start `cos watch` under Monitor, then tell me what is live and wait.")
+    _routine()
     if start_board:
         board.start_watcher()
     return {**record, "created": True}
