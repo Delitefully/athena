@@ -21,7 +21,11 @@ class RetireTest(unittest.TestCase):
         git(self.repo, "worktree", "add", "-q", "-b", "gabriel/plt-1", str(self.wt), "main")
         ledger.append("spawn", "plt-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="gabriel/plt-1",
                       workspace="w5", pane="w5:p1", terminal="term_1")
-        write_scenario(self.tmp.name, [])
+        self.owned = [
+            {"match": ["agent", "get", "plt-1"], "stdout": {"result": {"agent": {"name": "plt-1"}}}},
+            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
+        ]
+        write_scenario(self.tmp.name, self.owned)
 
     def tearDown(self):
         self.env.restore()
@@ -60,7 +64,7 @@ class RetireTest(unittest.TestCase):
         git(self.wt, "push", "-q", "-u", "origin", "gabriel/plt-1")
         result = retire.retire("plt-1")
         calls = logged_calls(self.tmp.name)
-        self.assertIn(["agent", "prompt", "w5:p1", "/exit"], calls)
+        self.assertIn(["agent", "prompt", "plt-1", "/exit"], calls)
         self.assertIn(["worktree", "remove", "--workspace", "w5"], calls)
         self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
         self.assertTrue(result["backup"].startswith("refs/cos-backup/plt-1/"))
@@ -69,6 +73,28 @@ class RetireTest(unittest.TestCase):
         (self.wt / "b.txt").write_text("b\n")
         retire.retire("plt-1", force=True)
         self.assertIn(["worktree", "remove", "--workspace", "w5", "--force"], logged_calls(self.tmp.name))
+
+    def test_retire_force_backs_up_uncommitted(self):
+        (self.wt / "README.md").write_text("changed\n")
+        result = retire.retire("plt-1", force=True)
+        self.assertTrue(result["wip_backup"].endswith("-wip"))
+        self.assertIn("changed", git(self.repo, "show", result["wip_backup"] + ":README.md"))
+
+    def test_retire_never_touches_reused_ids(self):
+        (self.wt / "a.txt").write_text("a\n")
+        git(self.wt, "add", "a.txt")
+        git(self.wt, "commit", "-q", "-m", "a")
+        git(self.wt, "push", "-q", "-u", "origin", "gabriel/plt-1")
+        # After a herdr restart, w5 is someone else's space and plt-1 is not a herdr agent.
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": "/Users/x/other"}}}}},
+        ])
+        result = retire.retire("plt-1")
+        calls = logged_calls(self.tmp.name)
+        self.assertEqual([c for c in calls if c[:2] in (["agent", "prompt"], ["worktree", "remove"])], [])
+        self.assertTrue(result["removed"])
+        self.assertFalse(self.wt.exists())
 
     def test_retire_unknown(self):
         with self.assertRaises(retire.RetireError):
@@ -98,6 +124,12 @@ class CliTest(unittest.TestCase):
         out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "status"], capture_output=True, text=True, env=dict(os.environ))
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("no live workers", out.stdout)
+
+    def test_cli_nudge_only_workers(self):
+        out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "nudge", "claude-w2g", "hi"], capture_output=True,
+                             text=True, env=dict(os.environ))
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("not a live cos worker", out.stderr)
 
     def test_cli_spawn_error_exit_code(self):
         out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "spawn", "--repo", self.tmp.name, "--branch", "x",

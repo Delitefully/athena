@@ -37,10 +37,22 @@ class HqTest(unittest.TestCase):
 
     def test_focuses_existing(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
-        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude"}}}}])
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude", "name": "cos"}}}}])
         result = hq.hq(start_board=False)
         self.assertFalse(result["created"])
         self.assertIn(["workspace", "focus", "w8"], logged_calls(self.tmp.name))
+
+    def test_restarts_claude_in_surviving_hq_space(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "hq"}}}},
+        ])
+        result = hq.hq(start_board=False)
+        self.assertTrue(result["restarted"])
+        verbs = [c[:2] for c in logged_calls(self.tmp.name)]
+        self.assertNotIn(["workspace", "create"], verbs)
+        self.assertIn(["agent", "start"], verbs)
 
     def test_claim_removed_when_start_fails(self):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "trust dialog"}})

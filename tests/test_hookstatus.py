@@ -24,6 +24,7 @@ class HookStatusTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1-x"
         self.wt.mkdir(parents=True)
+        ledger.touch()
 
     def tearDown(self):
         self.env.restore()
@@ -97,6 +98,12 @@ class HookStatusTest(unittest.TestCase):
     def test_summary_truncated_to_300(self):
         hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "x" * 1000}, "plt-1")
         self.assertEqual(len(self.status("plt-1")["summary"]), 300)
+
+    def test_hook_noop_without_ledger(self):
+        (paths.state_dir() / "ledger.jsonl").unlink()
+        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, {"COS_WORKER": "plt-1"}, cwd=self.wt)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIsNone(self.status("plt-1"))
 
     def test_garbage_stdin_exits_zero(self):
         proc = run_hook("{not json", {"COS_WORKER": "plt-1"}, cwd=self.wt)

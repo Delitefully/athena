@@ -54,7 +54,7 @@ cos spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-451
   --goal "<NAME> is done when: (1) each ACCEPTANCE item in the brief is shown met in this transcript, (2) <VERIFY> was run and its passing output is shown, (3) the branch is pushed and a draft PR exists with its URL printed, (4) the final message ends with a COS-REPORT line. If a FORBIDDEN item, a missing credential or an ambiguity the brief does not settle stops you, end with a COS-REPORT whose status is BLOCKED. Stop after <TIMEBOX>."
 ```
 
-`cos spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (5 with `--force`), or when the 5-hour quota is 85% used. Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
+`cos spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (5 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 
 8. Move the Linear issue to In Progress. After launch, SendMessage the worker nothing; its goal is running. Subscribe for its next idle with SendMessage `notify_when_idle` only when you need to know (for example after a nudge).
 
@@ -68,7 +68,7 @@ cos spawn --repo <path> --branch <gitBranchName> --name <name> --linear <PLT-451
 | `<w> state ...->idle` without a report | It stopped early. `herdr agent read <w> --source visible --lines 40`, then nudge with SendMessage: what is left of the goal. Twice idle with no progress: tell the human. |
 | `<w> checks ...->failure` | Classify (real failure, flake, infra) from `gh pr checks`. Real: SendMessage the worker the failing check and log excerpt. Flake: rerun once with `gh run rerun --failed`. Infra: tell the human. |
 | `<w> review comments +N` / `review CHANGES_REQUESTED` | Triage each comment: fix (send to worker), dismiss (reply with a reason only if the human allows), or ask. Security, auth, billing and migrations always go to the human. Order: conflicts, then threads, then CI. |
-| `<repo> main moved` | SendMessage every live worker on that repo: "main moved; when your tree is clean, rebase on origin/main, re-run VERIFY, push, report." |
+| `<repo> main moved` | SendMessage every live worker on that repo with an open branch: "main moved; when your tree is clean, rebase on origin/main, re-run VERIFY, push with --force-with-lease, report." Skip workers whose PR is approved in platform unless the human agrees (a push after approval needs re-approval). |
 | `<w> gone from the ledger` | Expected after retire; otherwise investigate. |
 
 ## 4. Verify and review a DONE report
@@ -101,4 +101,4 @@ When the human repeats an instruction, propose adding it to `~/.local/state/cos/
 
 ## 7. Retiring
 
-`cos retire <w>` backs up the head to `refs/cos-backup/<w>/...`, refuses when there is uncommitted or unpushed work, asks the worker to exit, and removes its worktree space (the branch stays). Use `--force` only when the human agreed to drop the work. `--keep-worktree` keeps the checkout.
+`cos retire <w>` backs up the head to `refs/cos-backup/<w>/...`, refuses when there is uncommitted or unpushed work, asks the worker to exit, and removes its worktree space. The branch stays: herdr's `worktree remove` never deletes branches (herdr socket API docs). Use `--force` only when the human agreed to drop the work. `--keep-worktree` keeps the checkout.
