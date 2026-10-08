@@ -117,6 +117,21 @@ def _exists(pane_id) -> bool:
         return False
 
 
+def _close_owned(column) -> bool:
+    """Close a column only if it is still ours: herdr may reuse pane ids after a restart."""
+    try:
+        pane = herdr.call("pane", "get", column["pane"], timeout=10).get("pane", {})
+    except herdr.HerdrError:
+        return False
+    if pane.get("label") != f"board:{column['name']}":
+        return False
+    try:
+        herdr.call("pane", "close", column["pane"], timeout=15)
+        return True
+    except herdr.HerdrError:
+        return False
+
+
 def _key(p):
     return json.dumps({"mode": p["mode"], "rows": p["rows"], "hq": round(p["hq_ratio"], 2)}, sort_keys=True)
 
@@ -141,10 +156,7 @@ def sync(force=False) -> dict:
         result["postponed"] = True
         return result
     for c in columns:
-        try:
-            herdr.call("pane", "close", c["pane"], timeout=15)
-        except herdr.HerdrError:
-            pass
+        _close_owned(c)
     terminals = {w["name"]: w["terminal"] for w in workers}
     refs = {}
     new_columns = []
@@ -172,10 +184,7 @@ def sync(force=False) -> dict:
 def clear():
     saved = load()
     for c in saved.get("columns", []):
-        try:
-            herdr.call("pane", "close", c["pane"], timeout=15)
-        except herdr.HerdrError:
-            pass
+        _close_owned(c)
     save({})
 
 
