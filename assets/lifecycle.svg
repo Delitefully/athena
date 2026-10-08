@@ -108,7 +108,7 @@ text{fill:#D6DDE4}
 
 <text class="b" x="886" y="114">ready</text>
 <text class="dim" x="886" y="132">▲ abc-101 @ 9f2c1ab</text>
-<text class="dim" x="886" y="147">you merge</text>
+<text class="dim" x="886" y="147">your go to merge</text>
 
 <!-- who does what -->
 <path class="own" d="M24 170v6h364v-6"/>
