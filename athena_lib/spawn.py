@@ -64,7 +64,7 @@ def build_goal(condition, name, brief):
     if text.startswith("/goal "):
         text = text[len("/goal "):]
     suffix = (f" Your brief is {brief}; read it first. Report to the session named {paths.hq_name()} with SendMessage, "
-              f"and end your final message with a ATHENA-REPORT line.")
+              f"and end your final message with an ATHENA-REPORT line.")
     return ("/goal " + text + suffix)[:3990]
 
 

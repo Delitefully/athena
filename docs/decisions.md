@@ -18,6 +18,6 @@ Taken on 2026-10-07 from the Chief of Staff Blueprint (https://claude.ai/artifac
 
 ## Implementation decisions
 
-- Worker hooks ship in the athena plugin and do nothing unless the session is a athena worker: `ATHENA_WORKER` is set, or the cwd is under the worktree root and in the ledger.
+- Worker hooks ship in the athena plugin and do nothing unless the session is an athena worker: `ATHENA_WORKER` is set, or the cwd is under the worktree root and in the ledger.
 - Status is merged from four sources, most trusted first: the worker's `ATHENA-REPORT` line, hook state, git and PR state, herdr's screen-read status.
 - One writer per state file: `ledger.jsonl` (athena commands), `workers/<name>.json` (that worker's hooks), `board.json` (board sync).
