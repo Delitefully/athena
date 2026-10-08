@@ -1,4 +1,5 @@
 """A worker whose Claude stops at a startup prompt stays tracked, and its goal is sent once it is ready."""
+import fcntl
 import json
 import os
 import subprocess
@@ -10,7 +11,7 @@ from tests import helpers
 from tests.gitrepo import git, make_repo
 from tests.test_herdr import logged_calls, write_scenario
 from tests.test_spawn import CREATED
-from athena_lib import ledger, paths, retire, spawn, status, watch
+from athena_lib import herdr, ledger, paths, retire, spawn, status, watch
 
 NOT_READY = {"error": {"code": "agent_not_ready",
                        "message": "agent plt-1 is blocked during startup and is not ready for prompts"}}
@@ -21,8 +22,8 @@ def err(code, message="x"):
     return json.dumps({"error": {"code": code, "message": message}})
 
 
-def agent(status_):
-    return {"result": {"agent": {"name": "plt-1", "agent_status": status_}}}
+def agent(status_, name="plt-1", pane="w9:p1"):
+    return {"result": {"agent": {"name": name, "pane_id": pane, "agent_status": status_}}}
 
 
 class PendingBase(unittest.TestCase):
@@ -50,9 +51,9 @@ class PendingBase(unittest.TestCase):
                        {"match": ["agent", "read"], "stdout": TRUST_SCREEN}])
         return self.run_spawn()
 
-    def set_agent(self, status_, extra=None):
+    def set_agent(self, status_, extra=None, **kw):
         """What herdr reports from now on, as the human answers the prompt."""
-        write_scenario(self.tmp.name, (extra or []) + [{"match": ["agent", "get"], "stdout": agent(status_)}])
+        write_scenario(self.tmp.name, (extra or []) + [{"match": ["agent", "get"], "stdout": agent(status_, **kw)}])
 
     def prompts(self):
         return [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]]
@@ -109,10 +110,57 @@ class DeliverTest(PendingBase):
         self.set_agent("idle")
         outcomes = [spawn.deliver("plt-1")["outcome"] for _ in range(3)]
         self.assertEqual(outcomes, ["sent", "not-pending", "not-pending"])
-        self.assertEqual(self.prompts(), [["agent", "prompt", "plt-1", goal]])
+        self.assertEqual(self.prompts(), [["agent", "prompt", "w9:p1", goal]])
         w = ledger.workers()["plt-1"]
         self.assertFalse(w.get("goal_pending"))
         self.assertEqual((w["state"], w["prompt"]), ("live", "sent"))
+
+    def test_done_counts_as_ready(self):
+        self.spawn_blocked()
+        self.set_agent("done")
+        self.assertEqual(spawn.deliver("plt-1")["outcome"], "sent")
+        self.assertEqual(len(self.prompts()), 1)
+
+    def test_foreign_agent_never_gets_the_goal(self):
+        self.spawn_blocked()
+        self.set_agent("idle", name="someone-else")
+        self.assertEqual(spawn.deliver("plt-1")["outcome"], "waiting")
+        self.set_agent("idle", pane="w4:p2")
+        self.assertEqual(spawn.deliver("plt-1")["outcome"], "waiting")
+        self.assertEqual(self.prompts(), [])
+        self.assertIn(["agent", "get", "w9:p1"], logged_calls(self.tmp.name))
+
+    def test_busy_lock_sends_nothing(self):
+        self.spawn_blocked()
+        self.set_agent("idle")
+        with open(paths.ensure("locks") / "plt-1.lock", "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(spawn.deliver("plt-1")["outcome"], "busy")
+            with self.assertRaises(spawn.SpawnError):
+                spawn.resume("plt-1")
+        self.assertEqual(self.prompts(), [])
+        self.assertTrue(ledger.workers()["plt-1"]["goal_pending"])
+
+    def test_ledger_written_before_the_prompt(self):
+        self.spawn_blocked()
+        self.set_agent("idle")
+        seen = {}
+        original = herdr.call
+
+        def call(*args, **kw):
+            if args[:2] == ("agent", "prompt"):
+                seen.update(ledger.workers()["plt-1"])
+                raise herdr.HerdrError("cli_timeout", "no answer")
+            return original(*args, **kw)
+
+        spawn.herdr.call = call
+        try:
+            self.assertEqual(spawn.deliver("plt-1")["outcome"], "unconfirmed")
+        finally:
+            spawn.herdr.call = original
+        self.assertFalse(seen["goal_pending"])
+        self.assertEqual(seen["prompt"], "sending")
+        self.assertEqual(ledger.workers()["plt-1"]["prompt"], "unconfirmed: cli_timeout")
 
     def test_rejected_as_blocked_stays_pending(self):
         self.spawn_blocked()
@@ -156,10 +204,17 @@ class WatchPendingTest(PendingBase):
         self.assertEqual(lines, ["plt-1 state starting->blocked (startup prompt)"])
         self.set_agent("idle")
         prev, lines = watch.step(prev, with_pr=False)
-        self.assertIn("plt-1 goal sent", lines)
+        self.assertEqual(lines.count("plt-1 goal sent"), 1)
         for _ in range(3):
             prev, lines = watch.step(prev, with_pr=False)
             self.assertNotIn("plt-1 goal sent", lines)
+        self.assertEqual(len(self.prompts()), 1)
+
+    def test_goal_sent_on_first_tick_after_restart(self):
+        self.spawn_blocked()
+        self.set_agent("idle")
+        _, lines = watch.step(None, with_pr=False)
+        self.assertEqual(lines, ["plt-1 goal sent"])
         self.assertEqual(len(self.prompts()), 1)
 
     def test_status_and_board_state(self):
@@ -170,6 +225,9 @@ class WatchPendingTest(PendingBase):
         self.assertEqual((s["state"], s["detail"], s["pending"]), ("blocked", "startup prompt", True))
         self.assertEqual(status.quick_state(w), "blocked")
         self.assertEqual(status.urgency(status.quick_state(w)), 0)
+        self.set_agent("unknown")
+        s = status.collect(w)
+        self.assertEqual((s["state"], s["detail"], s["pending"]), ("starting", None, True))
 
 
 class RetirePendingTest(PendingBase):
@@ -184,6 +242,33 @@ class RetirePendingTest(PendingBase):
         self.assertTrue(result["removed"])
         self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
         self.assertEqual(spawn.deliver("plt-1")["outcome"], "not-pending")
+
+    def test_retire_pending_closes_pane_first(self):
+        self.spawn_blocked()
+        git(self.repo, "worktree", "add", "-q", "-b", "gabriel/plt-1-fix", str(self.wt), "main")
+        self.set_agent("blocked", [{"match": ["workspace", "get", "w9"],
+                                    "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}}])
+        retire.retire("plt-1")
+        calls = logged_calls(self.tmp.name)
+        self.assertLess(calls.index(["pane", "close", "w9:p1"]), calls.index(["worktree", "remove", "--workspace", "w9"]))
+
+    def test_retire_pending_space_herdr_will_not_remove_stays_tracked(self):
+        self.spawn_blocked()
+        git(self.repo, "worktree", "add", "-q", "-b", "gabriel/plt-1-fix", str(self.wt), "main")
+        self.set_agent("blocked", [{"match": ["workspace", "get", "w9"],
+                                    "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
+                                   {"match": ["worktree", "remove"], "stdout": "", "stderr": err("cli_timeout"),
+                                    "exit": 1, "times": 1}])
+        with self.assertRaises(retire.RetireError) as ctx:
+            retire.retire("plt-1")
+        self.assertIn("athena retire plt-1", str(ctx.exception))
+        w = ledger.workers()["plt-1"]
+        self.assertEqual(w["state"], "live")
+        self.assertIn("cli_timeout", w["cleanup_error"])
+        self.assertTrue(self.wt.exists())
+        self.assertEqual(self.prompts(), [])
+        retire.retire("plt-1")
+        self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
 
     def test_retire_pending_keep_worktree_closes_pane(self):
         self.spawn_blocked()
@@ -295,6 +380,15 @@ class CliPendingTest(PendingBase):
         out = self.cli("resume", "plt-1")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(len(self.prompts()), 1)
+
+    def test_status_shows_interrupted_send(self):
+        ledger.append("spawn", "plt-3", pane="w3:p1")
+        ledger.append("update", "plt-3", prompt="sending")
+        ledger.append("spawn", "plt-4", pane="w4:p1")
+        ledger.append("update", "plt-4", prompt="unconfirmed: cli_timeout")
+        out = self.cli("status")
+        self.assertIn("goal sending", out.stdout)
+        self.assertIn("goal unconfirmed: cli_timeout", out.stdout)
 
     def test_status_lists_leftovers(self):
         ledger.append("failed", "plt-2", reason="boom", cleaned=False, workspace="w3", path="/x")

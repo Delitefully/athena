@@ -25,7 +25,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "state": hook.get("state") or "unknown", "summary": hook.get("summary", ""),
            "report": hook.get("report"), "last_report": hook.get("last_report"),
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
-           "pending": bool(worker.get("goal_pending")), "detail": None}
+           "pending": bool(worker.get("goal_pending")), "detail": None, "prompt": worker.get("prompt")}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})
@@ -41,7 +41,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
     if out["pending"]:
         # Its goal waits for a ready Claude: blocked means a startup prompt only the human may answer.
         out["state"] = "blocked" if out["herdr"] == "blocked" else "starting"
-        out["detail"] = "startup prompt" if out["state"] == "blocked" else "goal pending"
+        out["detail"] = "startup prompt" if out["state"] == "blocked" else None
         out["state_source"] = "pending"
     elif out["state"] in ("unknown", "starting") and out["herdr"] in ("blocked", "working", "idle", "done"):
         out["state"] = out["herdr"]

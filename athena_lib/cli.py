@@ -60,7 +60,9 @@ def cmd_status(a):
         if report:
             bits.append(f"report={report.get('status')}")
         if r.get("pending"):
-            bits.append(f"goal pending ({r['detail']})")
+            bits.append("goal pending" + (f" ({r['detail']})" if r.get("detail") else ""))
+        elif (r.get("prompt") or "").startswith(("sending", "unconfirmed")):
+            bits.append(f"goal {r['prompt']} (check its pane; do not resend blindly)")
         print("  ".join(bits))
         if r.get("summary"):
             print("    " + r["summary"].replace("\n", " ")[-160:])

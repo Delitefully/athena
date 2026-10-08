@@ -23,9 +23,6 @@ def diff(prev: dict, cur: dict) -> list:
         if before is None:
             lines.append(f"{name} new worker ({now.get('state')}{', ' + now['detail'] if now.get('detail') else ''})")
             continue
-        if before.get("pending") and not now.get("pending"):
-            sent = now.get("prompt") in (None, "sent")
-            lines.append(f"{name} goal sent" if sent else f"{name} goal {now.get('prompt')}: check its pane, do not resend blindly")
         if before.get("state") != now.get("state"):
             lines.append(f"{name} state {before.get('state')}->{now.get('state')}{detail}")
         rep_now = (now.get("report") or {}).get("status")
@@ -60,8 +57,7 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
-        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "pending": s["pending"],
-                              "detail": s["detail"], "prompt": w.get("prompt")}
+        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"]}
         repo = w.get("repo")
         if repo and repo not in mains:
             if fetch:
@@ -73,9 +69,14 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
 
 def step(prev, fetch=False, with_pr=True):
     """One watch tick: send goals that were waiting for a ready Claude, then diff. Returns (snapshot, lines)."""
-    spawn.deliver_pending()
+    lines = []
+    for r in spawn.deliver_pending():
+        if r["outcome"] == "sent":
+            lines.append(f"{r['name']} goal sent")
+        elif r["outcome"] == "unconfirmed":
+            lines.append(f"{r['name']} goal unconfirmed ({r.get('error')}): check its pane, do not resend blindly")
     cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
-    return cur, ([] if prev is None else diff(prev, cur))
+    return cur, lines + ([] if prev is None else diff(prev, cur))
 
 
 def keep_labels():

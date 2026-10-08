@@ -65,7 +65,7 @@ Exit code 3 means the worker is live but pending: its Claude stopped at a startu
 | Line | Do |
 |---|---|
 | `<w> state ...->blocked` | `athena status`; read its summary. A permission prompt: tell the human which worker and what it wants, they answer in its column. A `NEED:` question: answer if it is within the brief; otherwise ask the human with your recommendation and relay the answer. |
-| `<w> ... (startup prompt)` | A pending worker: tell the human which space and prompt; they answer it there. `<w> goal sent` follows on its own; a later `->idle` or `->working` is normal. |
+| `<w> ... (startup prompt)` | A pending worker: tell the human which space and prompt; they answer it there. `<w> goal sent` follows on its own; a later `->idle` or `->working` is normal. `<w> goal unconfirmed`: read its pane before resending anything. |
 | `<w> report DONE` / `DONE_WITH_CONCERNS` | Run section 4 (verify and review). |
 | `<w> report NEEDS_CONTEXT` / `BLOCKED` | Supply the context or escalate; then SendMessage the worker. |
 | `<w> state ...->idle` without a report | It stopped early. `herdr agent read <w> --source visible --lines 40`, then nudge with SendMessage: what is left of the goal. Twice idle with no progress: tell the human. |

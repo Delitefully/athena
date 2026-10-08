@@ -30,7 +30,11 @@ def agent_owned(name) -> bool:
 
 
 def remove_worktree(worker, force=False) -> dict:
-    """Remove the worker's space through herdr when it is still ours (that also stops its Claude), else the checkout."""
+    """Remove the worker's space through herdr when it is still ours (that also stops its Claude), else the checkout.
+
+    If herdr will not remove a space that is ours, leave the checkout too: removing only the checkout would leave
+    a space the ledger forgets. The caller gets herdr_error and keeps the worker tracked.
+    """
     path, repo = worker.get("path"), worker.get("repo")
     out = {"removed": False}
     if workspace_owned(worker.get("workspace"), path):
@@ -41,6 +45,7 @@ def remove_worktree(worker, force=False) -> dict:
             return out
         except herdr.HerdrError as exc:
             out["herdr_error"] = str(exc)
+            return out
     if path and os.path.isdir(path) and repo:
         gitops.git(repo, "worktree", "remove", *(["--force"] if force else []), path)
         out["removed"] = True
@@ -74,7 +79,7 @@ def retire(name, force=False, keep_worktree=False) -> dict:
                 gitops.git(repo, "update-ref", result["wip_backup"], wip)
     if worker.get("goal_pending"):
         # Its Claude may sit at a startup prompt: typing /exit there could answer it. Closing the pane stops it.
-        if keep_worktree and workspace_owned(worker.get("workspace"), path) and worker.get("pane"):
+        if workspace_owned(worker.get("workspace"), path) and worker.get("pane"):
             try:
                 herdr.call("pane", "close", worker["pane"], timeout=15)
             except herdr.HerdrError:
@@ -87,5 +92,9 @@ def retire(name, force=False, keep_worktree=False) -> dict:
             pass
     if not keep_worktree:
         result.update(remove_worktree(worker, force=force))
+        if result.get("herdr_error"):
+            ledger.append("update", name, cleanup_error=result["herdr_error"])
+            raise RetireError(f"herdr did not remove {name}'s space ({result['herdr_error']}); {name} stays tracked. "
+                              f"Retry with: athena retire {name}")
     ledger.append("retire", name, backup=result["backup"], wip_backup=result["wip_backup"], removed=result["removed"])
     return result
