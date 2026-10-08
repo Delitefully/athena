@@ -1,13 +1,13 @@
 """Worker status from Claude Code hook events. One JSON file per worker, written only by its own hooks.
 
-Run as `python3 -m cos_lib.hookstatus` with the hook payload on stdin. Always exits 0.
+Run as `python3 -m athena_lib.hookstatus` with the hook payload on stdin. Always exits 0.
 """
 import json
 import os
 import sys
 import time
 
-from cos_lib import ledger, paths
+from athena_lib import ledger, paths
 
 SUMMARY_LIMIT = 300
 DONE = {"DONE", "DONE_WITH_CONCERNS"}
@@ -16,7 +16,7 @@ NEEDS_HUMAN_TYPES = {"permission_prompt", "agent_needs_input", "elicitation_dial
 
 
 def worker_name(env, cwd):
-    name = (env.get("COS_WORKER") or "").strip()
+    name = (env.get("ATHENA_WORKER") or "").strip()
     if name:
         return name if paths.valid_name(name) else None
     if not cwd:
@@ -34,9 +34,9 @@ def parse_report(text):
         return None
     for line in reversed(text.splitlines()):
         line = line.strip()
-        if line.startswith("COS-REPORT "):
+        if line.startswith("ATHENA-REPORT "):
             try:
-                data = json.loads(line[len("COS-REPORT "):])
+                data = json.loads(line[len("ATHENA-REPORT "):])
             except ValueError:
                 return None
             return data if isinstance(data, dict) else None

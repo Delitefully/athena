@@ -8,7 +8,7 @@ from pathlib import Path
 from tests import helpers
 from tests.gitrepo import make_repo
 from tests.test_herdr import logged_calls, write_scenario
-from cos_lib import ledger, paths, spawn
+from athena_lib import ledger, paths, spawn
 
 CREATED = {"result": {"type": "worktree_created",
                       "workspace": {"workspace_id": "w9"},
@@ -55,7 +55,7 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(claude[claude.index("--name") + 1], "plt-1")
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("worker.md"))
         settings = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())
-        self.assertEqual(settings["env"]["COS_WORKER"], "plt-1")
+        self.assertEqual(settings["env"]["ATHENA_WORKER"], "plt-1")
         self.assertEqual(settings["crossSessionInbound"], "accept")
         self.assertFalse(settings["enabledPlugins"]["keepwarm@keepwarm"])
         prompt = calls[2]
@@ -69,7 +69,7 @@ class SpawnTest(unittest.TestCase):
 
     def test_spawn_refuses_over_cap(self):
         self.scenario()
-        os.environ["COS_MAX_WORKERS"] = "2"
+        os.environ["ATHENA_MAX_WORKERS"] = "2"
         ledger.append("spawn", "a", pane="w1:p1")
         ledger.append("spawn", "b", pane="w2:p1")
         with self.assertRaises(spawn.SpawnError) as ctx:
@@ -86,7 +86,7 @@ class SpawnTest(unittest.TestCase):
 
     def test_spawn_refuses_when_quota_high(self):
         self.scenario()
-        with open(os.environ["COS_QUOTA_FILE"], "w") as f:
+        with open(os.environ["ATHENA_QUOTA_FILE"], "w") as f:
             json.dump({"fetched_at_unix": time.time(), "windows": [{"kind": "five_hour", "used_percent": 91}]}, f)
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
@@ -100,7 +100,7 @@ class SpawnTest(unittest.TestCase):
         self.scenario([{"match": ["agent", "prompt"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
-        self.assertIn("cos nudge plt-1", str(ctx.exception))
+        self.assertIn("athena nudge plt-1", str(ctx.exception))
         w = ledger.workers()["plt-1"]
         self.assertEqual((w["state"], w["prompt"]), ("live", "failed: agent_not_found"))
 

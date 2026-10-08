@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
-from cos_lib import hq, paths
+from athena_lib import hq, paths
 
 CREATED = {"result": {"workspace": {"workspace_id": "w8"}, "root_pane": {"pane_id": "w8:p1", "terminal_id": "term_h"}}}
 
@@ -22,7 +22,7 @@ class HqTest(unittest.TestCase):
         self.env.restore()
         self.tmp.cleanup()
 
-    def test_creates_space_and_starts_cos(self):
+    def test_creates_space_and_starts_athena(self):
         write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])
         result = hq.hq(cwd=str(self.cwd), start_board=False)
         self.assertTrue(result["created"])
@@ -30,14 +30,14 @@ class HqTest(unittest.TestCase):
         self.assertEqual([c[:2] for c in calls], [["workspace", "create"], ["agent", "start"], ["agent", "prompt"]])
         start = calls[1]
         claude = start[start.index("--") + 1:]
-        self.assertEqual(claude[claude.index("--name") + 1], "cos")
+        self.assertEqual(claude[claude.index("--name") + 1], "athena")
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("hq.md"))
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["pane"], "w8:p1")
         self.assertFalse(paths.claim_file(str(self.cwd)).exists())
 
     def test_focuses_existing(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
-        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude", "name": "cos"}}}}])
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude", "name": "athena"}}}}])
         result = hq.hq(start_board=False)
         self.assertFalse(result["created"])
         self.assertIn(["workspace", "focus", "w8"], logged_calls(self.tmp.name))
@@ -46,7 +46,7 @@ class HqTest(unittest.TestCase):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
         write_scenario(self.tmp.name, [
             {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
-            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "hq"}}}},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}},
         ])
         result = hq.hq(start_board=False)
         self.assertTrue(result["restarted"])

@@ -2,7 +2,7 @@
 import json
 import time
 
-from cos_lib import paths
+from athena_lib import paths
 
 STALE_SECONDS = 30 * 60
 

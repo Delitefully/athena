@@ -3,26 +3,26 @@
 # and real Claude workers (Haiku). Never touches the user's live herdr session.
 #
 #   tests/lab/lab.sh up        start the lab server, sandbox repo and a fake HQ pane
-#   tests/lab/lab.sh env       print the env exports for running cos against the lab
+#   tests/lab/lab.sh env       print the env exports for running athena against the lab
 #   tests/lab/lab.sh trust     trust the sandbox repo once in Claude (answers the dialog)
 #   tests/lab/lab.sh down      stop the lab server and delete everything it made
 set -eu
 here=$(cd "$(dirname "$0")/../.." && pwd)
-LAB=${COS_LAB:-/private/tmp/claude-501/cl}
-SANDBOX="$HOME/Developer/.cos-lab-sandbox"
-WTROOT="$HOME/Developer/.cos-lab-wt"
+LAB=${ATHENA_LAB:-/private/tmp/claude-501/cl}
+SANDBOX="$HOME/Developer/.athena-lab-sandbox"
+WTROOT="$HOME/Developer/.athena-lab-wt"
 CLAUDE_DIR=$(dirname "$(command -v claude)")
 
 h() {
 	env -i HOME="$HOME" USER="$USER" TERM=xterm-256color \
 		PATH="$CLAUDE_DIR:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-		XDG_CONFIG_HOME="$LAB/cfg" XDG_STATE_HOME="$LAB/xstate" herdr --session cos-lab "$@"
+		XDG_CONFIG_HOME="$LAB/cfg" XDG_STATE_HOME="$LAB/xstate" herdr --session athena-lab "$@"
 }
 
 write_wrapper() {
 	cat >"$LAB/h" <<EOF
 #!/bin/sh
-exec env -i HOME="$HOME" USER="$USER" TERM=xterm-256color PATH="$CLAUDE_DIR:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" XDG_CONFIG_HOME="$LAB/cfg" XDG_STATE_HOME="$LAB/xstate" herdr --session cos-lab "\$@"
+exec env -i HOME="$HOME" USER="$USER" TERM=xterm-256color PATH="$CLAUDE_DIR:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" XDG_CONFIG_HOME="$LAB/cfg" XDG_STATE_HOME="$LAB/xstate" herdr --session athena-lab "\$@"
 EOF
 	chmod +x "$LAB/h"
 }
@@ -53,8 +53,8 @@ up)
 	;;
 env)
 	cat <<EOF
-export COS_HERDR="$LAB/h" COS_STATE_DIR="$LAB/state" COS_WORKTREE_ROOT="$WTROOT" \\
-  COS_HQ_PANE="$(cat "$LAB/hq_pane")" COS_PLUGIN_DIR="$here" COS_MAX_WORKERS=4
+export ATHENA_HERDR="$LAB/h" ATHENA_STATE_DIR="$LAB/state" ATHENA_WORKTREE_ROOT="$WTROOT" \\
+  ATHENA_HQ_PANE="$(cat "$LAB/hq_pane")" ATHENA_PLUGIN_DIR="$here" ATHENA_MAX_WORKERS=4
 EOF
 	;;
 trust)

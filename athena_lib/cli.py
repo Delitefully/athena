@@ -1,10 +1,10 @@
-"""cos: plumbing for the chief of staff. Run `cos -h`."""
+"""athena: plumbing for the chief of staff. Run `athena -h`."""
 import argparse
 import json
 import sys
 from pathlib import Path
 
-from cos_lib import board, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
+from athena_lib import board, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
 
 
 def _print(data):
@@ -97,7 +97,7 @@ def cmd_pr(a):
 
 def cmd_nudge(a):
     if a.name not in {w["name"] for w in ledger.live()}:
-        print(f"{a.name} is not a live cos worker", file=sys.stderr)
+        print(f"{a.name} is not a live athena worker", file=sys.stderr)
         return 2
     _print(herdr.call("agent", "prompt", a.name, " ".join(a.text)))
     return 0
@@ -120,7 +120,7 @@ def cmd_hq(a):
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="cos", description="Plumbing for the chief of staff.")
+    p = argparse.ArgumentParser(prog="athena", description="Plumbing for the chief of staff.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("preflight", help="check a main checkout is clean and on main, and fast-forward it")
@@ -187,7 +187,7 @@ def main(argv=None):
     try:
         return args.func(args)
     except (spawn.SpawnError, retire.RetireError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
-        print(f"cos {args.cmd}: {exc}", file=sys.stderr)
+        print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 
 

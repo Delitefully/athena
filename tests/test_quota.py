@@ -5,7 +5,7 @@ import time
 import unittest
 
 from tests import helpers
-from cos_lib import quota
+from athena_lib import quota
 
 
 def write_quota(path, used, age=0):
@@ -21,7 +21,7 @@ class QuotaTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
-        self.file = os.environ["COS_QUOTA_FILE"]
+        self.file = os.environ["ATHENA_QUOTA_FILE"]
 
     def tearDown(self):
         self.env.restore()

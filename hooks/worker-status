@@ -1,8 +1,8 @@
 #!/bin/sh
-# cos worker status hook. Does nothing unless this session is a cos worker.
-[ -f "${COS_STATE_DIR:-$HOME/.local/state/cos}/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
-if [ -z "${COS_WORKER:-}" ]; then
-	root="${COS_WORKTREE_ROOT:-$HOME/Developer/.worktrees}"
+# athena worker status hook. Does nothing unless this session is a athena worker.
+[ -f "${ATHENA_STATE_DIR:-$HOME/.local/state/athena}/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
+if [ -z "${ATHENA_WORKER:-}" ]; then
+	root="${ATHENA_WORKTREE_ROOT:-$HOME/Developer/.worktrees}"
 	real_root=$(cd "$root" 2>/dev/null && pwd -P) || { cat >/dev/null; exit 0; }
 	case "$(pwd -P)/" in
 	"$real_root"/*) ;;
@@ -10,5 +10,5 @@ if [ -z "${COS_WORKER:-}" ]; then
 	esac
 fi
 here=$(cd "$(dirname "$0")/.." && pwd)
-PYTHONPATH="$here" /usr/bin/python3 -m cos_lib.hookstatus 2>/dev/null
+PYTHONPATH="$here" /usr/bin/python3 -m athena_lib.hookstatus 2>/dev/null
 exit 0
