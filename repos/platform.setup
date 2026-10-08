@@ -1,9 +1,9 @@
 #!/bin/sh
 # Prepare a platform worktree like platform's .config/wt.toml does: copy the
 # gitignored env files and certs from the main checkout, then install deps.
-# Runs in the new worktree with COS_REPO set to the main checkout.
+# Runs in the new worktree with ATHENA_REPO set to the main checkout.
 set -eu
-main="$COS_REPO"
+main="$ATHENA_REPO"
 wt=$(pwd)
 copy_file() { [ -f "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp "$main/$1" "$wt/$1" || true; }
 copy_dir() { [ -d "$main/$1" ] && [ ! -e "$wt/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp -R "$main/$1" "$wt/$1" || true; }

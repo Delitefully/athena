@@ -3,7 +3,7 @@ import unittest
 
 from tests import helpers
 from tests.test_herdr import write_scenario
-from cos_lib import hookstatus, ledger, pr, status, watch
+from athena_lib import hookstatus, ledger, pr, status, watch
 
 
 class StatusTest(unittest.TestCase):
@@ -21,7 +21,7 @@ class StatusTest(unittest.TestCase):
 
     def test_report_beats_herdr_status(self):
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_status": "working"}}}}])
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'COS-REPORT {"status":"DONE"}'}, "a")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "a")
         s = status.collect({"name": "a", "pane": "w2:p1"})
         self.assertEqual((s["state"], s["herdr"], s["state_source"]), ("done", "working", "hook"))
 

@@ -3,7 +3,7 @@ import json
 import shlex
 import subprocess
 
-from cos_lib import paths
+from athena_lib import paths
 
 
 class HerdrError(Exception):

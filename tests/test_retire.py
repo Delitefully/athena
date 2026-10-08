@@ -9,7 +9,7 @@ from pathlib import Path
 from tests import helpers
 from tests.gitrepo import git, make_repo
 from tests.test_herdr import logged_calls, write_scenario
-from cos_lib import ledger, retire
+from athena_lib import ledger, retire
 
 
 class RetireTest(unittest.TestCase):
@@ -54,7 +54,7 @@ class RetireTest(unittest.TestCase):
         head = git(self.wt, "rev-parse", "HEAD")
         with self.assertRaises(retire.RetireError):
             retire.retire("plt-1")
-        refs = git(self.repo, "for-each-ref", "--format=%(objectname)", "refs/cos-backup/plt-1/")
+        refs = git(self.repo, "for-each-ref", "--format=%(objectname)", "refs/athena-backup/plt-1/")
         self.assertEqual(refs.splitlines(), [head])
 
     def test_retire_clean_pushed(self):
@@ -67,7 +67,7 @@ class RetireTest(unittest.TestCase):
         self.assertIn(["agent", "prompt", "plt-1", "/exit"], calls)
         self.assertIn(["worktree", "remove", "--workspace", "w5"], calls)
         self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
-        self.assertTrue(result["backup"].startswith("refs/cos-backup/plt-1/"))
+        self.assertTrue(result["backup"].startswith("refs/athena-backup/plt-1/"))
 
     def test_retire_force_passes_force(self):
         (self.wt / "b.txt").write_text("b\n")
@@ -113,7 +113,7 @@ class CliTest(unittest.TestCase):
     def test_cli_status_json(self):
         ledger.append("spawn", "a", pane="w2:p1", branch="gabriel/a")
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_status": "idle"}}}}])
-        out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "status", "--json"], capture_output=True, text=True,
+        out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "status", "--json"], capture_output=True, text=True,
                              env=dict(os.environ))
         self.assertEqual(out.returncode, 0, out.stderr)
         data = json.loads(out.stdout)
@@ -121,18 +121,18 @@ class CliTest(unittest.TestCase):
         self.assertEqual(data[0]["state"], "idle")
 
     def test_cli_status_table_empty(self):
-        out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "status"], capture_output=True, text=True, env=dict(os.environ))
+        out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "status"], capture_output=True, text=True, env=dict(os.environ))
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("no live workers", out.stdout)
 
     def test_cli_nudge_only_workers(self):
-        out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "nudge", "claude-w2g", "hi"], capture_output=True,
+        out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "nudge", "claude-w2g", "hi"], capture_output=True,
                              text=True, env=dict(os.environ))
         self.assertEqual(out.returncode, 2)
-        self.assertIn("not a live cos worker", out.stderr)
+        self.assertIn("not a live athena worker", out.stderr)
 
     def test_cli_spawn_error_exit_code(self):
-        out = subprocess.run([str(helpers.ROOT / "bin" / "cos"), "spawn", "--repo", self.tmp.name, "--branch", "x",
+        out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "spawn", "--repo", self.tmp.name, "--branch", "x",
                               "--name", "BAD", "--brief", "/dev/null", "--goal", "g"], capture_output=True, text=True,
                              env=dict(os.environ))
         self.assertEqual(out.returncode, 2)

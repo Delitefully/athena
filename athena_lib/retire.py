@@ -2,7 +2,7 @@
 import os
 import time
 
-from cos_lib import gitops, herdr, ledger
+from athena_lib import gitops, herdr, ledger
 
 
 class RetireError(Exception):
@@ -50,14 +50,14 @@ def retire(name, force=False, keep_worktree=False) -> dict:
             raise RetireError(f"{name} has " + " and ".join(problems) + f"; head backed up at {result['backup']}. "
                               "Push or commit first, or retire with --force.")
         if state["dirty"] and repo:
-            wip = gitops.git(path, "stash", "create", "cos retire " + name, check=False)
+            wip = gitops.git(path, "stash", "create", "athena retire " + name, check=False)
             if wip:
-                result["wip_backup"] = f"refs/cos-backup/{name}/{int(time.time())}-wip"
+                result["wip_backup"] = f"refs/athena-backup/{name}/{int(time.time())}-wip"
                 gitops.git(repo, "update-ref", result["wip_backup"], wip)
     if agent_owned(name):
         try:
             herdr.call("agent", "prompt", name, "/exit", timeout=15)
-            time.sleep(float(os.environ.get("COS_EXIT_GRACE", "2")))
+            time.sleep(float(os.environ.get("ATHENA_EXIT_GRACE", "2")))
         except herdr.HerdrError:
             pass
     if not keep_worktree and exists:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers  # noqa: F401  (sets sys.path)
-from cos_lib import paths
+from athena_lib import paths
 
 
 class PathsTest(unittest.TestCase):
@@ -38,7 +38,7 @@ class PathsTest(unittest.TestCase):
 
     def test_valid_name(self):
         self.assertTrue(paths.valid_name("plt-4512"))
-        self.assertTrue(paths.valid_name("cos"))
+        self.assertTrue(paths.valid_name("athena"))
         self.assertFalse(paths.valid_name("PLT-4512"))
         self.assertFalse(paths.valid_name("4512"))
         self.assertFalse(paths.valid_name("a" * 33))

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers
-from cos_lib import herdr
+from athena_lib import herdr
 
 
 def write_scenario(tmp, rules):

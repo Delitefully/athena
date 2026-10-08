@@ -1,13 +1,13 @@
 """Print one line per meaningful change, for the chief of staff to run under Monitor.
 
-Quiet when nothing changes. Also keeps cos workspace labels from being renamed by other plugins.
+Quiet when nothing changes. Also keeps athena workspace labels from being renamed by other plugins.
 """
 import os
 import sys
 import time
 
-from cos_lib import gitops, herdr, ledger, status
-from cos_lib.retire import workspace_owned
+from athena_lib import gitops, herdr, ledger, status
+from athena_lib.retire import workspace_owned
 
 
 def _short(sha):
