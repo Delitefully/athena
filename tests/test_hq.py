@@ -190,6 +190,19 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(any(c[:2] == ["notification", "show"] for c in self.calls()))
         self.assertFalse(hq.lock_file().exists())
 
+    def test_an_hq_that_never_goes_idle_is_left_alone(self):
+        err = json.dumps({"error": {"code": "timeout", "message": "still blocked"}})
+        write_scenario(self.tmp.name, [{"match": ["agent", "wait"], "stdout": "", "stderr": err, "exit": 1},
+                                       alive("sess-1"), HQ_SPACE])
+        with self.assertRaises(hq.RestartError) as raised:
+            hq.restart_now(update=False)
+        self.assertIn("busy or waiting on you", str(raised.exception))
+        self.assertNotIn(["agent", "prompt", "athena", "/exit"], self.calls())
+        self.assertNotIn(["agent", "send-keys", "athena", "enter"], self.calls())
+        self.assertEqual(self.starts(), [])
+        self.assertTrue(any(c[:2] == ["notification", "show"] for c in self.calls()))
+        self.assertFalse(hq.lock_file().exists())
+
     def test_a_failed_resume_falls_back_to_a_fresh_hq_and_says_so(self):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "no session"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1, "times": 1},

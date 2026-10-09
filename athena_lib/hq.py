@@ -290,7 +290,11 @@ def _restart(update):
     session = _session() or record.get("session")
     if retire.agent_owned(name):
         if not _wait_idle():
-            _say("HQ did not go idle; sending /exit anyway")
+            # Typing /exit and Enter into a permission dialog would answer it.
+            msg = f"HQ ({name} in pane {pane}) is busy or waiting on you; not restarting. Retry when it is idle"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ restart skipped", msg)
+            raise RestartError(msg)
         grace = float(os.environ.get("ATHENA_EXIT_GRACE") or 20)
         if not retire.exit_claude(name, grace):
             msg = f"HQ's Claude ({name} in pane {pane}) did not exit; it is still running and nothing was restarted"
