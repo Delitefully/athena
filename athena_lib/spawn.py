@@ -76,13 +76,17 @@ def _run_setup(repo, path, name):
     return str(log)
 
 
-def _write_settings(name, brief):
+def _write_settings(name, brief, ultracode=False, workflow_size=None):
     settings = {
         "env": {"ATHENA_WORKER": name, "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
                 "ATHENA_BRIEF": str(brief)},
         "crossSessionInbound": "accept",
         "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
     }
+    if ultracode:  # the official settings key; the keyword in a prompt or file would not opt in
+        settings["ultracode"] = True
+        if workflow_size:
+            settings["workflowSizeGuideline"] = workflow_size
     target = paths.ensure("settings") / f"{name}.json"
     target.write_text(json.dumps(settings, indent=2) + "\n")
     return target
@@ -107,10 +111,12 @@ def claude_args(name, model, effort, settings):
 
 
 def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="opus", effort="high",
-          force=False, setup=True, ignore_quota=False):
+          force=False, setup=True, ignore_quota=False, ultracode=False, workflow_size=None):
     repo = Path(os.path.expanduser(str(repo))).resolve()
     if not paths.valid_name(name):
         raise SpawnError(f"invalid worker name {name!r}: use lowercase letters, digits, - and _ (max 32)")
+    if workflow_size and not ultracode:
+        raise SpawnError("--workflow-size needs --ultracode")
     _check_capacity(name, force, ignore_quota)
     ledger.touch()
     pre = gitops.preflight(repo)
@@ -125,6 +131,10 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
     label = space_label(name, title, linear, branch)
     record = {"repo": str(repo), "branch": branch, "path": os.path.realpath(path), "linear": linear,
               "title": title, "model": model, "effort": effort}
+    if ultracode:
+        record["ultracode"] = True
+        if workflow_size:
+            record["workflow_size"] = workflow_size
     claim.write_text(name + "\n")
     pending = None
     try:
@@ -135,7 +145,7 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
             record["setup_log"] = _run_setup(repo, path, name)
         brief = paths.ensure("briefs") / f"{name}.md"
         shutil.copyfile(brief_path, brief)
-        settings = _write_settings(name, brief)
+        settings = _write_settings(name, brief, ultracode, workflow_size)
         try:
             herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
                        "--", *claude_args(name, model, effort, settings), timeout=200)

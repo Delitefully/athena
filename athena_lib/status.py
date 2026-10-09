@@ -22,6 +22,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
     hook = hookstatus.read(name) or {}
     out = {"name": name, "branch": worker.get("branch"), "linear": worker.get("linear"),
            "pane": worker.get("pane"), "workspace": worker.get("workspace"),
+           "ultracode": bool(worker.get("ultracode")), "workflow_size": worker.get("workflow_size"),
            "state": hook.get("state") or "unknown", "summary": hook.get("summary", ""),
            "report": hook.get("report"), "last_report": hook.get("last_report"),
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,

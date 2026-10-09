@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -165,6 +166,61 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(seen.read_text(), "yes")
         self.assertFalse(claim.exists())
 
+    def test_settings_without_ultracode_are_unchanged(self):
+        brief = paths.ensure("briefs") / "plt-1.md"
+        text = spawn._write_settings("plt-1", brief).read_text()
+        expected = {
+            "env": {"ATHENA_WORKER": "plt-1", "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
+                    "ATHENA_BRIEF": str(brief)},
+            "crossSessionInbound": "accept",
+            "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
+        }
+        self.assertEqual(text, json.dumps(expected, indent=2) + "\n")
+        self.assertNotIn("ultracode", text)
+        self.assertNotIn("workflowSizeGuideline", text)
+
+    def settings_passed(self):
+        start = [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]][0]
+        claude = start[start.index("--") + 1:]
+        return json.loads(Path(claude[claude.index("--settings") + 1]).read_text())
+
+    def test_ultracode_turns_on_the_setting_and_is_recorded(self):
+        self.scenario()
+        result = self.run_spawn(ultracode=True, workflow_size="large")
+        settings = self.settings_passed()
+        self.assertIs(settings["ultracode"], True)
+        self.assertEqual(settings["workflowSizeGuideline"], "large")
+        self.assertEqual(settings["env"]["ATHENA_WORKER"], "plt-1")
+        w = ledger.workers()["plt-1"]
+        self.assertEqual((w["ultracode"], w["workflow_size"]), (True, "large"))
+        self.assertEqual((result["ultracode"], result["workflow_size"]), (True, "large"))
+        prompt = [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]][0]
+        self.assertNotIn("ultracode", prompt[3].lower())  # the setting turns it on, never the goal text
+
+    def test_ultracode_without_size_leaves_the_guideline_alone(self):
+        self.scenario()
+        self.run_spawn(ultracode=True)
+        settings = self.settings_passed()
+        self.assertIs(settings["ultracode"], True)
+        self.assertNotIn("workflowSizeGuideline", settings)
+        w = ledger.workers()["plt-1"]
+        self.assertTrue(w["ultracode"])
+        self.assertNotIn("workflow_size", w)
+
+    def test_no_ultracode_keys_without_the_flag(self):
+        self.scenario()
+        result = self.run_spawn()
+        self.assertNotIn("ultracode", self.settings_passed())
+        self.assertNotIn("ultracode", ledger.workers()["plt-1"])
+        self.assertNotIn("ultracode", result)
+
+    def test_workflow_size_needs_ultracode(self):
+        self.scenario()
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            self.run_spawn(workflow_size="large")
+        self.assertIn("--ultracode", str(ctx.exception))
+        self.assertEqual(logged_calls(self.tmp.name), [])
+
     def test_rejects_bad_name_and_live_duplicate(self):
         self.scenario()
         with self.assertRaises(spawn.SpawnError):
@@ -172,6 +228,56 @@ class SpawnTest(unittest.TestCase):
         ledger.append("spawn", "plt-1", pane="w1:p1")
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn()
+
+
+class UltracodeCliTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        self.repo, _ = make_repo(self.tmp.name, "proj")
+        self.brief = Path(self.tmp.name) / "brief.md"
+        self.brief.write_text("# PLT-1\nGOAL: fix it\n")
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def cli(self, *args):
+        return subprocess.run([str(helpers.ROOT / "bin" / "athena"), *args], capture_output=True, text=True,
+                              env=dict(os.environ))
+
+    def spawn_args(self, *extra):
+        return ("spawn", "--repo", str(self.repo), "--branch", "gabriel/plt-1-fix", "--name", "plt-1",
+                "--brief", str(self.brief), "--goal", "PLT-1 is done when x.", *extra)
+
+    def test_workflow_size_without_ultracode_is_rejected(self):
+        out = self.cli(*self.spawn_args("--workflow-size", "large"))
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("--workflow-size needs --ultracode", out.stderr)
+        self.assertEqual(logged_calls(self.tmp.name), [])
+        self.assertEqual(ledger.workers(), {})
+
+    def test_workflow_size_choices(self):
+        out = self.cli(*self.spawn_args("--ultracode", "--workflow-size", "huge"))
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("invalid choice", out.stderr)
+
+    def test_spawn_output_and_status_show_ultracode(self):
+        write_scenario(self.tmp.name, [{"match": ["worktree", "create"], "stdout": CREATED}])
+        out = self.cli(*self.spawn_args("--ultracode", "--workflow-size", "medium"))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        result = json.loads(out.stdout)
+        self.assertEqual((result["ultracode"], result["workflow_size"]), (True, "medium"))
+        ledger.append("spawn", "plt-2", pane="w2:p1")
+        ledger.append("spawn", "plt-3", pane="w3:p1", ultracode=True)
+        lines = {line.split()[0]: line for line in self.cli("status").stdout.splitlines() if line[:1].strip()}
+        self.assertIn("  UC:medium", lines["plt-1"])
+        self.assertIn("  UC", lines["plt-3"])
+        self.assertNotIn("UC:", lines["plt-3"])
+        self.assertNotIn("UC", lines["plt-2"])
+        rows = {r["name"]: r for r in json.loads(self.cli("status", "--json").stdout)}
+        self.assertEqual((rows["plt-1"]["ultracode"], rows["plt-1"]["workflow_size"]), (True, "medium"))
+        self.assertFalse(rows["plt-2"]["ultracode"])
 
 
 if __name__ == "__main__":
