@@ -3,7 +3,7 @@ import os
 import shutil
 import time
 
-from athena_lib import gitops, herdr, ledger
+from athena_lib import dashstate, gitops, herdr, ledger
 
 
 class RetireError(Exception):
@@ -164,6 +164,7 @@ def retire(name, force=False, keep_worktree=False) -> dict:
                                   f"({result['herdr_error']}); {name} stays tracked. Retry with `athena retire {name}`, "
                                   f"or `athena retire {name} --keep-worktree`, then close the space by hand")
             result["space_left_open"] = worker.get("workspace")
+    dashstate.record_retire(worker)
     ledger.append("retire", name, backup=result["backup"], wip_backup=result["wip_backup"], removed=result["removed"],
                   cleanup_error=result.get("herdr_error"))
     return result

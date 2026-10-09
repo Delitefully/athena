@@ -1,0 +1,1 @@
+{"event": "SessionEnd", "last_report": {"concerns": [], "decisions": [], "head": "4f2c1ab", "pr": "https://github.com/acme/web/pull/39", "status": "DONE_WITH_CONCERNS", "verify": "make test -> pass"}, "name": "abc-100", "report": null, "session_id": "s-abc-100", "state": "exited", "summary": "Reported.", "ts": 1791485600}

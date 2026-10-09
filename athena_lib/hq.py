@@ -1,9 +1,10 @@
 """The chief of staff's own space: create it once, then focus it."""
 import json
 import os
+import sys
 from pathlib import Path
 
-from athena_lib import board, herdr, paths
+from athena_lib import board, dash, herdr, paths
 
 
 def _file():
@@ -77,14 +78,25 @@ def _routine():
                "Start your HQ routine: run `athena status`, start `athena watch` under Monitor, then tell me what is live and wait.")
 
 
-def hq(cwd=None, focus=True, start_board=True) -> dict:
+def _helpers(start_board, start_dash):
+    """The board watcher and the dashboard, once HQ's Claude runs. Neither may stop HQ from opening."""
+    if start_board:
+        board.start_watcher()
+    if start_dash:
+        try:
+            dash.start()
+        except Exception as exc:
+            print(f"dashboard not started: {exc}", file=sys.stderr)
+
+
+def hq(cwd=None, focus=True, start_board=True, start_dash=None) -> dict:
+    start_dash = start_board if start_dash is None else start_dash
     current = load()
     if current.get("pane") and _alive(current["pane"]):
         keep_label(current, owned=True)
         if focus and current.get("workspace"):
             herdr.call("workspace", "focus", current["workspace"])
-        if start_board:
-            board.start_watcher()
+        _helpers(start_board, start_dash)
         return {**current, "created": False}
     if current.get("pane") and _workspace_is_hq(current):
         # The hq space survived but its Claude did not (exited, or a herdr restart): restart it there.
@@ -93,8 +105,7 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
         _routine()
         if focus:
             herdr.call("workspace", "focus", current["workspace"])
-        if start_board:
-            board.start_watcher()
+        _helpers(start_board, start_dash)
         return {**current, "created": False, "restarted": True}
     cwd = os.path.realpath(os.path.expanduser(cwd or os.environ.get("ATHENA_HQ_CWD") or "~/Developer"))
     claim = paths.claim_file(cwd)
@@ -111,6 +122,5 @@ def hq(cwd=None, focus=True, start_board=True) -> dict:
     _file().write_text(json.dumps(record, indent=2))
     keep_label(record, owned=True)
     _routine()
-    if start_board:
-        board.start_watcher()
+    _helpers(start_board, start_dash)
     return {**record, "created": True}

@@ -2,11 +2,12 @@
 import argparse
 import json
 import re
+import subprocess
 import time
 import sys
 from pathlib import Path
 
-from athena_lib import board, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
+from athena_lib import board, dash, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -99,6 +100,26 @@ def cmd_board(a):
     return 0
 
 
+def _dash_line(rec, note=""):
+    hq = f", lives while HQ pid {rec['hq_pid']} does" if rec.get("hq_pid") else ", no HQ found: it runs until `athena dash off`"
+    return f"dash {rec['url']} pid {rec['pid']}{hq}{note}"
+
+
+def cmd_dash(a):
+    if a.action in ("on", "open"):
+        rec = dash.start()
+        print(_dash_line(rec, "" if rec["started"] else " (already running)"))
+        if a.action == "open":
+            subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", rec["url"]], check=False)
+    elif a.action == "off":
+        rec = dash.stop()
+        print(f"dash off (stopped pid {rec['pid']})" if rec else "dash off")
+    else:
+        rec = dash.running()
+        print(_dash_line(rec) if rec else "dash off")
+    return 0
+
+
 def cmd_watch(a):
     watch.run(interval=a.interval)
     return 0
@@ -153,7 +174,7 @@ def cmd_retire(a):
 
 
 def cmd_hq(a):
-    _print(hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board))
+    _print(hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash))
     return 0
 
 
@@ -196,6 +217,10 @@ def parser():
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_board)
 
+    s = sub.add_parser("dash", help="the dashboard on 127.0.0.1: on, off, show, open")
+    s.add_argument("action", choices=["on", "off", "show", "open"], nargs="?", default="show")
+    s.set_defaults(func=cmd_dash)
+
     s = sub.add_parser("watch", help="print one line per change (run under Monitor)")
     s.add_argument("--interval", type=float, default=20)
     s.set_defaults(func=cmd_watch)
@@ -223,6 +248,7 @@ def parser():
     s.add_argument("--cwd")
     s.add_argument("--no-focus", action="store_true")
     s.add_argument("--no-board", action="store_true")
+    s.add_argument("--no-dash", action="store_true")
     s.set_defaults(func=cmd_hq)
     return p
 
@@ -234,7 +260,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (spawn.SpawnError, retire.RetireError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (spawn.SpawnError, retire.RetireError, dash.DashError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 

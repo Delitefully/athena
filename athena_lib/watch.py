@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from athena_lib import gitops, herdr, hq, ledger, spawn, status
+from athena_lib import dashstate, gitops, herdr, hq, ledger, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -85,6 +85,16 @@ def step(prev, fetch=False, with_pr=True):
     return cur, lines + ([] if prev is None else diff(prev, cur))
 
 
+def tick(prev, fetch=False):
+    """step, then save the snapshot for the dashboard."""
+    cur, lines = step(prev, fetch=fetch)
+    try:
+        dashstate.save_watch(cur)
+    except OSError as exc:
+        print(f"watch.json not saved: {exc}", file=sys.stderr, flush=True)
+    return cur, lines
+
+
 def keep_labels():
     hq.keep_label()
     for w in ledger.live():
@@ -111,7 +121,7 @@ def run(interval=20, fetch_every=120):
             last_fetch = time.time()
         try:
             first = prev is None
-            prev, lines = step(prev, fetch=fetch)
+            prev, lines = tick(prev, fetch=fetch)
             if first:
                 names = ", ".join(f"{n}={v['state']}" for n, v in prev["workers"].items()) or "no live workers"
                 print(f"watching: {names}", flush=True)

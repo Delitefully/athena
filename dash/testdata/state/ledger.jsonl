@@ -1,0 +1,26 @@
+{"branch": "you/abc-097-invite", "effort": "high", "event": "spawn", "linear": "ABC-97", "model": "opus", "name": "abc-097", "path": "/home/you/.worktrees/web/abc-097", "repo": "/home/you/src/web", "title": "Invite emails link to the right workspace", "ts": 1791320000}
+{"event": "update", "name": "abc-097", "prompt": "accepted", "ts": 1791320001}
+{"event": "retire", "name": "abc-097", "removed": true, "ts": 1791341600}
+{"branch": "you/abc-098-csv", "effort": "high", "event": "spawn", "linear": "ABC-98", "model": "opus", "name": "abc-098", "path": "/home/you/.worktrees/api/abc-098", "repo": "/home/you/src/api", "title": "CSV export keeps column order", "ts": 1791392000}
+{"event": "update", "name": "abc-098", "prompt": "accepted", "ts": 1791392001}
+{"branch": "you/abc-099-why", "effort": "high", "event": "spawn", "linear": "ABC-99", "model": "opus", "name": "abc-099", "path": "/home/you/.worktrees/api/abc-099", "repo": "/home/you/src/api", "title": "Why do some sessions expire early?", "ts": 1791399200}
+{"event": "update", "name": "abc-099", "prompt": "accepted", "ts": 1791399201}
+{"event": "retire", "name": "abc-098", "removed": true, "ts": 1791406400}
+{"event": "retire", "name": "abc-099", "removed": true, "ts": 1791410000}
+{"branch": "you/abc-100-settings", "effort": "high", "event": "spawn", "linear": "ABC-100", "model": "opus", "name": "abc-100", "path": "/home/you/.worktrees/web/abc-100", "repo": "/home/you/src/web", "title": "Settings search matches synonyms", "ts": 1791428000}
+{"event": "update", "name": "abc-100", "prompt": "accepted", "ts": 1791428001}
+{"branch": "you/abc-108-search", "effort": "high", "event": "spawn", "linear": "ABC-108", "model": "opus", "name": "abc-108", "path": "/home/you/.worktrees/web/abc-108", "repo": "/home/you/src/web", "title": "Search results keep their filters", "ts": 1791485600}
+{"event": "update", "name": "abc-108", "prompt": "accepted", "ts": 1791485601}
+{"branch": "you/abc-101-sign-in", "effort": "high", "event": "spawn", "linear": "ABC-101", "model": "opus", "name": "abc-101", "path": "/home/you/.worktrees/web/abc-101", "repo": "/home/you/src/web", "title": "Sign-in remembers the last workspace", "ts": 1791488600}
+{"event": "update", "name": "abc-101", "prompt": "accepted", "ts": 1791488601}
+{"event": "retire", "name": "abc-100", "removed": true, "ts": 1791489200}
+{"branch": "you/abc-102-rate", "effort": "high", "event": "spawn", "linear": "ABC-102", "model": "opus", "name": "abc-102", "path": "/home/you/.worktrees/api/abc-102", "repo": "/home/you/src/api", "title": "Rate limits for the export API", "ts": 1791490400}
+{"event": "update", "name": "abc-102", "prompt": "accepted", "ts": 1791490401}
+{"branch": "you/abc-103-billing", "effort": "high", "event": "spawn", "linear": "ABC-103", "model": "opus", "name": "abc-103", "path": "/home/you/.worktrees/web/abc-103", "repo": "/home/you/src/web", "title": "Billing page empty state", "ts": 1791491000}
+{"event": "update", "name": "abc-103", "prompt": "accepted", "ts": 1791491001}
+{"branch": "you/abc-106-webhook", "effort": "high", "event": "spawn", "linear": "ABC-106", "model": "opus", "name": "abc-106", "path": "/home/you/.worktrees/api/abc-106", "repo": "/home/you/src/api", "title": "Webhook retries back off", "ts": 1791492800}
+{"event": "update", "name": "abc-106", "prompt": "accepted", "ts": 1791492801}
+{"branch": "you/abc-107-dark", "effort": "high", "event": "spawn", "linear": "ABC-107", "model": "opus", "name": "abc-107", "path": "/home/you/.worktrees/web/abc-107", "repo": "/home/you/src/web", "title": "Dark mode for the settings page", "ts": 1791494300}
+{"event": "update", "name": "abc-107", "prompt": "accepted", "ts": 1791494301}
+{"branch": "you/abc-109-faster", "effort": "high", "event": "spawn", "linear": "ABC-109", "model": "opus", "name": "abc-109", "path": "/home/you/.worktrees/api/abc-109", "repo": "/home/you/src/api", "title": "Faster audit log queries", "ts": 1791495800}
+{"event": "update", "name": "abc-109", "prompt": "accepted", "ts": 1791495801}

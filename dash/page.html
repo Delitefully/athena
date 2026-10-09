@@ -1,0 +1,61 @@
+{{define "page"}}<!doctype html>
+<html lang="en"{{if .Scheme}} data-scheme="{{.Scheme}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}}</title>
+<link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+<link rel="preload" href="/static/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<svg width="0" height="0" class="sprite" aria-hidden="true"><defs>
+{{/* The watch.svg icon family (assets/src/icons.py): stroke 2, round caps, 16 px grid centred on 0,0.
+     Colours come by inheritance from the <svg class="icon">: a badge's disc takes its fill (ink), its glyph its stroke (ground). */}}
+<g id="i-pr"><circle cx="-4.5" cy="-4.5" r="1.75"/><circle cx="-4.5" cy="4.5" r="1.75"/><circle cx="4.5" cy="4.5" r="1.75"/><path d="M-4.5 -2.75V2.75M4.5 2.75V-1.5Q4.5 -4.5 1.5 -4.5H.5M2.5 -6.5L.5 -4.5L2.5 -2.5"/></g>
+<g id="i-review"><path d="M-6.5 -5.5H6.5V3H-.5L-4 6.25V3H-6.5ZM-3.25 -1.25H3.25"/></g>
+<g id="i-merged"><path d="M-7 -5C-2.5 -5 -2.5 0 1.5 0M-7 5C-2.5 5 -2.5 0 1.5 0"/><circle cx="4.5" r="2.25" fill="currentColor"/></g>
+<g id="i-ok"><circle r="6.25"/><path d="M-2.75 .25L-.75 2.25L3 -1.75"/></g>
+<g id="i-working"><path d="M-6.5 0H-3.5L-1.5 -4.5L1.5 4.5L3.5 0H6.5"/></g>
+<g id="i-idle"><circle r="6.25"/><path d="M0 -3V0L2.25 1.75"/></g>
+<g id="i-exited"><circle r="6.25"/><path d="M-3 0H3"/></g>
+<g id="i-retired"><path d="M-6.5 0H6.5"/><circle r="2.25" fill="currentColor"/></g>
+<g id="i-blocked"><circle r="10" stroke="none"/><g fill="none"><path d="M0 -5V.75"/><circle cy="4.25" r="1.3" fill="currentColor" stroke="none"/></g></g>
+<g id="i-fail"><circle r="10" stroke="none"/><g fill="none"><path d="M-3.25 -3.25L3.25 3.25M3.25 -3.25L-3.25 3.25"/></g></g>
+<g id="i-done"><circle r="10" stroke="none"/><g fill="none"><path d="M-3.25 5.25V-5M-3.25 -4.75H4L2 -1.75L4 1.25H-3.25"/></g></g>
+<g id="i-ready"><circle r="10" stroke="none"/><g fill="none"><path d="M-6.25 .25L-3.5 3L1.75 -2.75M-.25 2.25L.5 3L5.75 -2.75"/></g></g>
+</defs></svg>
+<header>
+<a class="lockup" href="/" aria-label="athena">{{template "lockup"}}</a>
+<p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
+</header>
+<main>{{template "main" .View}}</main>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
+
+{{define "main"}}<span hidden data-title="{{.Title}}"></span>
+{{template "group" (group "needs" "Needs you" .NeedsYou "Nothing waits on you.")}}
+{{template "group" (group "progress" "In progress" .InProgress "No live workers.")}}
+{{template "group" (group "done" "Done" .Done "Nothing finished in the last two weeks.")}}
+{{if .Notices}}<aside class="notices">{{range .Notices}}<p>{{.}}</p>{{end}}</aside>{{end}}
+{{end}}
+
+{{define "group"}}<section class="group {{.Key}}" aria-labelledby="h-{{.Key}}">
+<h2 id="h-{{.Key}}">{{.Name}} <span class="count">{{len .Items}}</span></h2>
+{{if .Items}}<ul>{{range .Items}}{{template "item" .}}{{end}}</ul>{{else}}<p class="empty">{{.Empty}}</p>{{end}}
+</section>{{end}}
+
+{{define "item"}}{{if .Note}}<li id="{{.ID}}" class="item note">
+<svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><path class="thread" d="M-8 0H8"/></svg>
+<div class="body"><p class="note-text">{{.Note}}</p><p class="meta">{{.Label}}</p></div>
+</li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
+<svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
+<div class="body">
+<p class="line">{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}<span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span></p>
+<p class="meta"><span class="label">{{.Label}}</span>{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>
+{{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
+</div>
+</li>{{end}}{{end}}

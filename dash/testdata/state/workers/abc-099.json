@@ -1,0 +1,1 @@
+{"event": "SessionEnd", "last_report": {"concerns": [], "decisions": [], "head": "4f2c1ab", "pr": "", "status": "DONE", "verify": "make test -> pass"}, "name": "abc-099", "report": null, "session_id": "s-abc-099", "state": "exited", "summary": "Findings are in the report.", "ts": 1791410000}
