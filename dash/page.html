@@ -54,7 +54,7 @@
 </li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body">
-<p class="line"><span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span>{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}</p>
+<p class="line">{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}<span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span></p>
 <p class="meta"><span class="label">{{.Label}}</span>{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>
 {{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
 </div>

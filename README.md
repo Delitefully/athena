@@ -24,6 +24,16 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 - `prefix+shift+c` (or `athena hq`): open or focus the hq space. The chief of staff starts with its brief (`hq.md`) and the `athena` skill.
 - Tell it what to start: "start abc-101 and abc-102". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
 - `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq.
+- `athena dash open`: the dashboard in your browser.
+
+## Dashboard
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-dark.png">
+  <img src="assets/dashboard.png" alt="athena dash: needs you, in progress and done, with ticket and PR links" width="960">
+</picture>
+
+While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: what needs you (a blocked worker, a question, a PR ready for you, and athena's own asks from `needs-you.md`), what is in progress with its PR checks, and what was done in the last two weeks, each linked to its ticket and PR. It reads athena's state files only, makes no network calls, and updates by itself within a second of a change. `athena hq` starts it, and closing HQ's space stops it. It is a small Go program in `dash/`, built on first use (Go required); the plan and its failure modes are in [docs/dashboard.md](docs/dashboard.md).
 
 ## Commands
 
@@ -33,7 +43,8 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 | `athena spawn --repo --branch --name --brief --goal ...` | Worktree space, worker Claude (`--name`, `worker.md`, per-worker settings), then its `/goal` |
 | `athena status [--json] [--pr]` | Merged status: ATHENA-REPORT, hook state, git, PR, herdr |
 | `athena board on\|off\|toggle\|sync\|show` | Attach columns beside hq; a watcher keeps them in step with width and workers |
-| `athena watch` | One line per change, for Monitor |
+| `athena dash on\|off\|show\|open` | The dashboard on 127.0.0.1; `show` prints its URL and pid |
+| `athena watch` | One line per change, for Monitor; also saves its snapshot to `watch.json` for the dashboard |
 | `athena pr <name>` | PR summary |
 | `athena nudge <name> <text>` | Type a slash command into a worker |
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
@@ -42,7 +53,8 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 
 ## Pieces
 
-- `athena_lib/`: stdlib Python 3.9+. State in `~/.local/state/athena/` (`ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`).
+- `athena_lib/`: stdlib Python 3.9+. State in `~/.local/state/athena/` (`ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.md`).
+- `dash/`: the dashboard server, Go standard library only, with the Instrument fonts (OFL) embedded.
 - `hooks/`: Claude Code plugin hooks that write `workers/<name>.json`; a no-op outside athena workers.
 - `hq.md`, `worker.md`, `skills/athena/SKILL.md`: the prompts.
 - `repos/<repo>.setup`: optional per-repo worktree setup (platform: env files, certs, `pnpm install`).
@@ -58,11 +70,11 @@ claude plugin install athena@athena
 
 ## Test
 
-`make test` (unit tests with a fake herdr). `tests/lab/` runs real workers against an isolated herdr server.
+`make test` (unit tests with a fake herdr, and `go test` for the dashboard). `tests/lab/` runs real workers against an isolated herdr server.
 
 ## Environment
 
-`ATHENA_STATE_DIR`, `ATHENA_WORKTREE_ROOT` (default `~/Developer/.worktrees`), `ATHENA_HERDR`, `ATHENA_HQ` (default `athena`), `ATHENA_MIN_COL` (70), `ATHENA_MAX_WORKERS` (4, hard cap 6), `ATHENA_PLUGIN_DIR` (load the plugin from a directory in workers), `ATHENA_HQ_PANE`.
+`ATHENA_STATE_DIR`, `ATHENA_WORKTREE_ROOT` (default `~/Developer/.worktrees`), `ATHENA_HERDR`, `ATHENA_HQ` (default `athena`), `ATHENA_MIN_COL` (70), `ATHENA_MAX_WORKERS` (4, hard cap 6), `ATHENA_PLUGIN_DIR` (load the plugin from a directory in workers), `ATHENA_HQ_PANE`, `ATHENA_DASH_PORT` (2843), `ATHENA_LINEAR_WORKSPACE` (the Linear workspace in ticket links).
 
 ## Update after editing
 

@@ -3,10 +3,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
-from athena_lib import hq, paths
+from athena_lib import dash, hq, paths
 
 CREATED = {"result": {"workspace": {"workspace_id": "w8"}, "root_pane": {"pane_id": "w8:p1", "terminal_id": "term_h"}}}
 
@@ -21,6 +22,27 @@ class HqTest(unittest.TestCase):
     def tearDown(self):
         self.env.restore()
         self.tmp.cleanup()
+
+    def test_starts_the_board_and_the_dashboard_after_athena(self):
+        write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])
+        with mock.patch.object(hq.board, "start_watcher") as board, mock.patch.object(hq.dash, "start") as start:
+            hq.hq(cwd=str(self.cwd))
+        board.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_a_dashboard_failure_does_not_stop_hq(self):
+        write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])
+        with mock.patch.object(hq.board, "start_watcher"), \
+                mock.patch.object(hq.dash, "start", side_effect=dash.DashError("no go")), \
+                mock.patch("sys.stderr"):
+            self.assertTrue(hq.hq(cwd=str(self.cwd), start_board=True)["created"])
+
+    def test_no_board_means_no_dashboard_unless_asked(self):
+        write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])
+        with mock.patch.object(hq.board, "start_watcher") as board, mock.patch.object(hq.dash, "start") as start:
+            hq.hq(cwd=str(self.cwd), start_board=False)
+        board.assert_not_called()
+        start.assert_not_called()
 
     def test_creates_space_and_starts_athena(self):
         write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])

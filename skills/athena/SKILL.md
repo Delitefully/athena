@@ -11,7 +11,7 @@ description: Chief-of-staff procedures for the hq session - turning Linear ticke
 
 1. `athena status --pr` to see every live worker, its state, git and PR.
 2. Start the watcher with the Monitor tool: command `athena watch`, `timeout_ms` 1800000 (the maximum). Each change arrives as a line. Monitor expires after 30 minutes and sends one expiry notice: re-arm it every time, and after a restart (Monitor is not restored on resume). Workers' SendMessage reports wake you independently of the watcher.
-3. `athena board on` if the board watcher is not running (`athena board show` lists columns).
+3. `athena board on` if the board watcher is not running (`athena board show` lists columns), and `athena dash on` if the dashboard is not (`athena dash show` prints its URL).
 4. Tell the human, in at most five lines: what needs them, then one line per worker.
 
 The ledger, `git worktree list`, `herdr agent list` and Linear are the checkpoint. Trust them over your memory.
@@ -101,6 +101,8 @@ needs you: plt-4520 permission prompt (psql on staging) · plt-4533 ready to mer
 plt-4512 working · 3 commits · PR draft, checks pending
 plt-4547 review round 2/3 · 1 finding sent
 ```
+
+Keep `~/.local/state/athena/needs-you.md` current for the dashboard: one `- ` line per decision that belongs to no worker (a merge ask, an open question), added when you ask it and removed once answered. Blocked workers, and PRs that are approved or out of draft with their worker done, show on their own; do not repeat them there.
 
 When the human repeats an instruction, propose adding it to `~/.local/state/athena/standing-orders.md` (every brief's NOTES references it).
 

@@ -74,12 +74,11 @@ ul { list-style: none; margin: 0; padding: 0; }
 .icon.badge { fill: var(--ink); stroke: var(--bg); color: var(--bg); }
 .body { min-width: 0; }
 .body p { margin: 0; }
-.line { display: flex; align-items: baseline; gap: 8px; }
-.who { flex: none; }
+.line { text-wrap: pretty; }
 .ticket { font-weight: 600; text-decoration: none; letter-spacing: .01em; }
 a.ticket:hover { text-decoration: underline 1px currentColor; }
-.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.line time { flex: none; margin-left: auto; padding-left: 8px; font-size: 12.5px; color: var(--muted); }
+.ticket + .title, .who + .title { margin-left: 4px; }
+.line time { float: right; margin-left: 12px; font-size: 12.5px; color: var(--muted); }
 .meta { margin-top: 3px !important; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--muted); }
 .act .label { color: var(--ink); font-weight: 600; }
 .checks.failure { color: var(--ink); font-weight: 600; }
