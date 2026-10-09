@@ -57,6 +57,8 @@ class HqTest(unittest.TestCase):
         claude = start[start.index("--") + 1:]
         self.assertEqual(claude[claude.index("--name") + 1], "athena")
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("hq.md"))
+        env = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())["env"]
+        self.assertEqual(env["ATHENA_HQ"], "athena")  # so `athena hq restart` run inside HQ targets this HQ
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["pane"], "w8:p1")
         self.assertFalse(paths.claim_file(str(self.cwd)).exists())
 

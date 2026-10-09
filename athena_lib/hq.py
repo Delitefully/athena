@@ -31,7 +31,8 @@ def _alive(pane):
 def _claude_args():
     settings = paths.ensure("settings") / "hq.json"
     settings.write_text(json.dumps({"crossSessionInbound": "accept",
-                                    "env": {"ATHENA_ROLE": "hq", "ATHENA_STATE_DIR": str(paths.state_dir())}}, indent=2))
+                                    "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
+                                            "ATHENA_STATE_DIR": str(paths.state_dir())}}, indent=2))
     args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
             "--settings", str(settings)]
     if os.environ.get("ATHENA_PLUGIN_DIR"):
