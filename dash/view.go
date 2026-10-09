@@ -106,6 +106,9 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			if pr == nil {
 				pr = prFromReport(hook.Report, hook.LastReport)
 			}
+			if pr == nil && w.Linear == "" {
+				continue // a probe or experiment: it stays in the ledger, off the page
+			}
 			it.PR = prView(pr, 0)
 			it.Icon, it.Label = "retired", "retired"
 			if pr != nil {
