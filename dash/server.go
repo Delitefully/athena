@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -25,7 +26,6 @@ var staticFS embed.FS
 
 var funcs = template.FuncMap{
 	"iso": func(ts float64) string { return unix(ts).UTC().Format(time.RFC3339) },
-	"ago": func(ts float64) string { return ago(time.Since(unix(ts))) },
 	"checks": func(c string) string {
 		return map[string]string{"success": "green", "failure": "failing", "pending": "running"}[c]
 	},
@@ -57,12 +57,13 @@ func ago(d time.Duration) string {
 	return strconv.Itoa(s/86400) + " d ago"
 }
 
-func templates() *template.Template {
+func templates(now func() time.Time) *template.Template {
 	lockup, err := staticFS.ReadFile("static/lockup.svg")
 	if err != nil {
 		panic(err)
 	}
-	t := template.Must(template.New("dash").Funcs(funcs).Parse(pageHTML))
+	clock := template.FuncMap{"ago": func(ts float64) string { return ago(now().Sub(unix(ts))) }}
+	t := template.Must(template.New("dash").Funcs(funcs).Funcs(clock).Parse(pageHTML))
 	return template.Must(t.New("lockup").Parse(string(lockup)))
 }
 
@@ -83,8 +84,10 @@ type Server struct {
 }
 
 func NewServer(stateDir string, port int, linearWorkspace string) *Server {
-	return &Server{store: NewStore(stateDir), tmpl: templates(), port: port, linearWorkspace: linearWorkspace,
+	s := &Server{store: NewStore(stateDir), port: port, linearWorkspace: linearWorkspace,
 		now: time.Now, clients: map[chan []byte]struct{}{}, done: make(chan struct{})}
+	s.tmpl = templates(func() time.Time { return s.now() })
+	return s
 }
 
 // Refresh re-reads the state when force is set or a file changed, and broadcasts the result if the page differs.
@@ -108,7 +111,7 @@ func (s *Server) Refresh(force bool) (changed bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if bytes.Equal(buf.Bytes(), s.main) {
+	if bytes.Equal(withoutTimes(buf.Bytes()), withoutTimes(s.main)) {
 		return false
 	}
 	s.main, s.view = buf.Bytes(), view
@@ -117,6 +120,14 @@ func (s *Server) Refresh(force bool) (changed bool) {
 		offer(c, s.main)
 	}
 	return true
+}
+
+var timeText = regexp.MustCompile(`(<time [^>]*>)[^<]*(</time>)`)
+
+// withoutTimes drops the "4 min ago" texts, which the page's own timer keeps current, so the minute's re-render
+// pushes a page only when something else changed.
+func withoutTimes(page []byte) []byte {
+	return timeText.ReplaceAll(page, []byte("$1$2"))
 }
 
 // offer hands a page to a client without blocking: a slow client only ever gets the newest page.

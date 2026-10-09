@@ -197,6 +197,18 @@ func TestUnchangedStateIsNotPushedAgain(t *testing.T) {
 	}
 }
 
+func TestTheMinuteTickDoesNotRepushAnUnchangedPage(t *testing.T) {
+	srv, _ := start(t, copyFixture(t))
+	srv.now = func() time.Time { return time.Unix(fixtureNow+80, 0) } // the minute texts change; watch.json is not stale yet
+	if srv.Refresh(true) {
+		t.Fatal("only the relative times changed, and the page's own timer updates those")
+	}
+	srv.now = func() time.Time { return time.Unix(fixtureNow+15*24*3600, 0) } // the Done window moved on
+	if !srv.Refresh(true) {
+		t.Fatal("a real change in the page was not pushed")
+	}
+}
+
 func TestOfferKeepsOnlyTheNewestPage(t *testing.T) {
 	c := make(chan []byte, 1)
 	offer(c, []byte("old"))
