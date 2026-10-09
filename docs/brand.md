@@ -47,6 +47,9 @@ The three README graphics (`assets/one-thread.svg`, `ticket-path.svg`, `watch.sv
 4. Stagger 60 to 110 ms, never all at once. Hold at least 600 ms after each arrival.
 5. Loops are 10 s and end on their first frame.
 6. No glows, gradients, particles or idle pulsing.
+7. Nothing moves to make room. An event appears in space reserved for it; the layout never reflows or shifts.
+
+Event icons (`watch.svg`): one family on a 16 px grid, stroke 2 with round caps and joins, drawn as paths and reused with `<use>`, no emoji or font glyphs. Routine progress (PR opened, checks green, review comments, rebase, ready to merge, merged) is muted; the events athena acts on (blocked, CI failed, done, main moved) are ink. None is red. Each icon sits on a ground-coloured bead that cuts the lane rule, and an event rides its lane at exactly the stream's speed.
 
 Technical constraints, so the files render on GitHub through `<img>`:
 
