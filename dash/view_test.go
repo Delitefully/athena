@@ -174,3 +174,30 @@ func TestInlineEscapesAndLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryNeverShowsTheReportJSON(t *testing.T) {
+	rep := &Report{Status: "DONE"}
+	cases := map[string]Hook{
+		"cut before the report":  {Summary: "Opened the PR.\n\nATHENA-REPORT {\"status\":\"DONE\"}", Report: rep},
+		"only the report's tail": {Summary: `ERGEABLE -> pass","decisions":["Identity path"],"head":"ac2d32bbb7"}`, Report: rep},
+		"tail, last report only": {Summary: `tree verified"],"status":"DONE"}`, LastReport: rep},
+	}
+	want := map[string]string{"cut before the report": "Opened the PR.", "only the report's tail": "", "tail, last report only": ""}
+	for name, h := range cases {
+		if got := summary(h); got != want[name] {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	if got := summary(Hook{Summary: `Asked: "which ceiling?"`}); got != `Asked: "which ceiling?"` {
+		t.Errorf("a plain summary with quotes: %q", got)
+	}
+}
+
+func TestDoneWorkerShowsItsFirstConcern(t *testing.T) {
+	h := Hook{State: "done", Summary: `x"],"status":"DONE_WITH_CONCERNS"}`,
+		Report: &Report{Status: "DONE_WITH_CONCERNS", Concerns: []string{"CI not checked on the new head"}}}
+	v := Build(Snapshot{Workers: []Worker{{Name: "a", State: "live"}}, Hooks: map[string]Hook{"a": h}}, fixtureNow, "acme")
+	if d := v.InProgress[0].Detail; d != "CI not checked on the new head" {
+		t.Fatalf("detail %q", d)
+	}
+}

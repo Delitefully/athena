@@ -106,3 +106,16 @@ Seventeen constraints were extracted and checked; the full table is in the PR.
 - Rejected: **fsnotify instead of polling.** A poll costs 0.085 ms of CPU (measured on the real state dir), about 0.01% at 1 Hz, and polling cannot drop a watch.
 - Kept, though nobody asked: **the Host check.** It is the only way a remote page could read a localhost server, and it is five lines.
 - Narrowed: the Linear workspace default comes from the brief and `ATHENA_LINEAR_WORKSPACE` overrides it; the fonts come from Instrument's repositories named in `docs/brand.md`, since this repository holds none.
+
+## Measured
+
+On an M-series Mac, against the fixture state:
+
+| What | Result |
+|---|---|
+| Server start to first answer | 7 to 10 ms (`athena dash on` with a cached build: about 0.1 s; the first build about 1.5 s) |
+| Load and render the page body | 0.47 ms (`go test -bench Render`) |
+| `GET /`, whole page | 0.40 ms |
+| A worker file written to the page updated, no reload | 345 ms (the poll is 1 s) |
+| Idle CPU, one page connected | 30 ms of CPU in 60 s, about 0.05%; 13 MB resident |
+| Binary | 13 MB, fonts included |

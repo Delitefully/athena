@@ -142,7 +142,7 @@ func needRank(it Item) int {
 
 func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	report := hook.Report
-	summary := lastLine(hook.Summary)
+	summary := summary(hook)
 	switch {
 	case w.GoalPending:
 		it.Icon, it.Badge, it.Label = "blocked", true, "waiting at a startup prompt"
@@ -169,6 +169,9 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 		v.NeedsYou = append(v.NeedsYou, it)
 	default:
 		it.Icon, it.Label, it.Detail = stateIcon(state, pr), stateLabel(state, report), summary
+		if it.Detail == "" && report != nil && len(report.Concerns) > 0 {
+			it.Detail = report.Concerns[0]
+		}
 		if pr != nil && pr.Checks == "failure" {
 			it.Icon = "fail"
 		}
@@ -247,6 +250,20 @@ func prView(pr *PR, stale float64) *PRView {
 		pv.Checks = ""
 	}
 	return pv
+}
+
+// reportTail matches the end of an ATHENA-REPORT line whose start was cut off by the hook's 300-character limit.
+var reportTail = regexp.MustCompile(`"\s*[,:]\s*["\[{]|"\]?\s*}\s*$`)
+
+// summary is the worker's last line of prose: never its ATHENA-REPORT, not even a cut-off tail of one.
+func summary(h Hook) string {
+	s := h.Summary
+	if i := strings.LastIndex(s, "ATHENA-REPORT"); i >= 0 {
+		s = s[:i]
+	} else if (h.Report != nil || h.LastReport != nil) && reportTail.MatchString(s) {
+		return ""
+	}
+	return lastLine(s)
 }
 
 func lastLine(s string) string {
