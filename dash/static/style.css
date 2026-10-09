@@ -71,9 +71,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 13px 0 14px; border-bottom: 1px solid var(--rule); }
 .icon { width: 24px; height: 24px; margin-top: -2px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
-.icon.badge { color: var(--ink); }
-.icon .knock { stroke: var(--bg); }
-.icon .dot { fill: var(--bg); stroke: none; }
+.icon.badge { fill: var(--ink); stroke: var(--bg); color: var(--bg); }
 .body { min-width: 0; }
 .body p { margin: 0; }
 .line { display: flex; align-items: baseline; gap: 8px; }

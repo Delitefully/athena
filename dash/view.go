@@ -25,7 +25,7 @@ type Item struct {
 	Title     string
 	Repo      string
 	Icon      string // an icon id from the page's sprite
-	Badge     bool   // a solid ink badge: something to act on
+	Badge     bool   // the human acts on it: its label is set in ink
 	Label     string
 	Detail    string
 	When      float64

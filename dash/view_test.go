@@ -85,7 +85,9 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 }
 
 func TestBuildCases(t *testing.T) {
-	live := func(name string) Worker { return Worker{Name: name, State: "live", Linear: strings.ToUpper(name), Updated: fixtureNow} }
+	live := func(name string) Worker {
+		return Worker{Name: name, State: "live", Linear: strings.ToUpper(name), Updated: fixtureNow}
+	}
 	open := func(draft bool, review, checks string) *PR {
 		return &PR{Number: 7, URL: "https://github.com/acme/web/pull/7", State: "OPEN", Draft: draft, Review: review, Checks: checks}
 	}

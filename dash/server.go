@@ -29,6 +29,10 @@ var funcs = template.FuncMap{
 	"checks": func(c string) string {
 		return map[string]string{"success": "green", "failure": "failing", "pending": "running"}[c]
 	},
+	// The icons drawn as solid ink badges: events someone acts on, as in watch.svg.
+	"badge": func(icon string) bool {
+		return icon == "blocked" || icon == "fail" || icon == "done" || icon == "ready"
+	},
 	"group": func(key, name string, items []Item, empty string) map[string]any {
 		return map[string]any{"Key": key, "Name": name, "Items": items, "Empty": empty}
 	},
