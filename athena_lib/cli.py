@@ -24,7 +24,8 @@ def cmd_preflight(a):
 def cmd_spawn(a):
     goal = Path(a.goal_file).read_text() if a.goal_file else a.goal
     result = spawn.spawn(a.repo, a.branch, a.name, a.brief, goal, linear=a.linear, title=a.title, model=a.model,
-                         effort=a.effort, force=a.force, setup=not a.no_setup, ignore_quota=a.ignore_quota)
+                         effort=a.effort, force=a.force, setup=not a.no_setup, ignore_quota=a.ignore_quota,
+                         ultracode=a.ultracode, workflow_size=a.workflow_size)
     _print({k: v for k, v in result.items() if k != "screen"})
     code = 0
     if result.get("pending"):
@@ -55,6 +56,8 @@ def cmd_status(a):
         git = r.get("git") or {}
         bits = [f"{r['name']:<12}", f"{r['state']:<8}", f"herdr={r.get('herdr') or '-':<8}",
                 f"ahead={git.get('ahead', '-')}", f"dirty={len(git.get('dirty') or [])}"]
+        if r.get("ultracode"):
+            bits.append("UC" + (f":{r['workflow_size']}" if r.get("workflow_size") else ""))
         if r.get("pr"):
             p = r["pr"]
             bits.append(f"pr#{p['number']} {p['checks']} {p['review'] or 'no-review'}")
@@ -178,6 +181,9 @@ def parser():
     s.add_argument("--force", action="store_true")
     s.add_argument("--no-setup", action="store_true")
     s.add_argument("--ignore-quota", action="store_true", help="launch even above the 5-hour quota gate")
+    s.add_argument("--ultracode", action="store_true", help="turn ultracode on in the worker's settings (only when the human asks)")
+    s.add_argument("--workflow-size", choices=["small", "medium", "large", "unrestricted"],
+                   help="the worker's workflow size guideline; needs --ultracode")
     s.set_defaults(func=cmd_spawn)
 
     s = sub.add_parser("status", help="merged status of live workers")
@@ -222,7 +228,10 @@ def parser():
 
 
 def main(argv=None):
-    args = parser().parse_args(argv)
+    p = parser()
+    args = p.parse_args(argv)
+    if args.cmd == "spawn" and args.workflow_size and not args.ultracode:
+        p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
     except (spawn.SpawnError, retire.RetireError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
