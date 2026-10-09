@@ -1,6 +1,8 @@
 """athena: plumbing for the chief of staff. Run `athena -h`."""
 import argparse
 import json
+import re
+import time
 import sys
 from pathlib import Path
 
@@ -117,7 +119,13 @@ def cmd_nudge(a):
         print(f"{a.name} has not received its goal yet and may be at a startup prompt; the human answers that in its "
               f"space, then: athena resume {a.name}", file=sys.stderr)
         return 2
-    _print(herdr.call("agent", "prompt", a.name, " ".join(a.text)))
+    text = " ".join(a.text)
+    _print(herdr.call("agent", "prompt", a.name, text))
+    if re.fullmatch(r"/\S+", text):
+        # A bare slash command leaves Claude Code's command menu open, and the prompt's Enter only picks the
+        # suggestion. One more Enter submits it; on an already submitted command it lands on an empty prompt.
+        time.sleep(0.5)
+        herdr.call("agent", "send-keys", a.name, "enter")
     return 0
 
 
