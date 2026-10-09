@@ -83,7 +83,7 @@ The page follows `docs/brand.md`:
 - Linen ground and indigo ink in light; indigo night and lit linen in dark, from `prefers-color-scheme`. Muted labels in the muted pair.
 - Only athena is red: the knot in the header, and the `needs-you.md` lines, which are athena speaking. Workers, states and PRs are ink. A state that needs you is a solid ink badge; routine states are muted outline marks, the same split as `watch.svg`.
 - Instrument Serif for the three group titles and their counts; Instrument Sans at 400 to 600 for everything else, with tabular figures. No monospace: a sha or branch is set in Sans.
-- Fonts are the official webfonts (woff2) from Instrument's repositories, embedded in the binary, with their OFL licences in `dash/fonts/`. Nothing loads from another host.
+- Fonts are the official webfonts (woff2) from Instrument's repositories, embedded in the binary, with their OFL licences in `dash/static/`. Nothing loads from another host.
 - Three columns on a wide desk screen, one below the other on a narrow one. Rows are dense: ticket and title on one line, state, PR and time on the next, the summary muted and cut to one line.
 - Motion: arrivals by a moving edge, no fades, glows, pulses or spinners. Reduced motion shows the page still. Brand rule 7 (nothing moves to make room) cannot fully hold for a live list: a new row pushes the rows below it down. The lists are short and change rarely, so this is accepted.
 - `?scheme=light` or `?scheme=dark` pins the scheme, for screenshots from headless Chrome, which has no flag for `prefers-color-scheme`.
