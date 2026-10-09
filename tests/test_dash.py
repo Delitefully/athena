@@ -40,6 +40,11 @@ class HqPidTest(unittest.TestCase):
         only = "\n".join(line for line in ps.splitlines() if not line.strip().startswith(("4757", "4703")))
         self.assertEqual(dash.find_hq(only, "athena"), 6001)
 
+    def test_a_resumed_hq(self):
+        ps = PS.replace("4703 claude --name athena", "4703 claude --resume 7a1ed26c-e8ec-4c66-8686-e6d7c75c4eb1 --name athena")
+        self.assertIn("--resume", ps)
+        self.assertEqual(dash.find_hq(ps, "athena"), 4703)
+
     def test_claude_itself_when_its_parent_is_herdr(self):
         only = "\n".join(line for line in PS.splitlines() if not line.strip().startswith(("4757", "4703")))
         self.assertEqual(dash.find_hq(only, "athena"), 6001)

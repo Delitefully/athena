@@ -174,6 +174,12 @@ def cmd_retire(a):
 
 
 def cmd_hq(a):
+    if a.action == "restart":
+        if a.child:
+            _print(hq.restart_now(update=not a.no_update))
+        else:
+            print(hq.restart(update=not a.no_update)["message"])
+        return 0
     _print(hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash))
     return 0
 
@@ -244,7 +250,11 @@ def parser():
     s.add_argument("--keep-worktree", action="store_true")
     s.set_defaults(func=cmd_retire)
 
-    s = sub.add_parser("hq", help="create or focus the chief of staff's space")
+    s = sub.add_parser("hq", help="create or focus the chief of staff's space; `restart` restarts its Claude in place")
+    s.add_argument("action", choices=["restart"], nargs="?",
+                   help="update Claude Code and plugins, exit HQ's Claude and resume its conversation in the same pane")
+    s.add_argument("--no-update", action="store_true", help="restart: skip claude update and the plugin updates")
+    s.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--cwd")
     s.add_argument("--no-focus", action="store_true")
     s.add_argument("--no-board", action="store_true")
@@ -260,7 +270,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (spawn.SpawnError, retire.RetireError, dash.DashError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 
