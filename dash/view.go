@@ -48,6 +48,9 @@ type View struct {
 func Build(s Snapshot, now float64, linearWorkspace string) View {
 	var v View
 	v.Notices = s.Notices
+	if linearWorkspace == "" {
+		linearWorkspace = s.LinearWorkspace
+	}
 	history := map[string]HistoryEntry{}
 	for _, h := range s.History {
 		if h.TS >= history[h.Name].TS {
@@ -69,7 +72,9 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		}
 		if w.Linear != "" {
 			it.Ticket = strings.ToUpper(w.Linear)
-			it.TicketURL = "https://linear.app/" + linearWorkspace + "/issue/" + it.Ticket
+			if linearWorkspace != "" {
+				it.TicketURL = "https://linear.app/" + linearWorkspace + "/issue/" + it.Ticket
+			}
 		}
 		switch w.State {
 		case "live":

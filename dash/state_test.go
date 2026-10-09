@@ -192,3 +192,19 @@ func TestParseNotes(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestDashConfigIsReadLiveAndChecked(t *testing.T) {
+	dir := copyFixture(t)
+	st := NewStore(dir)
+	if s := st.Load(); s.LinearWorkspace != "" {
+		t.Fatalf("no dash.json: %q", s.LinearWorkspace)
+	}
+	write(t, filepath.Join(dir, "dash.json"), `{"linear_workspace": "acme"}`)
+	if !st.Changed() || st.Load().LinearWorkspace != "acme" {
+		t.Fatal("dash.json not picked up")
+	}
+	write(t, filepath.Join(dir, "dash.json"), `{"linear_workspace": "evil.test/x?"}`)
+	if s := st.Load(); s.LinearWorkspace != "" || len(s.Notices) != 1 {
+		t.Fatalf("a workspace that is not a slug must be refused: %q %q", s.LinearWorkspace, s.Notices)
+	}
+}

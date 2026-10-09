@@ -245,3 +245,17 @@ func BenchmarkRender(b *testing.B) {
 		srv.Refresh(true)
 	}
 }
+
+func TestUnlinkedTicketIsStillShown(t *testing.T) {
+	ln, _ := Listen(0)
+	port := ln.Addr().(*net.TCPAddr).Port
+	srv := NewServer(copyFixture(t), port, "")
+	srv.Refresh(true)
+	hs := &httptest.Server{Listener: ln, Config: &http.Server{Handler: srv.Handler()}}
+	hs.Start()
+	defer hs.Close()
+	_, body := get(t, "http://127.0.0.1:"+strconv.Itoa(port)+"/", "")
+	if !strings.Contains(body, `<span class="ticket">ABC-108</span>`) || strings.Contains(body, "linear.app") {
+		t.Fatal("without a workspace the ticket id shows, unlinked")
+	}
+}

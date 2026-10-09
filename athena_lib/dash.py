@@ -6,6 +6,7 @@ its sources, so an edit rebuilds and an unchanged tree starts at once. It binds 
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -60,7 +61,7 @@ def binary() -> Path:
     go = go_bin()
     if not go:
         raise DashError("the dashboard needs Go to build once: install it (brew install go)")
-    tmp = bin_dir / f".{target.name}.{os.getpid()}"
+    tmp = bin_dir / f".{target.name}.{secrets.token_hex(6)}"  # two racing builds never share a temp file
     proc = subprocess.run([go, "build", "-trimpath", "-o", str(tmp), "."], cwd=str(SRC), capture_output=True, text=True,
                           env=dict(os.environ, CGO_ENABLED="0"), timeout=300)
     if proc.returncode != 0:
@@ -126,11 +127,16 @@ def _health(p):
         return None
 
 
-def _log_tail(log):
+def _failure(log, code, p):
+    """Why the server exited. The log is shared, so look for this failure's own words, not just the last line."""
     try:
-        return log.read_text().strip().splitlines()[-1]
-    except (OSError, IndexError):
-        return ""
+        lines = log.read_text().strip().splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines[-20:]):
+        if f"port {p} is in use" in line or "cannot listen" in line:
+            return line
+    return f"the dashboard exited with {code}; see {log}"
 
 
 def _ours(pid) -> bool:
@@ -143,7 +149,7 @@ def _adopt(p):
     health = _health(p)
     if not health or health.get("state") != str(paths.state_dir()) or not _ours(health.get("pid")):
         return None
-    rec = {"pid": health["pid"], "port": p, "url": url(p), "hq_pid": None, "bin": None}
+    rec = {"pid": health["pid"], "port": p, "url": url(p), "hq_pid": health.get("hq_pid") or None, "bin": None}
     _pidfile().write_text(json.dumps(rec))
     return rec
 
@@ -162,13 +168,20 @@ def start(hq=None) -> dict:
         proc = subprocess.Popen(cmd, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise DashError(_log_tail(log) or f"the dashboard exited with {proc.returncode}")
         health = _health(p)
         if health and health.get("pid") == proc.pid:
             rec = {"pid": proc.pid, "port": p, "url": url(p), "hq_pid": hq, "bin": str(exe)}
             _pidfile().write_text(json.dumps(rec))
             return {**rec, "started": True}
+        if proc.poll() is not None or health:
+            # Lost a race with a concurrent `dash on`: its server holds the port, so use it.
+            adopted = _adopt(p)
+            if adopted:
+                if proc.poll() is None:
+                    proc.terminate()
+                return {**adopted, "started": False}
+            if proc.poll() is not None:
+                raise DashError(_failure(log, proc.returncode, p))
         time.sleep(0.05)
     proc.terminate()
     raise DashError(f"the dashboard did not answer on {url(p)} within 5 s; see {log}")

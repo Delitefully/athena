@@ -106,6 +106,35 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(again["pid"], first["pid"])
         self.assertEqual(dash.running()["pid"], first["pid"])
 
+    def test_racing_starts_share_one_server(self):
+        import threading
+        results, errors = [], []
+
+        def one():
+            try:
+                results.append(dash.start(hq=0))
+            except dash.DashError as exc:
+                errors.append(exc)
+        threads = [threading.Thread(target=one) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len({r["pid"] for r in results}), 1, results)
+        self.assertEqual(dash.running()["pid"], results[0]["pid"])
+
+    def test_adopted_server_keeps_its_hq(self):
+        sleeper = __import__("subprocess").Popen(["sleep", "30"])
+        try:
+            first = dash.start(hq=sleeper.pid)
+            (paths.state_dir() / "dash.pid").unlink()
+            self.assertEqual(dash.start()["hq_pid"], sleeper.pid)
+        finally:
+            dash.stop()
+            sleeper.kill()
+            sleeper.wait()
+
     def test_port_in_use(self):
         with socket.socket() as s:
             s.bind(("127.0.0.1", self.port))

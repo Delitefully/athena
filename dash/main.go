@@ -31,12 +31,13 @@ func main() {
 	stateDir := flag.String("state-dir", envOr("ATHENA_STATE_DIR", filepath.Join(home, ".local/state/athena")), "athena's state dir")
 	flag.IntVar(&port, "port", port, "port on 127.0.0.1")
 	hqPid := flag.Int("hq-pid", 0, "exit when this process (HQ's pane shell) is gone; 0 runs until stopped")
-	linear := flag.String("linear-workspace", envOr("ATHENA_LINEAR_WORKSPACE", "sunsecurity"), "Linear workspace for ticket links")
+	linear := flag.String("linear-workspace", os.Getenv("ATHENA_LINEAR_WORKSPACE"), "Linear workspace for ticket links (else dash.json in the state dir, else unlinked)")
 	poll := flag.Duration("poll", time.Second, "how often to look for changed state files")
 	flag.Parse()
 	log.SetFlags(log.LstdFlags)
 
 	srv := NewServer(*stateDir, port, *linear)
+	srv.hqPid = *hqPid
 	srv.Refresh(true)
 	ln, err := Listen(port)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -17,6 +18,7 @@ const (
 	watchFile   = "watch.json"
 	historyFile = "history.jsonl"
 	needsFile   = "needs-you.md"
+	configFile  = "dash.json" // local settings, outside the repository: {"linear_workspace": "..."}
 	workersDir  = "workers"
 )
 
@@ -78,6 +80,8 @@ type Snapshot struct {
 	History []HistoryEntry
 	Notes   []string
 	Notices []string
+	// LinearWorkspace comes from dash.json; ATHENA_LINEAR_WORKSPACE overrides it. Empty leaves ticket ids unlinked.
+	LinearWorkspace string
 }
 
 // sig is what the poll compares: a file changed when its size or modification time did.
@@ -105,7 +109,7 @@ func (s *Store) watched() map[string]sig {
 			out[rel] = sig{fi.Size(), fi.ModTime().UnixNano()}
 		}
 	}
-	for _, f := range []string{ledgerFile, watchFile, historyFile, needsFile} {
+	for _, f := range []string{ledgerFile, watchFile, historyFile, needsFile, configFile} {
 		add(f)
 	}
 	entries, _ := os.ReadDir(filepath.Join(s.dir, workersDir))
@@ -176,6 +180,9 @@ func (s *Store) lines(rel string, notices *[]string) []map[string]any {
 		}
 		out = append(out, m)
 	}
+	if err := sc.Err(); err != nil {
+		*notices = append(*notices, fmt.Sprintf("%s: stopped reading at a line too long to read (%v)", rel, err))
+	}
 	if bad > 0 {
 		*notices = append(*notices, fmt.Sprintf("%s: skipped %d unreadable line%s", rel, bad, plural(bad)))
 	}
@@ -222,12 +229,21 @@ func (s *Store) Load() Snapshot {
 		snap.History = append(snap.History, HistoryEntry{TS: num(m, "ts"), Name: str(m, "name"),
 			Status: str(m, "status"), PR: parsePR(obj(m, "pr"))})
 	}
+	if m := s.object(configFile, &snap.Notices); m != nil {
+		if ws := str(m, "linear_workspace"); workspaceSlug.MatchString(ws) {
+			snap.LinearWorkspace = ws
+		} else if ws != "" {
+			snap.Notices = append(snap.Notices, "dash.json: linear_workspace must be a Linear workspace slug")
+		}
+	}
 	if data, err := os.ReadFile(filepath.Join(s.dir, needsFile)); err == nil {
 		snap.Notes = parseNotes(string(data))
 	}
 	sort.Strings(snap.Notices)
 	return snap
 }
+
+var workspaceSlug = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 var terminal = map[string]string{"retire": "retired", "failed": "failed"}
 

@@ -212,3 +212,17 @@ func TestInlineNeverWritesInsideALink(t *testing.T) {
 		t.Fatalf("\ngot  %s\nwant %s", got, want)
 	}
 }
+
+func TestTicketLinksNeedAWorkspace(t *testing.T) {
+	s := Snapshot{Workers: []Worker{{Name: "abc-1", Linear: "abc-1", State: "live"}}, Hooks: map[string]Hook{}}
+	if it := Build(s, fixtureNow, "").InProgress[0]; it.Ticket != "ABC-1" || it.TicketURL != "" {
+		t.Fatalf("no workspace must leave the id unlinked: %+v", it)
+	}
+	s.LinearWorkspace = "from-config"
+	if it := Build(s, fixtureNow, "").InProgress[0]; it.TicketURL != "https://linear.app/from-config/issue/ABC-1" {
+		t.Fatalf("dash.json workspace: %+v", it)
+	}
+	if it := Build(s, fixtureNow, "from-env").InProgress[0]; it.TicketURL != "https://linear.app/from-env/issue/ABC-1" {
+		t.Fatalf("the environment wins over dash.json: %+v", it)
+	}
+}

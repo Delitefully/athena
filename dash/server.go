@@ -73,6 +73,7 @@ type Server struct {
 	tmpl            *template.Template
 	port            int
 	linearWorkspace string
+	hqPid           int
 	now             func() time.Time
 
 	mu      sync.Mutex
@@ -186,7 +187,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"pid": os.Getpid(), "version": version, "state": s.store.dir})
+		json.NewEncoder(w).Encode(map[string]any{"pid": os.Getpid(), "version": version, "state": s.store.dir, "hq_pid": s.hqPid})
 	})
 	static, _ := fs.Sub(staticFS, "static")
 	files := http.StripPrefix("/static/", http.FileServer(http.FS(static)))

@@ -23,6 +23,7 @@ All under `ATHENA_STATE_DIR` (`~/.local/state/athena/`):
 | `watch.json` (new) | `athena watch` | the last snapshot: each live worker's merged state and PR (url, number, state, draft, checks, review) |
 | `history.jsonl` (new) | `athena retire` | one line per retired worker with its PR as last known, so a merge is still known after retire |
 | `needs-you.md` (new) | athena HQ | decisions that belong to no worker: merge asks, open questions |
+| `dash.json` (optional) | the human | local settings: `{"linear_workspace": "..."}` for ticket links |
 
 The ledger and the worker files alone give all three groups: the ledger keeps retired workers with their ticket, title and retire time, and a worker's file outlives it with its last report, which carries the PR url. The new files only enrich: `watch.json` adds checks, review and draft for live PRs, and `history.jsonl` adds whether a retired worker's PR merged. Today's state has none of them, and the page still works on it.
 
@@ -47,7 +48,7 @@ The server folds the files into one view, every second when something changed:
 - **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review.
 - **Done**: retired workers from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
 
-Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<workspace>/issue/ABC-101` (`ATHENA_LINEAR_WORKSPACE`, default `sunsecurity`); a PR links to the url already in state.
+Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<workspace>/issue/ABC-101`, where the workspace comes from `ATHENA_LINEAR_WORKSPACE`, else from `dash.json` in the state dir (`{"linear_workspace": "..."}`, read live like the other files and kept out of this public repository), else the id shows unlinked. A PR links to the url already in state.
 
 ### Update mechanism
 
@@ -57,7 +58,7 @@ Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<works
 
 ### Lifecycle
 
-- `athena dash on`: if the pid in `dash.pid` is alive and is our binary, print its URL and pid and stop (idempotent). Otherwise build if needed, start the binary in its own session with output to `logs/dash.log`, write `dash.pid`, and wait up to 5 s for `/healthz` to answer with that pid. A server for the same state dir that already answers on the port (a concurrent `on` won the race) is adopted rather than started twice.
+- `athena dash on`: if the pid in `dash.pid` is alive and is our binary, print its URL and pid and stop (idempotent). Otherwise build if needed, start the binary in its own session with output to `logs/dash.log`, write `dash.pid`, and wait up to 5 s for `/healthz` to answer with that pid. A server for the same state dir that already answers on the port is adopted rather than started twice, also when a concurrent `on` wins the race while this one is starting.
 - `athena dash show` prints the URL and pid, or `dash off`. `athena dash off` sends SIGTERM and waits for it to exit. `athena dash open` runs `on`, then opens the URL in the browser.
 - HQ owns it. `athena dash on` finds the HQ Claude, the process whose command is `claude --name athena` (`ATHENA_HQ`) with `hq.md`, never just any `claude`, since a worker's own Claude is one too. It passes the pid of that Claude's parent, the HQ pane's shell, as `--hq-pid` (the Claude itself when its parent is herdr or init). The server checks that pid every 2 s and exits when it is gone. So closing the HQ space stops the dashboard, while a Claude that exits and restarts in the same space (`athena hq` restarts it there) keeps it running: it survives a restart of HQ only while HQ's space is open. `athena hq` runs `dash on` where it starts the board watcher, so a new HQ space starts a new dashboard. With no HQ running, `dash on` runs until `athena dash off`, and says so.
 - The port is `2843` (`ATHENA_DASH_PORT` overrides). It binds `127.0.0.1` only, and answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>`, so a web page cannot read it through DNS rebinding.
@@ -105,7 +106,7 @@ Seventeen constraints were extracted and checked; the full table is in the PR.
 - Rejected: **a Python server instead of Go** would drop the build step, but the brief asks for Go or Rust. Left to the human.
 - Rejected: **fsnotify instead of polling.** A poll costs 0.085 ms of CPU (measured on the real state dir), about 0.01% at 1 Hz, and polling cannot drop a watch.
 - Kept, though nobody asked: **the Host check.** It is the only way a remote page could read a localhost server, and it is five lines.
-- Narrowed: the Linear workspace default comes from the brief and `ATHENA_LINEAR_WORKSPACE` overrides it; the fonts come from Instrument's repositories named in `docs/brand.md`, since this repository holds none.
+- Narrowed, then dropped on athena's decision after review: the Linear workspace has no default in the code, so the public repository names no organisation; it comes from `ATHENA_LINEAR_WORKSPACE` or the local `dash.json`; the fonts come from Instrument's repositories named in `docs/brand.md`, since this repository holds none.
 
 ## Measured
 
