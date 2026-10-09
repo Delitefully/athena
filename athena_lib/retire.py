@@ -39,17 +39,15 @@ def _gone(name, grace) -> bool:
     return True
 
 
-def stop_claude(worker) -> bool:
-    """Exit the worker's Claude before its checkout is removed, so nothing writes into a directory being deleted.
+def exit_claude(name, grace) -> bool:
+    """Type /exit into the agent's Claude and wait up to `grace` seconds after each step for it to go.
 
     `/exit` alone is not enough: typing it opens Claude Code's slash-command menu, and the single Enter that
-    `agent prompt` sends picks the suggestion instead of submitting it. So: /exit, then one more Enter, then close
-    the pane when it is ours. True when the Claude is gone.
+    `agent prompt` sends picks the suggestion instead of submitting it. So: /exit, then one more Enter.
+    True when the Claude is gone.
     """
-    name = worker["name"]
     if not agent_owned(name):
         return True
-    grace = float(os.environ.get("ATHENA_EXIT_GRACE", "5"))
     for step in (("agent", "prompt", name, "/exit"), ("agent", "send-keys", name, "enter")):
         try:
             herdr.call(*step, timeout=15)
@@ -57,6 +55,16 @@ def stop_claude(worker) -> bool:
             pass
         if _gone(name, grace):
             return True
+    return False
+
+
+def stop_claude(worker) -> bool:
+    """Exit the worker's Claude before its checkout is removed, so nothing writes into a directory being deleted.
+
+    /exit as `exit_claude` sends it, then close the pane when it is ours. True when the Claude is gone.
+    """
+    if exit_claude(worker["name"], float(os.environ.get("ATHENA_EXIT_GRACE", "5"))):
+        return True
     if worker.get("pane") and workspace_owned(worker.get("workspace"), worker.get("path")):
         try:
             herdr.call("pane", "close", worker["pane"], timeout=15)
