@@ -26,6 +26,7 @@ class RetireTest(unittest.TestCase):
             {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
         ]
         write_scenario(self.tmp.name, self.owned)
+        os.environ["ATHENA_EXIT_GRACE"] = "0"
 
     def tearDown(self):
         self.env.restore()
@@ -96,6 +97,58 @@ class RetireTest(unittest.TestCase):
         self.assertTrue(result["removed"])
         self.assertFalse(self.wt.exists())
 
+    def gone_after(self, n):
+        """agent get finds abc-102 for the first n calls, then herdr reports no such agent."""
+        return [{"match": ["agent", "get", "abc-102"], "stdout": {"result": {"agent": {"name": "abc-102"}}}, "times": n},
+                {"match": ["agent", "get", "abc-102"], "stdout": "",
+                 "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1}] + self.owned[1:]
+
+    def test_retire_exit_submitted_by_the_prompt_sends_nothing_more(self):
+        write_scenario(self.tmp.name, self.gone_after(1))
+        retire.retire("abc-102")
+        verbs = [c[:2] for c in logged_calls(self.tmp.name)]
+        self.assertIn(["agent", "prompt"], verbs)
+        self.assertNotIn(["agent", "send-keys"], verbs)
+        self.assertNotIn(["pane", "close"], verbs)
+
+    def test_retire_sends_enter_when_exit_sits_in_the_menu(self):
+        # /exit typed but not submitted: the agent is still there after the prompt, gone after one more Enter.
+        write_scenario(self.tmp.name, self.gone_after(2))
+        retire.retire("abc-102")
+        calls = logged_calls(self.tmp.name)
+        self.assertIn(["agent", "send-keys", "abc-102", "enter"], calls)
+        self.assertNotIn(["pane", "close"], [c[:2] for c in calls])
+        self.assertLess([c[:2] for c in calls].index(["agent", "send-keys"]),
+                        [c[:2] for c in calls].index(["worktree", "remove"]))
+
+    def test_retire_closes_its_pane_when_claude_will_not_exit(self):
+        retire.retire("abc-102")
+        calls = logged_calls(self.tmp.name)
+        verbs = [c[:2] for c in calls]
+        self.assertIn(["pane", "close", "w5:p1"], calls)
+        self.assertLess(verbs.index(["pane", "close"]), verbs.index(["worktree", "remove"]))
+
+    def test_retire_refuses_when_claude_will_not_exit_and_pane_is_not_ours(self):
+        write_scenario(self.tmp.name, [self.owned[0]])
+        with self.assertRaises(retire.RetireError):
+            retire.retire("abc-102")
+        self.assertEqual(ledger.workers()["abc-102"]["state"], "live")
+        self.assertNotIn(["worktree", "remove"], [c[:2] for c in logged_calls(self.tmp.name)])
+
+    def test_retire_orphaned_checkout_needs_force_then_deletes_it(self):
+        git(self.repo, "worktree", "remove", "--force", str(self.wt))
+        self.wt.mkdir(parents=True)
+        (self.wt / "leftover.txt").write_text("x\n")
+        with self.assertRaises(retire.RetireError) as ctx:
+            retire.retire("abc-102")
+        self.assertIn("no longer a git worktree", str(ctx.exception))
+        self.assertTrue(self.wt.exists())
+        result = retire.retire("abc-102", force=True)
+        self.assertTrue(result["removed"])
+        self.assertFalse(self.wt.exists())
+        self.assertIn(["workspace", "close", "w5"], logged_calls(self.tmp.name))
+        self.assertEqual(ledger.workers()["abc-102"]["state"], "retired")
+
     def test_retire_unknown(self):
         with self.assertRaises(retire.RetireError):
             retire.retire("nope")
@@ -124,6 +177,14 @@ class CliTest(unittest.TestCase):
         out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "status"], capture_output=True, text=True, env=dict(os.environ))
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("no live workers", out.stdout)
+
+    def test_cli_nudge_submits_a_bare_slash_command(self):
+        from athena_lib import cli
+        ledger.append("spawn", "abc-104", pane="w9:p1")
+        cli.main(["nudge", "abc-104", "/exit"])
+        cli.main(["nudge", "abc-104", "/goal", "clear"])
+        calls = logged_calls(self.tmp.name)
+        self.assertEqual(calls.count(["agent", "send-keys", "abc-104", "enter"]), 1)
 
     def test_cli_nudge_only_workers(self):
         out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "nudge", "claude-w2g", "hi"], capture_output=True,

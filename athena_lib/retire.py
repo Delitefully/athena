@@ -1,5 +1,6 @@
 """Retire a worker: back up its head, refuse to lose work, stop its Claude, remove its worktree space."""
 import os
+import shutil
 import time
 
 from athena_lib import gitops, herdr, ledger
@@ -29,6 +30,42 @@ def agent_owned(name) -> bool:
     return agent.get("name") == name
 
 
+def _gone(name, grace) -> bool:
+    deadline = time.monotonic() + grace
+    while agent_owned(name):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
+def stop_claude(worker) -> bool:
+    """Exit the worker's Claude before its checkout is removed, so nothing writes into a directory being deleted.
+
+    `/exit` alone is not enough: typing it opens Claude Code's slash-command menu, and the single Enter that
+    `agent prompt` sends picks the suggestion instead of submitting it. So: /exit, then one more Enter, then close
+    the pane when it is ours. True when the Claude is gone.
+    """
+    name = worker["name"]
+    if not agent_owned(name):
+        return True
+    grace = float(os.environ.get("ATHENA_EXIT_GRACE", "5"))
+    for step in (("agent", "prompt", name, "/exit"), ("agent", "send-keys", name, "enter")):
+        try:
+            herdr.call(*step, timeout=15)
+        except herdr.HerdrError:
+            pass
+        if _gone(name, grace):
+            return True
+    if worker.get("pane") and workspace_owned(worker.get("workspace"), worker.get("path")):
+        try:
+            herdr.call("pane", "close", worker["pane"], timeout=15)
+            return True
+        except herdr.HerdrError:
+            pass
+    return False
+
+
 def remove_worktree(worker, force=False) -> dict:
     """Remove the worker's space through herdr when it is still ours (that also stops its Claude), else the checkout.
 
@@ -37,6 +74,19 @@ def remove_worktree(worker, force=False) -> dict:
     """
     path, repo = worker.get("path"), worker.get("repo")
     out = {"removed": False}
+    orphan = bool(path) and os.path.isdir(path) and not gitops.ok(path, "rev-parse", "--git-dir")
+    if orphan and force:
+        # Only reachable with --force: the directory has no git metadata left for herdr or git to remove it by.
+        if workspace_owned(worker.get("workspace"), path):
+            try:
+                herdr.call("workspace", "close", worker["workspace"], timeout=30)
+            except herdr.HerdrError as exc:
+                out["herdr_error"] = str(exc)
+        shutil.rmtree(path, ignore_errors=True)
+        if repo:
+            gitops.git(repo, "worktree", "prune", check=False)
+        out["removed"] = not os.path.exists(path)
+        return out
     if workspace_owned(worker.get("workspace"), path):
         if not os.path.isdir(path):
             # The checkout went away outside athena; herdr's worktree remove would fail on it every time.
@@ -69,7 +119,13 @@ def retire(name, force=False, keep_worktree=False) -> dict:
     path, repo = worker.get("path"), worker.get("repo")
     result = {"name": name, "backup": None, "wip_backup": None, "removed": False}
     exists = bool(path) and os.path.isdir(path)
-    if exists:
+    orphan = exists and not gitops.ok(path, "rev-parse", "--git-dir")
+    if orphan and not force:
+        # The directory outlived its git metadata (a removal that stopped halfway): git can't say what it holds.
+        raise RetireError(f"{path} is no longer a git worktree, so nothing in it can be checked or backed up; "
+                          f"{name} stays tracked. Look inside, then retire with --force to close its space and "
+                          "delete the directory.")
+    if exists and not orphan:
         head = gitops.git(path, "rev-parse", "HEAD", check=False)
         if head and repo:
             result["backup"] = gitops.backup_ref(repo, name, head)
@@ -94,12 +150,11 @@ def retire(name, force=False, keep_worktree=False) -> dict:
                 herdr.call("pane", "close", worker["pane"], timeout=15)
             except herdr.HerdrError:
                 pass
-    elif agent_owned(name):
-        try:
-            herdr.call("agent", "prompt", name, "/exit", timeout=15)
-            time.sleep(float(os.environ.get("ATHENA_EXIT_GRACE", "2")))
-        except herdr.HerdrError:
-            pass
+    elif not stop_claude(worker) and not force and exists and not keep_worktree:
+        # Only refuse when its checkout is about to be removed under a running Claude.
+        ledger.append("update", name, cleanup_error="claude did not exit")
+        raise RetireError(f"{name}'s Claude did not exit and its pane is not one athena can close; {name} stays "
+                          f"tracked. Exit it by hand, then retry, or retire with --force.")
     if not keep_worktree:
         result.update(remove_worktree(worker, force=force))
         if result.get("herdr_error"):
