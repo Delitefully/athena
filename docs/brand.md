@@ -46,7 +46,16 @@ The three README graphics (`assets/one-thread.svg`, `ticket-path.svg`, `watch.sv
 3. Easing: arrivals `cubic-bezier(.16,1,.3,1)`; exits `cubic-bezier(.7,0,.84,0)` at about 60% of the entry time; travel `cubic-bezier(.65,0,.35,1)`; one small overshoot `cubic-bezier(.34,1.4,.64,1)` at most per scene. Linear only for the steady stream of routine progress.
 4. Stagger 60 to 110 ms, never all at once. Hold at least 600 ms after each arrival.
 5. Loops are 10 s and end on their first frame.
-6. No glows, gradients, particles or idle pulsing.
+6. No glows, gradients, particles or idle pulsing. A mask may fade the ends of a lane, but no gradient is ever painted.
+7. Nothing moves to make room. An event appears in space reserved for it; the layout never reflows or shifts.
+
+Event icons (`watch.svg`): one family drawn as paths and reused with `<use>`, stroke 2 with round caps and joins, no emoji or font glyphs, none red. Each is told apart by its silhouette at 16 px.
+
+- Routine progress is a muted outline icon on a 16 px grid: PR opened, checks green, review comments, rebase, ready to merge, merged. It sits on a ground-coloured bead that cuts the lane rule, and the lane fades it in and out at its ends.
+- An event athena acts on is a badge: a solid ink disc, 20 px, with its glyph knocked out in the ground colour, so the eye finds it first. There are four: blocked, CI failed, done and main moved. An event rides its lane at exactly the stream's speed.
+- athena's reply runs over its lane on a ground-coloured halo, so while it answers, its line takes that stretch of the lane and routine icons pass beneath it. That is intended: athena's line is never crossed by ink.
+
+`assets/src/gen.py` builds `watch.svg` from `icons.py` and the outlined labels in `labels.json`.
 
 Technical constraints, so the files render on GitHub through `<img>`:
 
