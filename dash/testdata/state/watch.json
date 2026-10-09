@@ -1,0 +1,87 @@
+{
+  "ts": 1791499970.0,
+  "workers": {
+    "abc-101": {
+      "detail": null,
+      "pr": {
+        "checks": "pending",
+        "comments": 0,
+        "draft": true,
+        "head": "4f2c1ab9d0e3",
+        "mergeable": "MERGEABLE",
+        "number": 41,
+        "review": "",
+        "state": "OPEN",
+        "url": "https://github.com/acme/web/pull/41"
+      },
+      "report": null,
+      "state": "working"
+    },
+    "abc-102": {
+      "detail": null,
+      "pr": null,
+      "report": null,
+      "state": "blocked"
+    },
+    "abc-103": {
+      "detail": null,
+      "pr": {
+        "checks": "success",
+        "comments": 0,
+        "draft": true,
+        "head": "4f2c1ab9d0e3",
+        "mergeable": "MERGEABLE",
+        "number": 43,
+        "review": "",
+        "state": "OPEN",
+        "url": "https://github.com/acme/web/pull/43"
+      },
+      "report": null,
+      "state": "done"
+    },
+    "abc-106": {
+      "detail": null,
+      "pr": null,
+      "report": null,
+      "state": "blocked"
+    },
+    "abc-107": {
+      "detail": null,
+      "pr": null,
+      "report": null,
+      "state": "idle"
+    },
+    "abc-108": {
+      "detail": null,
+      "pr": {
+        "checks": "success",
+        "comments": 0,
+        "draft": false,
+        "head": "4f2c1ab9d0e3",
+        "mergeable": "MERGEABLE",
+        "number": 48,
+        "review": "APPROVED",
+        "state": "OPEN",
+        "url": "https://github.com/acme/web/pull/48"
+      },
+      "report": null,
+      "state": "done"
+    },
+    "abc-109": {
+      "detail": null,
+      "pr": {
+        "checks": "failure",
+        "comments": 0,
+        "draft": true,
+        "head": "4f2c1ab9d0e3",
+        "mergeable": "MERGEABLE",
+        "number": 52,
+        "review": "",
+        "state": "OPEN",
+        "url": "https://github.com/acme/api/pull/52"
+      },
+      "report": null,
+      "state": "working"
+    }
+  }
+}
