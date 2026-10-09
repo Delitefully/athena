@@ -229,7 +229,7 @@ def update_claude():
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     warnings = []
 
-    def run(*args, timeout=300):
+    def run(*args, timeout=300, quiet=False):
         try:
             proc = subprocess.run([claude, *args], capture_output=True, text=True, timeout=timeout, env=env,
                                   stdin=subprocess.DEVNULL)
@@ -239,7 +239,7 @@ def update_claude():
         else:
             detail = (proc.stderr or proc.stdout or "").strip()[-400:]
             if proc.returncode == 0:
-                _say(f"claude {' '.join(args)}: {(proc.stdout or '').strip()[-200:] or 'ok'}")
+                _say(f"claude {' '.join(args)}: {'ok' if quiet else (proc.stdout or '').strip()[-200:] or 'ok'}")
                 return proc
         warnings.append(f"claude {' '.join(args)} failed: {detail}")
         _say("warning: " + warnings[-1])
@@ -247,7 +247,7 @@ def update_claude():
 
     run("update")
     run("plugin", "marketplace", "update")
-    listed = run("plugin", "list", "--json", timeout=60)
+    listed = run("plugin", "list", "--json", timeout=60, quiet=True)
     try:
         plugins = json.loads(listed.stdout) if listed else []
     except ValueError:
