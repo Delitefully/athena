@@ -84,6 +84,20 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 	}
 }
 
+func TestDoneHidesRetiredWorkersWithNoPRAndNoTicket(t *testing.T) {
+	s := NewStore("testdata/state").Load()
+	s.Workers = append(s.Workers,
+		Worker{Name: "probe", State: "retired", Updated: fixtureNow - 3600},
+		Worker{Name: "pr-only", State: "retired", Updated: fixtureNow - 3600},
+	)
+	s.Hooks["pr-only"] = Hook{LastReport: &Report{Status: "DONE", PR: "https://github.com/acme/web/pull/5"}}
+	v := Build(s, fixtureNow, "acme")
+	// probe has neither; abc-099 has only a ticket, pr-only only a PR, abc-098 both.
+	if got := ids(v.Done); got != "pr-only abc-100 abc-099 abc-098 abc-097" {
+		t.Fatalf("done: %s", got)
+	}
+}
+
 func TestBuildCases(t *testing.T) {
 	live := func(name string) Worker {
 		return Worker{Name: name, State: "live", Linear: strings.ToUpper(name), Updated: fixtureNow}
@@ -142,9 +156,9 @@ func TestDoneWindowAndCap(t *testing.T) {
 	var s Snapshot
 	s.Hooks = map[string]Hook{}
 	for i := 0; i < 20; i++ {
-		s.Workers = append(s.Workers, Worker{Name: "r" + string(rune('a'+i)), State: "retired", Updated: fixtureNow - float64(i)*3600})
+		s.Workers = append(s.Workers, Worker{Name: "r" + string(rune('a'+i)), Linear: "ABC-1", State: "retired", Updated: fixtureNow - float64(i)*3600})
 	}
-	s.Workers = append(s.Workers, Worker{Name: "old", State: "retired", Updated: fixtureNow - 15*24*3600})
+	s.Workers = append(s.Workers, Worker{Name: "old", Linear: "ABC-1", State: "retired", Updated: fixtureNow - 15*24*3600})
 	s.Workers = append(s.Workers, Worker{Name: "gone", State: "failed", Updated: fixtureNow})
 	v := Build(s, fixtureNow, "acme")
 	if len(v.Done) != doneMax || v.Done[0].Name != "ra" || find(v.Done, "old").Name != "" {
