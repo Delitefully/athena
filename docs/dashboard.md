@@ -46,7 +46,7 @@ The server folds the files into one view, every second when something changed:
   - an open PR that is approved, or that is out of draft with its worker done and checks not failing (waiting for your review or merge);
   - each bullet of `needs-you.md`, in athena's voice.
 - **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review.
-- **Done**: retired workers from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
+- **Done**: retired workers with a PR or a Linear ticket from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
 
 Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<workspace>/issue/ABC-101`, where the workspace comes from `ATHENA_LINEAR_WORKSPACE`, else from `dash.json` in the state dir (`{"linear_workspace": "..."}`, read live like the other files and kept out of this public repository), else the id shows unlinked. A PR links to the url already in state.
 
