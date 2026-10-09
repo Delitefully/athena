@@ -88,7 +88,7 @@ def find_hq(ps_output: str, hq_name: str):
         if not any(a == "--name" and b == hq_name for a, b in zip(argv, argv[1:])):
             continue
         parent = procs.get(ppid, (0, ""))[1]
-        if ppid > 1 and parent and not parent.startswith("herdr"):
+        if ppid > 1 and parent and os.path.basename(parent.split()[0]) != "herdr":
             return ppid
         return pid
     return None
@@ -114,8 +114,7 @@ def running():
         os.kill(pid, 0)
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return rec if "athena-dash-" in cmd else None
+    return rec if _ours(pid) else None
 
 
 def _health(p):
@@ -134,9 +133,24 @@ def _log_tail(log):
         return ""
 
 
+def _ours(pid) -> bool:
+    cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    return "athena-dash-" in cmd
+
+
+def _adopt(p):
+    """A server for this state dir already answers on the port (a concurrent `dash on` started it): use it."""
+    health = _health(p)
+    if not health or health.get("state") != str(paths.state_dir()) or not _ours(health.get("pid")):
+        return None
+    rec = {"pid": health["pid"], "port": p, "url": url(p), "hq_pid": None, "bin": None}
+    _pidfile().write_text(json.dumps(rec))
+    return rec
+
+
 def start(hq=None) -> dict:
     """Start the server unless it runs. `hq` is the pid it lives for; by default the HQ found by `hq_pid()`."""
-    rec = running()
+    rec = running() or _adopt(port())
     if rec:
         return {**rec, "started": False}
     exe = binary()

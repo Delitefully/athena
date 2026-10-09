@@ -1,9 +1,8 @@
 """The chief of staff's own space: create it once, then focus it."""
 import json
 import os
-from pathlib import Path
-
 import sys
+from pathlib import Path
 
 from athena_lib import board, dash, herdr, paths
 

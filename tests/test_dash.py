@@ -35,6 +35,11 @@ class HqPidTest(unittest.TestCase):
         self.assertIsNone(dash.find_hq(PS, "athena-dash"))
         self.assertIsNone(dash.find_hq(PS, "nobody"))
 
+    def test_herdr_by_full_path(self):
+        ps = PS.replace(" 4587     1 herdr server", " 4587     1 /opt/homebrew/bin/herdr server")
+        only = "\n".join(line for line in ps.splitlines() if not line.strip().startswith(("4757", "4703")))
+        self.assertEqual(dash.find_hq(only, "athena"), 6001)
+
     def test_claude_itself_when_its_parent_is_herdr(self):
         only = "\n".join(line for line in PS.splitlines() if not line.strip().startswith(("4757", "4703")))
         self.assertEqual(dash.find_hq(only, "athena"), 6001)
@@ -92,6 +97,14 @@ class LifecycleTest(unittest.TestCase):
         with self.assertRaises(OSError):
             os.kill(first["pid"], 0)
         self.assertIsNone(dash.stop(), "off is idempotent")
+
+    def test_a_second_on_adopts_a_server_it_did_not_record(self):
+        first = dash.start()
+        (paths.state_dir() / "dash.pid").unlink()  # as when two `dash on` raced and one lost
+        again = dash.start()
+        self.assertFalse(again["started"])
+        self.assertEqual(again["pid"], first["pid"])
+        self.assertEqual(dash.running()["pid"], first["pid"])
 
     def test_port_in_use(self):
         with socket.socket() as s:

@@ -175,7 +175,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"pid": os.Getpid(), "version": version})
+		json.NewEncoder(w).Encode(map[string]any{"pid": os.Getpid(), "version": version, "state": s.store.dir})
 	})
 	static, _ := fs.Sub(staticFS, "static")
 	files := http.StripPrefix("/static/", http.FileServer(http.FS(static)))

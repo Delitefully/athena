@@ -164,7 +164,7 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	case pr != nil && pr.State == "OPEN" && pr.Review == "APPROVED":
 		it.Icon, it.Badge, it.Label = "ready", true, "approved, ready to merge"
 		v.NeedsYou = append(v.NeedsYou, it)
-	case pr != nil && pr.State == "OPEN" && !pr.Draft && state == "done" && pr.Checks != "failure":
+	case pr != nil && pr.State == "OPEN" && !pr.Draft && reported(state, hook) && pr.Checks != "failure":
 		it.Icon, it.Badge, it.Label = "done", true, "ready for your review"
 		v.NeedsYou = append(v.NeedsYou, it)
 	default:
@@ -177,6 +177,18 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 		}
 		v.InProgress = append(v.InProgress, it)
 	}
+}
+
+// reported: the worker finished its goal. A Claude that went idle or exited after a DONE report still counts.
+func reported(state string, h Hook) bool {
+	if state == "done" {
+		return true
+	}
+	r := h.Report
+	if r == nil {
+		r = h.LastReport
+	}
+	return (state == "idle" || state == "exited") && r != nil && (r.Status == "DONE" || r.Status == "DONE_WITH_CONCERNS")
 }
 
 func stateIcon(state string, pr *PR) string {
@@ -293,20 +305,33 @@ func slug(s string) string {
 	return s
 }
 
+// links finds a markdown link to an http(s) url, or a bare url.
 var (
-	mdLink  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)`)
-	bareURL = regexp.MustCompile(`(^|[\s(])(https?://[^\s<)]+)`)
-	strong  = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-	code    = regexp.MustCompile("`([^`]+)`")
+	links  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+`)
+	strong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	code   = regexp.MustCompile("`([^`]+)`")
 )
 
 // inline renders the little markdown a needs-you line uses: links, bare URLs, **bold** and `code`.
-// The text is escaped first, so nothing in the file can inject markup.
+// Text is escaped first, so nothing in the file can inject markup, and bold and code apply only outside links.
 func inline(s string) template.HTML {
+	var b strings.Builder
+	last := 0
+	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
+		b.WriteString(prose(s[last:m[0]]))
+		text, url := s[m[0]:m[1]], s[m[0]:m[1]]
+		if m[2] >= 0 {
+			text, url = s[m[2]:m[3]], s[m[4]:m[5]]
+		}
+		fmt.Fprintf(&b, `<a href="%s">%s</a>`, template.HTMLEscapeString(url), template.HTMLEscapeString(text))
+		last = m[1]
+	}
+	b.WriteString(prose(s[last:]))
+	return template.HTML(b.String())
+}
+
+func prose(s string) string {
 	out := template.HTMLEscapeString(s)
-	out = mdLink.ReplaceAllString(out, `<a href="$2">$1</a>`)
-	out = bareURL.ReplaceAllString(out, `$1<a href="$2">$2</a>`)
 	out = strong.ReplaceAllString(out, `<strong>$1</strong>`)
-	out = code.ReplaceAllString(out, `<span class="code">$1</span>`)
-	return template.HTML(out)
+	return code.ReplaceAllString(out, `<span class="code">$1</span>`)
 }

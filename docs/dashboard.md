@@ -57,7 +57,7 @@ Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<works
 
 ### Lifecycle
 
-- `athena dash on`: if the pid in `dash.pid` is alive and is our binary, print its URL and pid and stop (idempotent). Otherwise build if needed, start the binary in its own session with output to `logs/dash.log`, write `dash.pid`, and wait up to 3 s for `/healthz` to answer with that pid.
+- `athena dash on`: if the pid in `dash.pid` is alive and is our binary, print its URL and pid and stop (idempotent). Otherwise build if needed, start the binary in its own session with output to `logs/dash.log`, write `dash.pid`, and wait up to 5 s for `/healthz` to answer with that pid. A server for the same state dir that already answers on the port (a concurrent `on` won the race) is adopted rather than started twice.
 - `athena dash show` prints the URL and pid, or `dash off`. `athena dash off` sends SIGTERM and waits for it to exit. `athena dash open` runs `on`, then opens the URL in the browser.
 - HQ owns it. `athena dash on` finds the HQ Claude, the process whose command is `claude --name athena` (`ATHENA_HQ`) with `hq.md`, never just any `claude`, since a worker's own Claude is one too. It passes the pid of that Claude's parent, the HQ pane's shell, as `--hq-pid` (the Claude itself when its parent is herdr or init). The server checks that pid every 2 s and exits when it is gone. So closing the HQ space stops the dashboard, while a Claude that exits and restarts in the same space (`athena hq` restarts it there) keeps it running: it survives a restart of HQ only while HQ's space is open. `athena hq` runs `dash on` where it starts the board watcher, so a new HQ space starts a new dashboard. With no HQ running, `dash on` runs until `athena dash off`, and says so.
 - The port is `2843` (`ATHENA_DASH_PORT` overrides). It binds `127.0.0.1` only, and answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>`, so a web page cannot read it through DNS rebinding.
@@ -74,7 +74,7 @@ Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<works
 | `watch.json` is stale (HQ not running `athena watch`) | PR checks and review show with "as of 12 min ago" once older than 2 minutes; the PR link still comes from the report. |
 | HQ closes | The server exits within 2 s. Open pages show "dashboard stopped" and reconnect when it is back. |
 | The server crashes | `athena dash show` reports it off (the pid is gone or is not ours); `athena hq` or `athena dash on` starts it again. |
-| A panic while rendering | The request gets a 500 and the last good page stays on open tabs; the server keeps running. |
+| A panic or template error while rendering | The poll recovers and keeps the last good page on open tabs; the server keeps running. |
 
 ### Design
 

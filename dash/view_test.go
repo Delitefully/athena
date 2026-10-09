@@ -103,6 +103,9 @@ func TestBuildCases(t *testing.T) {
 		{"blocked report", live("b"), Hook{State: "blocked", Report: &Report{Status: "BLOCKED", Concerns: []string{"x"}}}, nil, "needs", "blocked"},
 		{"done, out of draft", live("c"), Hook{State: "done"}, &WatchWorker{PR: open(false, "REVIEW_REQUIRED", "success")}, "needs", "ready for your review"},
 		{"done, out of draft, failing", live("d"), Hook{State: "done"}, &WatchWorker{PR: open(false, "", "failure")}, "progress", "done, athena reviewing"},
+		{"idle after a DONE report, out of draft", live("l"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: open(false, "", "success")}, "needs", "ready for your review"},
+		{"exited after DONE, out of draft", live("m"), Hook{State: "exited", LastReport: &Report{Status: "DONE_WITH_CONCERNS"}}, &WatchWorker{PR: open(false, "", "pending")}, "needs", "ready for your review"},
+		{"idle with no report, out of draft", live("n"), Hook{State: "idle"}, &WatchWorker{PR: open(false, "", "success")}, "progress", "idle"},
 		{"done, draft", live("e"), Hook{State: "done"}, &WatchWorker{PR: open(true, "", "success")}, "progress", "done, athena reviewing"},
 		{"approved while working", live("f"), Hook{State: "working"}, &WatchWorker{PR: open(false, "APPROVED", "pending")}, "needs", "approved, ready to merge"},
 		{"merged, not retired", live("g"), Hook{State: "idle"}, &WatchWorker{PR: &PR{URL: "u", State: "MERGED"}}, "done", "merged, not retired yet"},
@@ -199,5 +202,13 @@ func TestDoneWorkerShowsItsFirstConcern(t *testing.T) {
 	v := Build(Snapshot{Workers: []Worker{{Name: "a", State: "live"}}, Hooks: map[string]Hook{"a": h}}, fixtureNow, "acme")
 	if d := v.InProgress[0].Detail; d != "CI not checked on the new head" {
 		t.Fatalf("detail %q", d)
+	}
+}
+
+func TestInlineNeverWritesInsideALink(t *testing.T) {
+	got := string(inline("[x](https://a.test/`b`/**c**) and **d** https://e.test/`f`"))
+	want := `<a href="https://a.test/` + "`b`" + `/**c**">x</a> and <strong>d</strong> <a href="https://e.test/` + "`f`" + `">https://e.test/` + "`f`" + `</a>`
+	if got != want {
+		t.Fatalf("\ngot  %s\nwant %s", got, want)
 	}
 }
