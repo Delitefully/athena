@@ -4,12 +4,15 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-/** Stands in for the engine's own drawing of the message: its text, as handed down. */
-function engine(on: On) {
+/** Stands in for the engine's own drawing of the message, and for the worktree's origin remote. */
+function engine(on: On, remote = 'git@github.com:o/r.git') {
   on('ui.render', { component: 'AssistantMessage' }, async ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>{e.props.text}</Text>
   })
+  on('process.run', async ($, e, next) =>
+    e.argv.join(' ') === 'git remote get-url origin' ? { value: { exitCode: 0, stdout: `${remote}\n`, stderr: '' } } : next(e),
+  )
 }
 
 const report = (o: object) => `Pushed and opened the PR.\n\nATHENA-REPORT ${JSON.stringify(o)}`
@@ -32,13 +35,14 @@ describe('a worker draws its ATHENA-REPORT as a completion block', () => {
     ['NEEDS_CONTEXT', 'Needs context', '#E8913A'],
   ] as const) {
     test(`${status}: its word in its colour, the PR, verify and the lists`, async ($, on) => {
-      mock.env(on, { ATHENA_WORKER: 'lab-w' })
+      mock.env(on, { ATHENA_WORKER: 'lab-w', FORCE_HYPERLINK: '1' })
       engine(on)
       const ui = await mount($, report({ status, ...FULL }))
       expect(await ui.find({ type: 'Text', text: 'Pushed and opened the PR.' })).toBeDefined()
       expect((await ui.find({ type: 'Text', text: word }))?.props.color).toBe(color)
       expect(await ui.find({ type: 'Text', text: '∞ athena report' })).toBeDefined()
-      expect((await ui.find({ type: 'Link' }))?.props).toMatchObject({ href: FULL.pr, label: '#6553' })
+      expect((await ui.find({ type: 'Link' }))?.props).toEqual({ href: 'https://github.com/o/r/pull/6553' })
+      expect(await ui.find({ type: 'Text', text: '#6553' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: '797b679' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: 'make test -> pass' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: '• kept the frame for the model' })).toBeDefined()

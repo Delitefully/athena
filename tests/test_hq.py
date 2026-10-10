@@ -61,6 +61,8 @@ class HqTest(unittest.TestCase):
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("hq.md"))
         env = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())["env"]
         self.assertEqual(env["ATHENA_HQ"], "athena")  # so `athena hq restart` run inside HQ targets this HQ
+        # herdr is not a terminal Claude Code draws OSC 8 links for; it renders them, so HQ's links are masked.
+        self.assertEqual(env["FORCE_HYPERLINK"], "1")
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["pane"], "w8:p1")
         self.assertFalse(paths.claim_file(str(self.cwd)).exists())
 

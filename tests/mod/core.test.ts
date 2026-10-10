@@ -3,14 +3,20 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   allowLine,
   clean,
+  eventParts,
   fitStatus,
+  hyperlinks,
   isMonitorNotice,
+  linkParts,
   MAX_LINES,
   ORANGE,
   parseWake,
   promptText,
+  prUrl,
+  readBoard,
   readRecords,
   reportView,
+  repoSlug,
   restartDelay,
   splitReport,
   Waker,
@@ -323,7 +329,7 @@ describe('reportView', () => {
   })
 
   test('the PR as #n with its head, the verify line, and the lists', () => {
-    expect(reportView({ ...base, status: 'DONE' })).toEqual({
+    expect(reportView({ ...base, status: 'DONE' }, 'o/r')).toEqual({
       status: { text: 'Done', color: 'success' },
       pr: { href: 'https://github.com/o/r/pull/6553', label: '#6553' },
       head: '797b679',
@@ -347,6 +353,16 @@ describe('reportView', () => {
       label: 'not a url',
     })
     expect(reportView({ status: 'BLOCKED', head: '1a2b3c4d', decisions: [], concerns: [] }).head).toBe('1a2b3c4')
+  })
+
+  test("the PR's link is built from the worker's own repo, never taken from the report", () => {
+    const pr = (value: string, repo?: string) => reportView({ status: 'DONE', pr: value, decisions: [], concerns: [] }, repo).pr
+    expect(pr('https://github.com/o/r/pull/6553')).toEqual({ href: undefined, label: '#6553' })
+    expect(pr('https://github.com/O/R/pull/6553/', 'o/r')).toEqual({ href: 'https://github.com/o/r/pull/6553', label: '#6553' })
+    expect(pr('https://github.com/x/y/pull/6553', 'o/r')).toEqual({ href: undefined, label: 'x/y#6553' })
+    expect(pr('https://evil.example/o/r/pull/6553', 'o/r')).toEqual({ href: undefined, label: 'https://evil.example/o/r/pull/6553' })
+    expect(pr('#12', 'o/r')).toEqual({ href: 'https://github.com/o/r/pull/12', label: '#12' })
+    expect(pr('#12')).toEqual({ href: undefined, label: '#12' })
   })
 })
 
@@ -472,7 +488,7 @@ describe('review fixes', () => {
       verify: 'make test\u001b[31m -> pass\u0085',
       decisions: ['kept⁦ it⁩'],
       concerns: ['﻿none‏'],
-    })
+    }, 'o/r')
     expect(v).toEqual({
       status: { text: 'Done', color: 'success' },
       pr: { href: 'https://github.com/o/r/pull/7', label: '#7' },
@@ -482,5 +498,117 @@ describe('review fixes', () => {
       concerns: ['none'],
     })
     expect(clean('a\u0000b\u009fc‪d')).toBe('abcd')
+  })
+})
+
+describe('links', () => {
+  test('a PR URL is built from a known owner/repo and a number, never from text', () => {
+    expect(prUrl('Delitefully/athena', '12')).toBe('https://github.com/Delitefully/athena/pull/12')
+    expect(prUrl('o/r', 7)).toBe('https://github.com/o/r/pull/7')
+    expect(prUrl(undefined, '12')).toBeUndefined()
+    expect(prUrl('', '12')).toBeUndefined()
+    expect(prUrl('evil.com/x/y', '12')).toBeUndefined()
+    expect(prUrl('o/r?x=1', '12')).toBeUndefined()
+    expect(prUrl('o/r', '12abc')).toBeUndefined()
+    expect(prUrl('o/r', '')).toBeUndefined()
+  })
+
+  test('a GitHub remote reads as owner/repo, https or ssh; anything else as nothing', () => {
+    expect(repoSlug('git@github.com:Delitefully/athena.git')).toBe('Delitefully/athena')
+    expect(repoSlug('https://github.com/Delitefully/athena.git\n')).toBe('Delitefully/athena')
+    expect(repoSlug('https://github.com/o/r')).toBe('o/r')
+    expect(repoSlug('ssh://git@github.com/o/r.git')).toBe('o/r')
+    expect(repoSlug('/private/tmp/lab/origin.git')).toBeUndefined()
+    expect(repoSlug('https://gitlab.com/o/r.git')).toBeUndefined()
+  })
+
+  test('each #n is split out with its link where one is known; the rest stays text', () => {
+    const href = (n: string) => (n === '12' ? prUrl('o/r', n) : undefined)
+    expect(linkParts('#12 #13 need you', href)).toEqual([
+      { text: '#12', href: 'https://github.com/o/r/pull/12' },
+      { text: ' ' },
+      { text: '#13' },
+      { text: ' need you' },
+    ])
+    expect(linkParts('wake-ui working', href)).toEqual([{ text: 'wake-ui working' }])
+  })
+
+  test('a wake event links its PR by the worker it names, or a stacked PR by the board', () => {
+    const b: Board = { needs: [], prs: [], active: [], done: [], links: { '5856': 'o/stack' }, repos: { 'band-links': 'o/r' } }
+    expect(eventParts('band-links pr opened #12', b)).toEqual([
+      { text: 'band-links pr opened ' },
+      { text: '#12', href: 'https://github.com/o/r/pull/12' },
+    ])
+    expect(eventParts('stack #5856: OPEN MERGEABLE', b)[1]).toEqual({ text: '#5856', href: 'https://github.com/o/stack/pull/5856' })
+    expect(eventParts('ghost pr opened #9', b)).toEqual([{ text: 'ghost pr opened ' }, { text: '#9' }])
+    expect(eventParts('band-links pr opened #12', undefined)).toEqual([{ text: 'band-links pr opened ' }, { text: '#12' }])
+    // A worker named `stack` does not take over a stacked PR's line.
+    const named = { ...b, repos: { ...b.repos, stack: 'o/worker' } }
+    expect(eventParts('stack #5856: MERGED', named)[1]).toEqual({ text: '#5856', href: 'https://github.com/o/stack/pull/5856' })
+  })
+
+  test('the dash link sits right after what needs the human, or at the end, and only while the dash runs', () => {
+    const base: Board = { needs: ['a blocked'], prs: ['#7'], active: [['working', ['w']]], done: ['d'] }
+    const dash = 'http://127.0.0.1:28431/'
+    const segs = (b: Board, columns = 200) => fitStatus(b, columns).map(s => `${s.tone}:${s.text}${s.href ? `@${s.href}` : ''}`)
+    expect(segs({ ...base, dash })).toEqual([
+      'needs:a blocked',
+      'needs:#7 needs you',
+      `dash:open dash →@${dash}`,
+      'active:w working',
+      'done:✓ d done',
+    ])
+    expect(segs({ ...base, needs: [], prs: [], dash })).toEqual(['active:w working', 'done:✓ d done', `dash:open dash →@${dash}`])
+    expect(segs({ needs: [], prs: [], active: [], done: [], dash })).toEqual(['active:no live workers', `dash:open dash →@${dash}`])
+    expect(segs(base)).not.toContain(`dash:open dash →@${dash}`)
+    expect(segs({ ...base, dash }, 63)).toContain(`dash:open dash →@${dash}`)
+  })
+
+  test("names and #n outrank the dash link: at HQ's width it goes before anything folds", () => {
+    const b: Board = { needs: ['a blocked'], prs: ['#1', '#2', '#3'], active: [['working', ['w']]], done: ['d', 'e'], dash: 'http://127.0.0.1:2843/' }
+    const named = ['a blocked', '#1 #2 #3 need you', 'w working', '✓ d, e done']
+    // 70 columns less `∞ athena `: 61. In full the line is 55 wide, 69 with the link.
+    expect(fitStatus(b, 61).map(s => s.text)).toEqual(named)
+    for (let columns = 55; columns <= 68; columns++) expect(fitStatus(b, columns).map(s => s.text)).toEqual(named)
+    expect(fitStatus(b, 69).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'open dash →', 'w working', '✓ d, e done'])
+    // Narrower, the done ones fold to a count and the names stay (with the link this fold is 66 wide).
+    expect(fitStatus(b, 54).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
+    expect(fitStatus(b, 52).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
+    expect(fitStatus(b, 20).map(s => s.text)).toEqual(['1 blocked', '3 PRs need you', '1 working', '✓ 2 done'])
+  })
+
+  test('a board reads its links, repos and dash, and an older board without them still reads', () => {
+    expect(
+      readBoard({ needs: [], prs: ['#12'], active: [], done: [], links: { '12': 'o/r', bad: 'o/r', '13': 'x' }, repos: { w: 'o/r', v: 'nope' }, dash: 'http://127.0.0.1:2843/' }),
+    ).toEqual({ needs: [], prs: ['#12'], active: [], done: [], links: { '12': 'o/r' }, repos: { w: 'o/r' }, dash: 'http://127.0.0.1:2843/' })
+    expect(readBoard({ needs: [], prs: [], active: [], done: [], dash: 'https://evil.example/' })?.dash).toBeUndefined()
+    expect(readBoard({ needs: [], prs: [], active: [], done: [] })).toEqual({ needs: [], prs: [], active: [], done: [], links: {}, repos: {}, dash: undefined })
+  })
+
+  test('the wake prompt stays plain text: no URL, no escape, whatever links the band draws', async () => {
+    const lines = ['band-links pr opened https://github.com/o/r/pull/12', 'stack o/r#5856: t -> OPEN base=main MERGEABLE', 'w checks pending->failure']
+    const { w, sent, advance } = harness()
+    for (const l of lines) w.add(l)
+    await advance(3000)
+    expect(sent).toEqual([p('band-links pr opened #12', 'stack #5856: OPEN MERGEABLE', 'w checks pending->failure')])
+    expect(sent[0]).not.toMatch(/https?:|github\.com|\u001b|\]8;/)
+  })
+})
+
+describe('hyperlinks', () => {
+  test('as Claude Code decides: FORCE_HYPERLINK first, then the terminals it knows', () => {
+    expect(hyperlinks({ TERM_PROGRAM: 'herdr', TERM: 'xterm-256color' })).toBe(false)
+    expect(hyperlinks({ TERM_PROGRAM: 'herdr', FORCE_HYPERLINK: '1' })).toBe(true)
+    expect(hyperlinks({ TERM_PROGRAM: 'herdr', FORCE_HYPERLINK: '' })).toBe(false) // empty: as unset, like the engine
+    expect(hyperlinks({ TERM_PROGRAM: 'ghostty', FORCE_HYPERLINK: '0' })).toBe(false)
+    for (const t of ['ghostty', 'iTerm.app', 'WezTerm', 'vscode', 'kitty', 'WarpTerminal']) expect(hyperlinks({ TERM_PROGRAM: t })).toBe(true)
+    expect(hyperlinks({ LC_TERMINAL: 'iTerm2' })).toBe(true)
+    expect(hyperlinks({ TERM: 'xterm-kitty' })).toBe(true)
+    expect(hyperlinks({ WT_SESSION: 'x' })).toBe(true)
+    expect(hyperlinks({ WT_SESSION: 'x', TMUX: '/tmp/t' })).toBe(false)
+    expect(hyperlinks({ TERM_PROGRAM: 'tmux', TERM_PROGRAM_VERSION: '3.4' })).toBe(true)
+    expect(hyperlinks({ TERM_PROGRAM: 'tmux', TERM_PROGRAM_VERSION: '3.3a' })).toBe(false)
+    expect(hyperlinks({ VTE_VERSION: '6003' })).toBe(true)
+    expect(hyperlinks({})).toBe(false)
   })
 })

@@ -68,7 +68,9 @@ def _run_setup(repo, path, name):
     if not script.exists():
         return None
     log = paths.ensure("logs") / f"{name}-setup.log"
-    env = dict(os.environ, ATHENA_REPO=str(repo), ATHENA_WORKTREE=str(path))
+    # Without HQ's FORCE_HYPERLINK, so the script's tools write no OSC 8 links into its log.
+    env = {k: v for k, v in os.environ.items() if k != "FORCE_HYPERLINK"}
+    env.update(ATHENA_REPO=str(repo), ATHENA_WORKTREE=str(path))
     with open(log, "w") as out:
         proc = subprocess.run(["sh", str(script)], cwd=str(path), env=env, stdout=out, stderr=subprocess.STDOUT, timeout=1800)
     if proc.returncode != 0:

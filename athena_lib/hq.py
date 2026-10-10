@@ -31,9 +31,12 @@ def _alive(pane):
 
 def _claude_args():
     settings = paths.ensure("settings") / "hq.json"
+    # FORCE_HYPERLINK: Claude Code draws OSC 8 links only for terminals it knows, and herdr is not one, though it
+    # renders them; without it every link in HQ (the status band's "open dash →" and #n among them) shows its raw URL.
     settings.write_text(json.dumps({"crossSessionInbound": "accept",
                                     "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
-                                            "ATHENA_STATE_DIR": str(paths.state_dir())}}, indent=2))
+                                            "ATHENA_STATE_DIR": str(paths.state_dir()), "FORCE_HYPERLINK": "1"}},
+                                   indent=2))
     args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
             "--settings", str(settings)]
     if os.environ.get("ATHENA_PLUGIN_DIR"):

@@ -307,3 +307,25 @@ class SpaceLabelTest(unittest.TestCase):
 
     def test_truncated(self):
         self.assertEqual(len(spawn.space_label("plt-1", "x" * 80)), 48)
+
+
+class SetupEnvTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_setup_script_runs_without_force_hyperlink(self):
+        # HQ's settings set FORCE_HYPERLINK for Claude Code; a setup script's tools must not print OSC 8 into its log.
+        from unittest import mock
+        root = Path(self.tmp.name) / "plugin"
+        (root / "repos").mkdir(parents=True)
+        (root / "repos" / "app.setup").write_text('echo "force=${FORCE_HYPERLINK-unset} repo=$ATHENA_REPO"\n')
+        wt = Path(self.tmp.name) / "wt"
+        wt.mkdir()
+        with mock.patch.object(paths, "PLUGIN_ROOT", root), mock.patch.dict(os.environ, {"FORCE_HYPERLINK": "1"}):
+            log = spawn._run_setup("/src/app", wt, "w1")
+        self.assertEqual(Path(log).read_text().strip(), "force=unset repo=/src/app")

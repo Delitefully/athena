@@ -5,14 +5,20 @@
 // (ATHENA_WORKER set), it draws the ATHENA-REPORT line as a completion block. Every other session sees no change.
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Board, Segment } from './core'
+import type { Board, Part, Segment } from './core'
 import {
+  boardHref,
   clockText,
+  eventParts,
   fitStatus,
+  hyperlinks,
   isMonitorNotice,
+  LINK_ENV,
+  linkParts,
   parseWake,
   readBoard,
   readRecords,
+  repoSlug,
   reportView,
   restartDelay,
   splitReport,
@@ -69,6 +75,67 @@ function isWorker($: EngineInterface): Promise<boolean> {
 function isHq($: EngineInterface): Promise<boolean> {
   role ??= readRole($).catch(() => false)
   return role
+}
+
+let linking: Promise<boolean> | undefined
+
+// Whether a Link draws as a masked OSC 8 span here, read once from the variables Claude Code decides it by.
+async function readLinking($: EngineInterface): Promise<boolean> {
+  // Each name a literal, so validate lists what the mod reads.
+  const read: Record<(typeof LINK_ENV)[number], string | undefined> = {
+    FORCE_HYPERLINK: await $.env.get('FORCE_HYPERLINK'),
+    TERM_PROGRAM: await $.env.get('TERM_PROGRAM'),
+    TERM_PROGRAM_VERSION: await $.env.get('TERM_PROGRAM_VERSION'),
+    LC_TERMINAL: await $.env.get('LC_TERMINAL'),
+    TERM: await $.env.get('TERM'),
+    TERMINAL_EMULATOR: await $.env.get('TERMINAL_EMULATOR'),
+    WT_SESSION: await $.env.get('WT_SESSION'),
+    TMUX: await $.env.get('TMUX'),
+    VTE_VERSION: await $.env.get('VTE_VERSION'),
+  }
+  // A settings file's env (HQ's sets FORCE_HYPERLINK) counts as the engine's own.
+  const settings = await settingsEnv($)
+  const env: Record<string, string | undefined> = {}
+  for (const key of LINK_ENV) {
+    const value = read[key] ?? settings[key]
+    env[key] = typeof value === 'string' ? value : undefined
+  }
+  return hyperlinks(env)
+}
+
+function isLinking($: EngineInterface): Promise<boolean> {
+  linking ??= readLinking($).catch(() => false)
+  return linking
+}
+
+let workerRepo: Promise<string | undefined> | undefined
+
+// A worker's own repo, `owner/repo` from its worktree's origin remote: what its report's PR links into.
+function readWorkerRepo($: EngineInterface): Promise<string | undefined> {
+  workerRepo ??= $.process
+    .run(['git', 'remote', 'get-url', 'origin'])
+    .then(r => (r.exitCode === 0 ? repoSlug(r.stdout) : undefined))
+    .catch(() => undefined)
+  return workerRepo
+}
+
+type Elements = ReturnType<EngineInterface['ui']['resolve']>
+
+/**
+ * Drawn parts: each one with an `href` a masked link where the terminal draws one, plain text otherwise (never the
+ * engine's `label URL` fallback). Display only: the text a wake submits never carries a link.
+ */
+function drawParts(ui: Elements, parts: readonly Part[], isOn: boolean, style: { color?: string; dimColor?: boolean } = {}) {
+  const { Text, Link } = ui
+  return parts.map(part =>
+    part.href && isOn ? (
+      <Link href={part.href}>
+        <Text {...style}>{part.text}</Text>
+      </Link>
+    ) : (
+      <Text {...style}>{part.text}</Text>
+    ),
+  )
 }
 
 function show(next: { board?: Board; note?: string }, $: EngineInterface): void {
@@ -160,7 +227,7 @@ async function hidden($: EngineInterface, e: Parameters<EngineInterface['ui']['r
   return <Box display="none" />
 }
 
-const TONE: Record<Segment['tone'], string | undefined> = { needs: 'warning', active: undefined, done: 'success' }
+const TONE: Record<Segment['tone'], string | undefined> = { needs: 'warning', active: undefined, done: 'success', dash: undefined }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -197,7 +264,9 @@ export const register: Register = on => {
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'plugin', name: 'athena' } } }, async ($, e, next) => {
     const wake = parseWake(e.props.text)
     if (!wake || !(await isHq($))) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const isOn = await isLinking($)
     return (
       <Box flexDirection="row" columnGap={1}>
         <Text color={MADDER} bold>
@@ -206,7 +275,7 @@ export const register: Register = on => {
         {wake.time ? <Text dimColor>{wake.time}</Text> : null}
         <Box flexDirection="column">
           {wake.events.map(event => (
-            <Text>{event}</Text>
+            <Text>{drawParts(ui, eventParts(event, board), isOn)}</Text>
           ))}
         </Box>
       </Box>
@@ -218,7 +287,9 @@ export const register: Register = on => {
   // active workers, and the done ones (success), folded to fit one line. Another plugin's band still draws under it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(board || note || lastWake) || !(await isHq($))) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const isOn = await isLinking($)
     const head = `${MARK} athena`
     const indent = ' '.repeat(head.length + 1)
     const segments = board && !note ? fitStatus(board, e.props.bodyColumns - head.length - 1) : []
@@ -228,7 +299,9 @@ export const register: Register = on => {
       segments.map((s, i) => (
         <Text>
           {i ? <Text dimColor>{' · '}</Text> : ''}
-          <Text color={TONE[s.tone]}>{s.text}</Text>
+          {s.tone === 'dash'
+            ? drawParts(ui, [{ text: s.text, href: s.href }], isOn, { dimColor: true })
+            : drawParts(ui, linkParts(s.text, boardHref(board)), isOn, { color: TONE[s.tone] })}
         </Text>
       ))
     )
@@ -249,7 +322,7 @@ export const register: Register = on => {
             ) : null}
             <Box flexDirection="column" flexShrink={1}>
               {lastWake.events.map(event => (
-                <Text wrap="truncate-end">{event}</Text>
+                <Text wrap="truncate-end">{drawParts(ui, eventParts(event, board), isOn)}</Text>
               ))}
             </Box>
           </Box>
@@ -281,8 +354,10 @@ export const register: Register = on => {
     if (e.props.isSummary || !e.props.text.includes('ATHENA-REPORT')) return next(e)
     const split = splitReport(e.props.text)
     if (!split || !(await isWorker($))) return next(e)
-    const v = reportView(split.report)
-    const { Box, Text, Link } = $.ui.resolve(e)
+    const v = reportView(split.report, await readWorkerRepo($))
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const isOn = await isLinking($)
     const rest = [split.before, split.after].filter(Boolean).join('\n\n')
     const drawn = rest ? await next({ ...e, props: { ...e.props, text: rest } }) : null
     const row = (label: string, value: ReturnType<typeof Text>) => (
@@ -314,7 +389,7 @@ export const register: Register = on => {
               {v.status.text}
             </Text>
           </Box>
-          {v.pr ? row('PR', v.pr.href ? <Link href={v.pr.href} label={v.pr.label} /> : <Text>{v.pr.label}</Text>) : null}
+          {v.pr ? row('PR', <Text>{drawParts(ui, [{ text: v.pr.label, href: v.pr.href }], isOn)}</Text>) : null}
           {v.head ? row('head', <Text dimColor>{v.head}</Text>) : null}
           {v.verify ? row('verify', <Text>{v.verify}</Text>) : null}
           {v.decisions.length ? row('decisions', bullets(v.decisions)) : null}
