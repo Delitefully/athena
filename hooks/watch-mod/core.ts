@@ -382,8 +382,8 @@ function prsCounted(b: Board): string[] {
 
 /**
  * The status line, laid out for `columns`: what needs the human, then the active workers, then the done ones,
- * each named while the line fits. As it narrows, the dash link goes first, then the done ones fold to a count,
- * then the active ones, then the PRs, then the needs; whatever is still too wide is cut by the drawing.
+ * each named while the line fits, then the dash link. As it narrows, the dash link goes first, then the done ones
+ * fold to a count, then the active ones, then the PRs, then the needs; whatever is still too wide is cut by the drawing.
  */
 export function fitStatus(b: Board, columns: number): Segment[] {
   const dash: Segment[] = b.dash ? [{ text: DASH_LINK, tone: 'dash', href: b.dash }] : []
@@ -401,11 +401,11 @@ export function fitStatus(b: Board, columns: number): Segment[] {
     [b.needs, prsCounted(b), activeCounted, doneCounted],
     [needsCounted(b), prsCounted(b), activeCounted, doneCounted],
   ]
-  // The dash link sits right after what needs the human, or at the end when nothing does.
+  // The dash link always ends the line.
   const segments = ([needs, prs, active, done]: [string[], string[], string[], string[]]): Segment[] => {
     const urgent = [...needs, ...prs].map(text => ({ text, tone: 'needs' as const }))
     const rest = [...active.map(text => ({ text, tone: 'active' as const })), ...done.map(text => ({ text, tone: 'done' as const }))]
-    return urgent.length ? [...urgent, ...dash, ...rest] : [...rest, ...dash]
+    return [...urgent, ...rest, ...dash]
   }
   const width = (s: Segment[]) => s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1)
   // Names and `#n` outrank the dash link: each fold is tried with it, then without it, before folding further.
