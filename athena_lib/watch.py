@@ -213,9 +213,24 @@ def _notes() -> str:
 
 
 _NEEDS_ORDER = ("needs context", "blocked", "exited")
-_SLUG = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+_SLUG = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")  # whole string only: fullmatch
 _REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
 _SLUGS = {}
+
+
+def is_slug(text) -> bool:
+    """`owner/name` and nothing else: no host, no query, no trailing newline."""
+    return isinstance(text, str) and _SLUG.fullmatch(text) is not None
+
+
+def _worker_slug(w):
+    """A worker's repo for linking its PR: its origin's `owner/name`, unless its PR lives in another repo (a fork,
+    or a PR opened elsewhere); then nothing, so its #n draws plain. GitHub's URL only ever withholds a link."""
+    slug = w.get("slug")
+    if not is_slug(slug):
+        return None
+    m = _PR_URL.search((w.get("pr") or {}).get("url") or "")
+    return slug if not m or m.group(1).lower() == slug.lower() else None
 
 
 def repo_slug(repo):
@@ -225,8 +240,8 @@ def repo_slug(repo):
             remote = gitops.git(repo, "remote", "get-url", "origin", check=False)
         except OSError:
             remote = ""
-        m = _REMOTE.match((remote or "").strip())
-        _SLUGS[repo] = m.group(1) if m and _SLUG.match(m.group(1)) else None
+        m = _REMOTE.fullmatch((remote or "").strip())
+        _SLUGS[repo] = m.group(1) if m and is_slug(m.group(1)) else None
     return _SLUGS[repo]
 
 
@@ -237,13 +252,14 @@ def _links(snap) -> dict:
     seen = {}
     for w in snap.get("workers", {}).values():
         n = (w.get("pr") or {}).get("number")
-        if w.get("slug") and isinstance(n, int):
-            seen.setdefault(str(n), set()).add(w["slug"])
+        slug = _worker_slug(w)
+        if slug and isinstance(n, int):
+            seen.setdefault(str(n), set()).add(slug)
     for key in snap.get("stacks") or {}:
         repo, _, n = key.rpartition("#")
-        if n.isdigit():
+        if n.isdigit() and is_slug(repo):
             seen.setdefault(n, set()).add(repo)
-    return {n: next(iter(r)) for n, r in seen.items() if len(r) == 1 and _SLUG.match(next(iter(r)))}
+    return {n: next(iter(r)) for n, r in seen.items() if len(r) == 1}
 
 
 def board(snap, notes=None) -> dict:
@@ -258,7 +274,7 @@ def board(snap, notes=None) -> dict:
               if g not in _NEEDS_ORDER and g != "done"]
     out = {"needs": needs, "prs": _prs_awaiting(snap, _notes() if notes is None else notes),
            "active": active, "done": groups.get("done", []), "links": _links(snap),
-           "repos": {n: w["slug"] for n, w in sorted(workers.items()) if w.get("slug")}}
+           "repos": {n: _worker_slug(w) for n, w in sorted(workers.items()) if _worker_slug(w)}}
     if snap.get("dash"):
         out["dash"] = snap["dash"]
     return out

@@ -564,11 +564,17 @@ describe('links', () => {
     expect(segs({ ...base, dash }, 63)).toContain(`dash:open dash →@${dash}`)
   })
 
-  test("at HQ's width the dash link gives way before the workers' state does", () => {
+  test("names and #n outrank the dash link: at HQ's width it goes before anything folds", () => {
     const b: Board = { needs: ['a blocked'], prs: ['#1', '#2', '#3'], active: [['working', ['w']]], done: ['d', 'e'], dash: 'http://127.0.0.1:2843/' }
-    // 70 columns less `∞ athena `: the tightest fold with the link is 63 wide.
-    expect(fitStatus(b, 61).map(s => s.text)).toEqual(['1 blocked', '3 PRs need you', '1 working', '✓ 2 done'])
-    expect(fitStatus(b, 63).map(s => s.text)).toEqual(['a blocked', '3 PRs need you', 'open dash →', '1 working', '✓ 2 done'])
+    const named = ['a blocked', '#1 #2 #3 need you', 'w working', '✓ d, e done']
+    // 70 columns less `∞ athena `: 61. In full the line is 55 wide, 69 with the link.
+    expect(fitStatus(b, 61).map(s => s.text)).toEqual(named)
+    for (let columns = 55; columns <= 68; columns++) expect(fitStatus(b, columns).map(s => s.text)).toEqual(named)
+    expect(fitStatus(b, 69).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'open dash →', 'w working', '✓ d, e done'])
+    // Narrower, the done ones fold to a count and the names stay (with the link this fold is 66 wide).
+    expect(fitStatus(b, 54).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
+    expect(fitStatus(b, 52).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
+    expect(fitStatus(b, 20).map(s => s.text)).toEqual(['1 blocked', '3 PRs need you', '1 working', '✓ 2 done'])
   })
 
   test('a board reads its links, repos and dash, and an older board without them still reads', () => {

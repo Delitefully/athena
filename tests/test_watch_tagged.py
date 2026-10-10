@@ -148,10 +148,9 @@ class BoardLinksTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_links_and_repos_come_from_the_worker_repo_and_the_stack(self):
-        def pr(n):
-            # GitHub's URL names another repo: the link still goes by the worker's own repo.
+        def pr(n, repo="delitefully/ATHENA"):
             return {"state": "OPEN", "draft": False, "review": "APPROVED", "number": n,
-                    "url": f"https://github.com/evil/elsewhere/pull/{n}"}
+                    "url": f"https://github.com/{repo}/pull/{n}"}
         snap = {"workers": {"a": {**_w("idle", pr(12)), "slug": "Delitefully/athena"},
                             "b": {**_w("idle", pr(13)), "slug": None},
                             "c": _w("working")},
@@ -161,6 +160,19 @@ class BoardLinksTest(unittest.TestCase):
         self.assertEqual(b["links"], {"12": "Delitefully/athena", "5856": "o/stack"})
         self.assertEqual(b["repos"], {"a": "Delitefully/athena"})
         self.assertNotIn("dash", b)
+
+    def test_a_pr_in_another_repo_than_the_origin_draws_plain(self):
+        # A fork, or a PR opened elsewhere: the origin is not where the PR lives, so neither #n nor the wake row links.
+        pr = {"state": "OPEN", "draft": False, "review": "APPROVED", "number": 12,
+              "url": "https://github.com/upstream/athena/pull/12"}
+        b = watch.board({"workers": {"a": {**_w("idle", pr), "slug": "me/athena"}}}, notes="")
+        self.assertEqual((b["prs"], b["links"], b["repos"]), (["#12"], {}, {}))
+
+    def test_a_slug_with_a_trailing_newline_is_no_slug(self):
+        snap = {"workers": {"a": {**_w("idle", {"state": "OPEN", "number": 7}), "slug": "o/r\n"}},
+                "stacks": {"o/r\n#8": "OPEN base=main MERGEABLE"}}
+        b = watch.board(snap, notes="")
+        self.assertEqual((b["links"], b["repos"]), ({}, {}))
 
     def test_a_number_two_repos_share_links_nowhere(self):
         snap = {"workers": {"a": {**_w("idle", {"state": "OPEN", "number": 7}), "slug": "o/one"}},
@@ -325,6 +337,22 @@ class StackCliTest(unittest.TestCase):
     def tearDown(self):
         self.env.restore()
         self.tmp.cleanup()
+
+    def test_set_refuses_a_repo_that_is_not_owner_name(self):
+        from athena_lib import cli
+        for bad in ("o/r\n", "evil.com/o/r", "o", "o/r?x"):
+            with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):
+                self.assertEqual(cli.main(["stack", "set", bad, "1"]), 2)
+        self.assertEqual(watch.stacks(), [])
+
+    def test_watch_runs_without_force_hyperlink(self):
+        # HQ's settings set it for Claude Code; the watch and the gh, git and herdr it runs must not print OSC 8.
+        from athena_lib import cli
+        seen = {}
+        with mock.patch.dict("os.environ", {"FORCE_HYPERLINK": "1"}), \
+                mock.patch.object(watch, "run", side_effect=lambda **kw: seen.update(env="FORCE_HYPERLINK" in __import__("os").environ)):
+            cli.main(["watch", "--tagged"])
+        self.assertEqual(seen, {"env": False})
 
     def test_set_show_clear(self):
         from athena_lib import cli

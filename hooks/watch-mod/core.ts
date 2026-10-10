@@ -382,8 +382,8 @@ function prsCounted(b: Board): string[] {
 
 /**
  * The status line, laid out for `columns`: what needs the human, then the active workers, then the done ones,
- * each named while the line fits. As it narrows, the done ones fold to a count first, then the active ones, then
- * the PRs, then the needs; whatever is still too wide is cut by the drawing.
+ * each named while the line fits. As it narrows, the dash link goes first, then the done ones fold to a count,
+ * then the active ones, then the PRs, then the needs; whatever is still too wide is cut by the drawing.
  */
 export function fitStatus(b: Board, columns: number): Segment[] {
   const dash: Segment[] = b.dash ? [{ text: DASH_LINK, tone: 'dash', href: b.dash }] : []
@@ -408,11 +408,13 @@ export function fitStatus(b: Board, columns: number): Segment[] {
     return urgent.length ? [...urgent, ...dash, ...rest] : [...rest, ...dash]
   }
   const width = (s: Segment[]) => s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1)
+  // Names and `#n` outrank the dash link: each fold is tried with it, then without it, before folding further.
   for (const level of levels) {
     const s = segments(level)
     if (width(s) <= columns) return s
+    const bare = s.filter(x => x.tone !== 'dash')
+    if (bare.length < s.length && width(bare) <= columns) return bare
   }
-  // Still too wide: the dash link gives way before the workers' state is cut.
   return segments(levels[levels.length - 1]!).filter(s => s.tone !== 'dash')
 }
 
