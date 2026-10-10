@@ -98,7 +98,8 @@ async function watch($: EngineInterface): Promise<void> {
   const key = await toldKey($)
   const w = (waker = new Waker({
     // asUser: stored bare, so the row shows the `athena watch HH:MM:` prompt without the engine's plugin frame and
-    // its "This is how Claude Code surfaces a prompt..." sentence. The header names the mod; hq.md tells the model.
+    // its "This is how Claude Code surfaces a prompt..." sentence. The header names the mod; hq.md and the skill tell the
+    // model it is the mod's notice, not the human.
     submit: text => $.prompt.submit({ text, asUser: true }),
     after: (ms, fn) => $.clock.after(ms, fn),
     now: () => Date.now(),
@@ -174,11 +175,11 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A wake drawn as athena's own compact row: its mark, a dim time, one event per line; ctrl+o (isExpanded) shows
-  // the engine's row. Claude Code 2.1.296 raises no ui.render for a plugin's prompt row (its own `› Prompt from the
+  // A wake drawn as athena's own compact row: its mark, a dim time, one event per line (every event, so ctrl+o shows
+  // the same; isExpanded is also true under a speaker label, which this row has). Claude Code 2.1.296 raises no ui.render for a plugin's prompt row (its own `› Prompt from the
   // athena plugin` block), so this waits for a build that does; until then `asUser` keeps the frame off the row.
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'plugin', name: 'athena' } } }, async ($, e, next) => {
-    const wake = !e.props.isExpanded && parseWake(e.props.text)
+    const wake = parseWake(e.props.text)
     if (!wake || !(await isHq($))) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     return (
