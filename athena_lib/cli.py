@@ -1,6 +1,7 @@
 """athena: plumbing for the chief of staff. Run `athena -h`."""
 import argparse
 import json
+import os
 import re
 import subprocess
 import time
@@ -121,13 +122,15 @@ def cmd_dash(a):
 
 
 def cmd_watch(a):
+    # HQ's settings set FORCE_HYPERLINK for Claude Code's own drawing; the gh, git and herdr the watch runs get none.
+    os.environ.pop("FORCE_HYPERLINK", None)
     watch.run(interval=a.interval, tagged=a.tagged)
     return 0
 
 
 def cmd_stack(a):
     if a.action == "set":
-        if not a.repo or not a.prs:
+        if not a.repo or not a.prs or not watch.is_slug(a.repo):
             print("athena stack set <owner/repo> <pr> [<pr> ...]", file=sys.stderr)
             return 2
         watch.set_stack(a.repo, a.prs)

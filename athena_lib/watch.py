@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from athena_lib import dashstate, gitops, herdr, hq, ledger, paths, spawn, status
+from athena_lib import dash, dashstate, gitops, herdr, hq, ledger, paths, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -213,6 +213,53 @@ def _notes() -> str:
 
 
 _NEEDS_ORDER = ("needs context", "blocked", "exited")
+_SLUG = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")  # whole string only: fullmatch
+_REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
+_SLUGS = {}
+
+
+def is_slug(text) -> bool:
+    """`owner/name` and nothing else: no host, no query, no trailing newline."""
+    return isinstance(text, str) and _SLUG.fullmatch(text) is not None
+
+
+def _worker_slug(w):
+    """A worker's repo for linking its PR: its origin's `owner/name`, unless its PR lives in another repo (a fork,
+    or a PR opened elsewhere); then nothing, so its #n draws plain. GitHub's URL only ever withholds a link."""
+    slug = w.get("slug")
+    if not is_slug(slug):
+        return None
+    m = _PR_URL.search((w.get("pr") or {}).get("url") or "")
+    return slug if not m or m.group(1).lower() == slug.lower() else None
+
+
+def repo_slug(repo):
+    """`owner/name` of a repo's GitHub origin remote, or None (no repo, no origin, not GitHub). Cached per repo."""
+    if repo not in _SLUGS:
+        try:
+            remote = gitops.git(repo, "remote", "get-url", "origin", check=False)
+        except OSError:
+            remote = ""
+        m = _REMOTE.fullmatch((remote or "").strip())
+        _SLUGS[repo] = m.group(1) if m and is_slug(m.group(1)) else None
+    return _SLUGS[repo]
+
+
+def _links(snap) -> dict:
+    """PR number -> `owner/name`, for the mod to link `#n`: a live worker's PR by the worker's own repo (its origin
+    remote, from the ledger), a stacked PR by stack.json's repo. Never from a URL GitHub or a worker wrote, nor
+    from needs-you.md; a number two repos share is left out, so it draws plain."""
+    seen = {}
+    for w in snap.get("workers", {}).values():
+        n = (w.get("pr") or {}).get("number")
+        slug = _worker_slug(w)
+        if slug and isinstance(n, int):
+            seen.setdefault(str(n), set()).add(slug)
+    for key in snap.get("stacks") or {}:
+        repo, _, n = key.rpartition("#")
+        if n.isdigit() and is_slug(repo):
+            seen.setdefault(n, set()).add(repo)
+    return {n: next(iter(r)) for n, r in seen.items() if len(r) == 1}
 
 
 def board(snap, notes=None) -> dict:
@@ -225,8 +272,12 @@ def board(snap, notes=None) -> dict:
     needs = [f"{n} {g}" for g in _NEEDS_ORDER for n in groups.get(g, [])]
     active = [[g, names] for g, names in sorted(groups.items(), key=lambda kv: (status.urgency(kv[0]) * -1, kv[0]))
               if g not in _NEEDS_ORDER and g != "done"]
-    return {"needs": needs, "prs": _prs_awaiting(snap, _notes() if notes is None else notes),
-            "active": active, "done": groups.get("done", [])}
+    out = {"needs": needs, "prs": _prs_awaiting(snap, _notes() if notes is None else notes),
+           "active": active, "done": groups.get("done", []), "links": _links(snap),
+           "repos": {n: _worker_slug(w) for n, w in sorted(workers.items()) if _worker_slug(w)}}
+    if snap.get("dash"):
+        out["dash"] = snap["dash"]
+    return out
 
 
 def summary(snap, notes=None) -> str:
@@ -277,8 +328,9 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
-        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"]}
         repo = w.get("repo")
+        workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
+                              "slug": repo_slug(repo) if repo else None}
         if repo and repo not in mains:
             if fetch:
                 gitops.git(repo, "fetch", "--quiet", "origin", check=False)
@@ -302,8 +354,17 @@ def step(prev, fetch=False, with_pr=True):
                 lines.append(f"{r['name']} goal not sent: {r['problem']}")
     cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
     cur["missing"] = missing
+    cur["dash"] = _dash_url()
     cur["stacks"] = stack_snapshot((prev or {}).get("stacks")) if fetch else dict((prev or {}).get("stacks") or {})
     return cur, lines + ([] if prev is None else diff(prev, cur))
+
+
+def _dash_url():
+    """The dashboard's URL while it runs, from dash.pid as `athena dash show` reads it; None when it is off."""
+    try:
+        return (dash.running() or {}).get("url")
+    except OSError:
+        return None
 
 
 def tick(prev, fetch=False):
