@@ -93,7 +93,7 @@ def set_stack(repo: str, prs) -> list:
 
 
 def stack_snapshot(prev=None) -> dict:
-    """`<repo>#<n>` -> "STATE base=<branch> MERGEABLE" per watched PR. gh's UNKNOWN (still computing) keeps the last value."""
+    """`<repo>#<n>` -> "STATE base=<branch> [DRAFT ]MERGEABLE" per watched PR. gh's UNKNOWN (still computing) keeps the last value."""
     prev = prev or {}
     out = {}
     for chain in stacks():
@@ -101,7 +101,7 @@ def stack_snapshot(prev=None) -> dict:
             key = f"{chain['repo']}#{n}"
             try:
                 proc = subprocess.run(["gh", "pr", "view", str(n), "--repo", chain["repo"], "--json",
-                                       "state,baseRefName,mergeable"], capture_output=True, text=True, timeout=30)
+                                       "state,baseRefName,mergeable,isDraft"], capture_output=True, text=True, timeout=30)
                 data = json.loads(proc.stdout) if proc.returncode == 0 else None
             except (OSError, subprocess.TimeoutExpired, ValueError):
                 data = None
@@ -109,7 +109,8 @@ def stack_snapshot(prev=None) -> dict:
                 if key in prev:
                     out[key] = prev[key]
                 continue
-            out[key] = f"{data.get('state')} base={data.get('baseRefName')} {data.get('mergeable')}"
+            draft = " DRAFT" if data.get("isDraft") else ""
+            out[key] = f"{data.get('state')} base={data.get('baseRefName')}{draft} {data.get('mergeable')}"
     return out
 
 
@@ -156,23 +157,92 @@ def classify(line: str, retired=frozenset()) -> str:
     return "wake"
 
 
-def _needs_you(w) -> bool:
-    pr = w.get("pr") or {}
-    if pr.get("state") != "OPEN":
-        return False
-    return pr.get("review") == "APPROVED" or (not pr.get("draft") and w.get("state") in ("done", "idle", "exited"))
+_PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+_DEFAULT_BASES = ("main", "master")
 
 
-def summary(snap) -> str:
-    """The status line (Claude Code shows it as `athena: <this>`): each worker's last state, most urgent first,
-    and how many PRs wait on the human."""
+def _group(w) -> str:
+    """Where a worker sits on the status line: `needs context`, `blocked` or `exited` need the human, `done` is
+    done (its report says so even once its hook went idle), anything else is its state, shown as active."""
+    report = ((w.get("report") or {}).get("status") or "").upper()
+    state = w.get("state") or "unknown"
+    if report == "NEEDS_CONTEXT":
+        return "needs context"
+    if state == "blocked" or report == "BLOCKED":
+        return "blocked"
+    if state == "exited":
+        return "exited"
+    if state == "done" or report.startswith("DONE"):
+        return "done"
+    return state
+
+
+def _pr_key(url):
+    m = _PR_URL.search(url or "")
+    return f"{m.group(1)}#{m.group(2)}" if m else None
+
+
+def _prs_awaiting(snap, notes) -> list:
+    """`#n` per PR that waits on the human, each counted once: a live worker's open, ready PR once the worker
+    stopped or it is approved; a stacked PR that conflicts or is next to land (open on main, not a draft); and
+    every PR that HQ's needs-you.md links."""
+    keys = []
+    for w in snap.get("workers", {}).values():
+        pr = w.get("pr") or {}
+        if pr.get("state") != "OPEN":
+            continue
+        approved = pr.get("review") == "APPROVED"
+        stopped = not pr.get("draft") and (_group(w) in ("done", "exited") or w.get("state") == "idle")
+        if approved or stopped:
+            keys.append(_pr_key(pr.get("url")) or f"#{pr.get('number')}")
+    for key, value in (snap.get("stacks") or {}).items():
+        parts = value.split()
+        base = next((p[len("base="):] for p in parts if p.startswith("base=")), "")
+        if parts[:1] == ["OPEN"] and (parts[-1] == "CONFLICTING" or base in _DEFAULT_BASES and "DRAFT" not in parts):
+            keys.append(key)
+    keys += [f"{m.group(1)}#{m.group(2)}" for m in _PR_URL.finditer(notes or "")]
+    numbers = [k.rsplit("#", 1)[1] for k in dict.fromkeys(keys)]
+    return ["#" + n for n in sorted(numbers, key=lambda n: int(n) if n.isdigit() else 0)]
+
+
+def _notes() -> str:
+    try:
+        return (paths.state_dir() / "needs-you.md").read_text()
+    except OSError:
+        return ""
+
+
+_NEEDS_ORDER = ("needs context", "blocked", "exited")
+
+
+def board(snap, notes=None) -> dict:
+    """The status line's parts, most urgent first: what needs the human (each worker, then the PRs awaiting a
+    review or merge), the active workers grouped by state, and the done ones."""
     workers = snap.get("workers", {})
-    parts = [f"{n} {w.get('state')}" for n, w in sorted(workers.items(), key=lambda kv: (status.urgency(kv[1].get("state")), kv[0]))]
-    need = sum(1 for w in workers.values() if _needs_you(w))
-    need += sum(1 for v in (snap.get("stacks") or {}).values() if v.startswith("OPEN") and v.endswith(" CONFLICTING"))
-    if need:
-        parts.append(f"{need} PR needs you" if need == 1 else f"{need} PRs need you")
-    return " · ".join(parts if workers else ["no live workers"] + parts)
+    groups = {}
+    for name in sorted(workers):
+        groups.setdefault(_group(workers[name]), []).append(name)
+    needs = [f"{n} {g}" for g in _NEEDS_ORDER for n in groups.get(g, [])]
+    active = [[g, names] for g, names in sorted(groups.items(), key=lambda kv: (status.urgency(kv[0]) * -1, kv[0]))
+              if g not in _NEEDS_ORDER and g != "done"]
+    return {"needs": needs, "prs": _prs_awaiting(snap, _notes() if notes is None else notes),
+            "active": active, "done": groups.get("done", [])}
+
+
+def summary(snap, notes=None) -> str:
+    """The status line as one plain line (the mod draws `board` itself): what needs the human, the PRs awaiting
+    them, the active workers by state, then the done ones."""
+    b = board(snap, notes)
+    parts = list(b["needs"])
+    if b["prs"]:
+        n = len(b["prs"])
+        parts.append("1 PR needs you" if n == 1 else f"{n} PRs need you")
+    parts += [f"{', '.join(names)} {state}" for state, names in b["active"]]
+    if b["done"]:
+        parts.append(f"{', '.join(b['done'])} done")
+    if not snap.get("workers"):
+        parts.append("no live workers")
+    return " · ".join(parts)
 
 
 def _retired() -> set:
@@ -188,10 +258,10 @@ def emit(lines, snap, tagged=False, last_status=None):
     retired = _retired() if any(l.endswith(" gone from the ledger") for l in lines) else frozenset()
     for line in lines:
         print(json.dumps({"line": line, "wake": classify(line, retired) == "wake"}), flush=True)
-    text = summary(snap)
-    if text != last_status:
-        print(json.dumps({"status": text}), flush=True)
-    return text
+    record = json.dumps({"status": summary(snap), "board": board(snap)})
+    if record != last_status:
+        print(record, flush=True)
+    return record
 
 
 def report_error(exc, tagged=False):
