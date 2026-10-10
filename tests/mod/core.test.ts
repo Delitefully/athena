@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   allowLine,
+  clean,
   fitStatus,
   isMonitorNotice,
   MAX_LINES,
@@ -172,7 +173,7 @@ describe('Waker', () => {
   })
 
   test('the same event within ten minutes wakes HQ once', async () => {
-    // pr6519-design was re-prompted, ran, and ended BLOCKED again: athena watch said the same two lines 3.5 min apart.
+    // The same two lines said again with no change between (a replay, or a status flip lost between ticks).
     const { w, sent, advance } = harness()
     w.add('pr6519-design state working->blocked')
     w.add('pr6519-design report BLOCKED')
@@ -416,5 +417,70 @@ describe('allowLine', () => {
     w.add('plt-2 report BLOCKED')
     await advance(3000)
     expect(sent).toEqual([p('a watch line not shown here (athena status)', 'plt-2 report BLOCKED')])
+  })
+})
+
+describe('review fixes', () => {
+  test('a check that fails, goes pending after a fix and fails again within the window wakes twice', async () => {
+    const { w, sent, advance } = harness()
+    w.add('plt-1 checks pending->failure')
+    await advance(3000)
+    w.settle('plt-1 checks failure->pending')
+    await advance(60 * 1000)
+    w.add('plt-1 checks pending->failure')
+    await advance(3000)
+    expect(sent).toEqual([p('plt-1 checks pending->failure'), p('plt-1 checks pending->failure')])
+  })
+
+  test('a routine line clears only its own worker, and a stacked PR its own number', async () => {
+    const { w, sent, advance } = harness()
+    w.add('plt-1 report BLOCKED')
+    w.add('plt-2 report BLOCKED')
+    w.add('stack o/r#7: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING')
+    await advance(3000)
+    w.settle('plt-1 state blocked->working')
+    w.settle('stack o/r#7: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE')
+    w.add('plt-1 report BLOCKED')
+    w.add('plt-2 report BLOCKED')
+    w.add('stack o/r#7: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING')
+    await advance(3000)
+    expect(sent[1]).toBe(p('plt-1 report BLOCKED', 'stack #7: OPEN CONFLICTING'))
+  })
+
+  test('a held line is told once in the window, keyed by its own text', async () => {
+    const { w, sent, advance } = harness()
+    w.add('something new happened to plt-1')
+    await advance(3000)
+    w.add('something new happened to plt-1')
+    await advance(3000)
+    expect(sent.length).toBe(1)
+    w.add('something else happened')
+    await advance(3000)
+    expect(sent.length).toBe(2)
+  })
+
+  test('worker names start with a letter, as paths.NAME_RE', () => {
+    expect(allowLine('1abc report DONE')).toBeUndefined()
+    expect(allowLine('abc1 report DONE')).toBe('abc1 report DONE')
+  })
+
+  test('report fields lose controls, bidi and zero-width characters before they are drawn', () => {
+    const v = reportView({
+      status: 'DONE​',
+      pr: 'https://github.com/o/r/pull/7‮',
+      head: 'abc\u0007def0',
+      verify: 'make test\u001b[31m -> pass\u0085',
+      decisions: ['kept⁦ it⁩'],
+      concerns: ['﻿none‏'],
+    })
+    expect(v).toEqual({
+      status: { text: 'Done', color: 'success' },
+      pr: { href: 'https://github.com/o/r/pull/7', label: '#7' },
+      head: 'abcdef0',
+      verify: 'make test[31m -> pass',
+      decisions: ['kept it'],
+      concerns: ['none'],
+    })
+    expect(clean('a\u0000b\u009fc‪d')).toBe('abcd')
   })
 })

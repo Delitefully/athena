@@ -139,6 +139,7 @@ async function watch($: EngineInterface): Promise<void> {
         for (const r of read.records) {
           if ('status' in r) show({ board: readBoard(r.board), note: readBoard(r.board) ? undefined : r.status }, $)
           else if (r.wake) w.add(r.line)
+          else w.settle(r.line)
         }
       }
     } catch (err) {
@@ -178,7 +179,7 @@ export const register: Register = on => {
       $.ui.invalidate('ui.render')
     }
     return next(e)
-  })
+  }).catch(($, e, next) => next(e)) // never in the way of a prompt
 
   on('turn.start', async ($, e, next) => {
     waker?.turnStarted()

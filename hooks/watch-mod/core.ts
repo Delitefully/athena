@@ -75,7 +75,7 @@ export function clockText(ms: number, offsetMinutes: number): string {
 
 // The words a wake may carry. HQ reads a wake as the person's own words (it is submitted asUser), so no text a
 // worker, GitHub or a PR controls may reach it: every line is rebuilt from these, and anything else is held back.
-const NAME = '[a-z0-9][a-z0-9_-]{0,31}'
+const NAME = '[a-z][a-z0-9_-]{0,31}' // as paths.NAME_RE
 const STATE = '(?:working|idle|done|blocked|exited|starting|unknown)'
 const REPORT = '(?:DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)'
 const CHECK = '(?:none|pending|success|failure)'
@@ -153,6 +153,8 @@ export type WakerOptions = {
  */
 export class Waker {
   private pending: string[] = []
+  /** What each pending line is remembered by: the line, or a held line's own raw text. */
+  private keys: string[] = []
   private timer: Timer | undefined
   private isBusy = false
   private isSending = false
@@ -167,11 +169,29 @@ export class Waker {
   }
 
   add(raw: string): void {
-    const line = allowLine(raw) ?? HELD
-    const last = line === HELD ? undefined : this.told.get(line)
+    const safe = allowLine(raw)
+    const line = safe ?? HELD
+    // A held line is remembered by its raw text (kept here, never sent), so one unknown line is told once too.
+    const key = safe ?? `held:${raw.slice(0, 500)}`
+    const last = this.told.get(key)
     if (last !== undefined && this.opts.now() - last < this.repeatMs) return
+    if (!this.keys.includes(key)) this.keys.push(key)
     if (!this.pending.includes(line)) this.pending.push(line)
     this.schedule()
+  }
+
+  /**
+   * A routine line: the worker (or stacked PR) it names moved on, so what was told about it may be told again. A
+   * check that fails, goes pending after a fix and fails again wakes HQ twice; a replay with no change between, once.
+   */
+  settle(raw: string): void {
+    const name = new RegExp(`^(${NAME}) `).exec(raw)?.[1]
+    const pr = /^stack [\w.-]+\/[\w.-]+#(\d{1,7}):/.exec(raw)?.[1]
+    const prefix = name ? `${name} ` : pr ? `stack #${pr}:` : undefined
+    if (!prefix) return
+    const before = this.told.size
+    for (const key of [...this.told.keys()]) if (key.startsWith(prefix)) this.told.delete(key)
+    if (this.told.size !== before) this.opts.remember?.(Object.fromEntries(this.told))
   }
 
   turnStarted(): void {
@@ -195,13 +215,12 @@ export class Waker {
     })
   }
 
-  private mark(lines: readonly string[], at: number | undefined): void {
+  private mark(keys: readonly string[], at: number | undefined): void {
     const now = this.opts.now()
-    for (const [line, when] of this.told) if (now - when >= this.repeatMs) this.told.delete(line)
-    for (const line of lines) {
-      if (line === HELD) continue
-      if (at === undefined) this.told.delete(line)
-      else this.told.set(line, at)
+    for (const [key, when] of this.told) if (now - when >= this.repeatMs) this.told.delete(key)
+    for (const key of keys) {
+      if (at === undefined) this.told.delete(key)
+      else this.told.set(key, at)
     }
     this.opts.remember?.(Object.fromEntries(this.told))
   }
@@ -209,15 +228,18 @@ export class Waker {
   private flush(): void {
     if (this.isBusy || this.isSending || !this.pending.length) return
     const lines = this.pending
+    const keys = this.keys
     this.pending = []
+    this.keys = []
     this.isSending = true
     // Told from the moment it is sent: a repeat arriving while the submit waits for its turn is dropped too.
-    this.mark(lines, this.opts.now())
+    this.mark(keys, this.opts.now())
     this.opts
       .submit(promptText(lines, this.opts.stamp?.()))
       .catch(() => {
-        this.mark(lines, undefined)
+        this.mark(keys, undefined)
         this.pending = [...lines, ...this.pending.filter(l => !lines.includes(l))]
+        this.keys = [...keys, ...this.keys.filter(k => !keys.includes(k))]
       })
       .finally(() => {
         this.isSending = false
@@ -383,8 +405,24 @@ export type ReportView = {
   concerns: string[]
 }
 
+/** C0 and C1 controls, and the bidi and zero-width characters that can make a line say one thing and show another. */
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
+
+/** A report field as it may be drawn: controls, bidi and zero-width characters removed. */
+export function clean(text: string): string {
+  return text.replace(UNSAFE, '')
+}
+
 /** What the completion block shows: the status in its word and colour, the PR as `#n` with its head, the rest. */
-export function reportView(r: Report): ReportView {
+export function reportView(raw: Report): ReportView {
+  const r: Report = {
+    status: clean(raw.status),
+    pr: raw.pr === undefined ? undefined : clean(raw.pr),
+    head: raw.head === undefined ? undefined : clean(raw.head),
+    verify: raw.verify === undefined ? undefined : clean(raw.verify),
+    decisions: raw.decisions.map(clean),
+    concerns: raw.concerns.map(clean),
+  }
   const look = LOOKS[r.status.toUpperCase()] ?? { text: r.status, color: undefined }
   const m = /^https?:\/\/\S+\/pull\/(\d+)\/?$/.exec(r.pr ?? '')
   return {
