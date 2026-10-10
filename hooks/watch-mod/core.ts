@@ -309,7 +309,8 @@ export function boardHref(b: Board | undefined): (n: string) => string | undefin
 
 /** A wake event's parts: a PR it names links by the worker the event is about, else by the board's links. */
 export function eventParts(event: string, b: Board | undefined): Part[] {
-  const worker = /^([a-z][a-z0-9_-]{0,31}) /.exec(event)?.[1]
+  // `stack #n:` and `watch error` lines name no worker, whatever workers are called.
+  const worker = /^(?!stack #|watch error)([a-z][a-z0-9_-]{0,31}) /.exec(event)?.[1]
   const repo = worker ? b?.repos?.[worker] : undefined
   return linkParts(event, n => prUrl(repo ?? b?.links?.[n], n))
 }
@@ -324,7 +325,7 @@ const LINKING = ['ghostty', 'Hyper', 'kitty', 'alacritty', 'iTerm.app', 'iTerm2'
  */
 export function hyperlinks(env: Readonly<Record<string, string | undefined>>): boolean {
   const force = env.FORCE_HYPERLINK
-  if (force !== undefined) return !(force.length > 0 && parseInt(force, 10) === 0)
+  if (force) return parseInt(force, 10) !== 0 // empty counts as unset, as in the engine
   const program = env.TERM_PROGRAM
   if (program && LINKING.includes(program)) return true
   if (env.LC_TERMINAL && LINKING.includes(env.LC_TERMINAL)) return true
@@ -406,11 +407,13 @@ export function fitStatus(b: Board, columns: number): Segment[] {
     const rest = [...active.map(text => ({ text, tone: 'active' as const })), ...done.map(text => ({ text, tone: 'done' as const }))]
     return urgent.length ? [...urgent, ...dash, ...rest] : [...rest, ...dash]
   }
+  const width = (s: Segment[]) => s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1)
   for (const level of levels) {
     const s = segments(level)
-    if (s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1) <= columns) return s
+    if (width(s) <= columns) return s
   }
-  return segments(levels[levels.length - 1]!)
+  // Still too wide: the dash link gives way before the workers' state is cut.
+  return segments(levels[levels.length - 1]!).filter(s => s.tone !== 'dash')
 }
 
 /** Reads a `board` record, or undefined when it is not one. */

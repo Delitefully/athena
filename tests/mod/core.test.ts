@@ -542,6 +542,9 @@ describe('links', () => {
     expect(eventParts('stack #5856: OPEN MERGEABLE', b)[1]).toEqual({ text: '#5856', href: 'https://github.com/o/stack/pull/5856' })
     expect(eventParts('ghost pr opened #9', b)).toEqual([{ text: 'ghost pr opened ' }, { text: '#9' }])
     expect(eventParts('band-links pr opened #12', undefined)).toEqual([{ text: 'band-links pr opened ' }, { text: '#12' }])
+    // A worker named `stack` does not take over a stacked PR's line.
+    const named = { ...b, repos: { ...b.repos, stack: 'o/worker' } }
+    expect(eventParts('stack #5856: MERGED', named)[1]).toEqual({ text: '#5856', href: 'https://github.com/o/stack/pull/5856' })
   })
 
   test('the dash link sits right after what needs the human, or at the end, and only while the dash runs', () => {
@@ -558,7 +561,14 @@ describe('links', () => {
     expect(segs({ ...base, needs: [], prs: [], dash })).toEqual(['active:w working', 'done:✓ d done', `dash:open dash →@${dash}`])
     expect(segs({ needs: [], prs: [], active: [], done: [], dash })).toEqual(['active:no live workers', `dash:open dash →@${dash}`])
     expect(segs(base)).not.toContain(`dash:open dash →@${dash}`)
-    expect(segs({ ...base, dash }, 30)).toContain(`dash:open dash →@${dash}`)
+    expect(segs({ ...base, dash }, 63)).toContain(`dash:open dash →@${dash}`)
+  })
+
+  test("at HQ's width the dash link gives way before the workers' state does", () => {
+    const b: Board = { needs: ['a blocked'], prs: ['#1', '#2', '#3'], active: [['working', ['w']]], done: ['d', 'e'], dash: 'http://127.0.0.1:2843/' }
+    // 70 columns less `∞ athena `: the tightest fold with the link is 63 wide.
+    expect(fitStatus(b, 61).map(s => s.text)).toEqual(['1 blocked', '3 PRs need you', '1 working', '✓ 2 done'])
+    expect(fitStatus(b, 63).map(s => s.text)).toEqual(['a blocked', '3 PRs need you', 'open dash →', '1 working', '✓ 2 done'])
   })
 
   test('a board reads its links, repos and dash, and an older board without them still reads', () => {
@@ -583,7 +593,7 @@ describe('hyperlinks', () => {
   test('as Claude Code decides: FORCE_HYPERLINK first, then the terminals it knows', () => {
     expect(hyperlinks({ TERM_PROGRAM: 'herdr', TERM: 'xterm-256color' })).toBe(false)
     expect(hyperlinks({ TERM_PROGRAM: 'herdr', FORCE_HYPERLINK: '1' })).toBe(true)
-    expect(hyperlinks({ TERM_PROGRAM: 'herdr', FORCE_HYPERLINK: '' })).toBe(true)
+    expect(hyperlinks({ TERM_PROGRAM: 'herdr', FORCE_HYPERLINK: '' })).toBe(false) // empty: as unset, like the engine
     expect(hyperlinks({ TERM_PROGRAM: 'ghostty', FORCE_HYPERLINK: '0' })).toBe(false)
     for (const t of ['ghostty', 'iTerm.app', 'WezTerm', 'vscode', 'kitty', 'WarpTerminal']) expect(hyperlinks({ TERM_PROGRAM: t })).toBe(true)
     expect(hyperlinks({ LC_TERMINAL: 'iTerm2' })).toBe(true)
