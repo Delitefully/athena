@@ -11,6 +11,37 @@ from tests.gitrepo import git, make_repo
 from tests.test_herdr import logged_calls, write_scenario
 from athena_lib import ledger, retire
 
+# Screens as `herdr agent read --source visible` showed them in the lab (Claude Code 2.1.296).
+DIALOG = """⏺ ok
+✻ Cooked for 3s · done 6:38 PM · 1 shell still running
+❯ /exit
+────────────────────────────────────────
+  Background work is running
+  The following will stop when you exit:
+  shell · sleep 600
+  ❯ 1. Exit and stop tasks
+    2. Move to background and exit
+    3. Stay
+  Enter to confirm · Esc to cancel
+"""
+MENU = """❯ /exit
+────────────────────────────────────────
+  ❯ /exit                                                Exit the CLI
+    /context                                             Visualize current context usage as a colored grid
+"""
+PERMISSION = """❯ /exit
+────────────────────────────────────────
+ Bash command
+   rm -rf build
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No, and tell Claude what to do differently (esc)
+"""
+EXITED = DIALOG + """Resume this session with:
+claude --resume 3e29d369-c9ad-4aad-b983-7c6e4ec01c63
+gabriel-mbp-dev:.athena-lab-sandbox gabriel$
+"""
+
 
 class RetireTest(unittest.TestCase):
     def setUp(self):
@@ -113,7 +144,7 @@ class RetireTest(unittest.TestCase):
 
     def test_retire_sends_enter_when_exit_sits_in_the_menu(self):
         # /exit typed but not submitted: the agent is still there after the prompt, gone after one more Enter.
-        write_scenario(self.tmp.name, self.gone_after(2))
+        write_scenario(self.tmp.name, [{"match": ["agent", "read", "plt-1"], "stdout": MENU}] + self.gone_after(2))
         retire.retire("plt-1")
         calls = logged_calls(self.tmp.name)
         self.assertIn(["agent", "send-keys", "plt-1", "enter"], calls)
@@ -152,6 +183,60 @@ class RetireTest(unittest.TestCase):
     def test_retire_unknown(self):
         with self.assertRaises(retire.RetireError):
             retire.retire("nope")
+
+
+GONE = {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}',
+        "exit": 1}
+
+
+class ExitTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        self.owned = {"match": ["agent", "get", "w"], "stdout": {"result": {"agent": {"name": "w"}}}}
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def presses(self):
+        return [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "send-keys"]]
+
+    def test_the_background_work_dialog_is_confirmed_with_one_enter(self):
+        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, self.owned,
+                                       {"match": ["agent", "read", "w"], "stdout": DIALOG}])
+        self.assertTrue(retire.exit_claude("w", 5))
+        self.assertEqual(self.presses(), [["agent", "send-keys", "w", "enter"]])
+        calls = logged_calls(self.tmp.name)
+        self.assertLess(calls.index(["agent", "prompt", "w", "/exit"]), calls.index(self.presses()[0]))
+
+    def test_any_other_dialog_gets_no_key(self):
+        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read", "w"], "stdout": PERMISSION}])
+        self.assertFalse(retire.exit_claude("w", 0.3))
+        self.assertEqual(self.presses(), [])
+
+    def test_an_unreadable_screen_gets_no_key(self):
+        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read"], "stdout": "", "exit": 1}])
+        self.assertFalse(retire.exit_claude("w", 0.3))
+        self.assertEqual(self.presses(), [])
+
+    def test_a_claude_on_its_way_out_gets_no_more_keys(self):
+        # The dialog stays in the scrollback after Claude exits; herdr notices a moment later.
+        write_scenario(self.tmp.name, [{**self.owned, "times": 3}, GONE,
+                                       {"match": ["agent", "read", "w"], "stdout": EXITED}])
+        self.assertTrue(retire.exit_claude("w", 5))
+        self.assertEqual(self.presses(), [])
+
+    def test_exit_screen_reads_the_bottom_of_the_screen(self):
+        self.assertEqual(retire.exit_screen(DIALOG), "confirm")
+        self.assertEqual(retire.exit_screen(MENU), "submit")
+        self.assertEqual(retire.exit_screen(EXITED), "exited")
+        self.assertIsNone(retire.exit_screen(PERMISSION))
+        self.assertIsNone(retire.exit_screen(""))
+        # An earlier exit's lines above a new Claude's dialog are history, not the current state.
+        self.assertEqual(retire.exit_screen("Resume this session with:\nclaude --resume x\n$ claude\n" + DIALOG), "confirm")
+        # "Move to background and exit" selected is not the choice athena makes.
+        self.assertIsNone(retire.exit_screen(DIALOG.replace("  ❯ 1.", "    1.").replace("    2. Move", "  ❯ 2. Move")))
 
 
 class CliTest(unittest.TestCase):
