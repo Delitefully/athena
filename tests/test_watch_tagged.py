@@ -79,23 +79,61 @@ def _w(state, pr=None, report=None):
 
 
 class SummaryTest(unittest.TestCase):
-    def test_last_state_per_worker_most_urgent_first(self):
-        snap = {"workers": {"pr6519": _w("working"), "plt-4041": _w("done"), "plt-9": _w("blocked")}}
-        self.assertEqual(watch.summary(snap), "plt-9 blocked · plt-4041 done · pr6519 working")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_grouped_needs_you_then_working_then_done(self):
+        snap = {"workers": {"pr6519": _w("working"), "plt-4041": _w("done"), "plt-9": _w("blocked"),
+                            "plt-4042": _w("idle", report={"status": "DONE"}), "plt-7": _w("idle"),
+                            "plt-8": _w("working", report=None), "plt-6": _w("idle", report={"status": "NEEDS_CONTEXT"}),
+                            "plt-5": _w("exited")}}
+        b = watch.board(snap)
+        self.assertEqual(b["needs"], ["plt-6 needs context", "plt-9 blocked", "plt-5 exited"])
+        self.assertEqual(b["active"], [["working", ["plt-8", "pr6519"]], ["idle", ["plt-7"]]])
+        self.assertEqual(b["done"], ["plt-4041", "plt-4042"])
+        self.assertEqual(watch.summary(snap), "plt-6 needs context · plt-9 blocked · plt-5 exited · "
+                                              "plt-8, pr6519 working · plt-7 idle · plt-4041, plt-4042 done")
+
+    def test_a_blocked_report_is_blocked_whatever_the_hook_state(self):
+        b = watch.board({"workers": {"a": _w("idle", report={"status": "BLOCKED"})}})
+        self.assertEqual(b["needs"], ["a blocked"])
 
     def test_prs_that_need_the_human(self):
-        approved = {"state": "OPEN", "draft": True, "review": "APPROVED"}
-        ready = {"state": "OPEN", "draft": False, "review": ""}
-        draft = {"state": "OPEN", "draft": True, "review": ""}
-        snap = {"workers": {"a": _w("working", approved), "b": _w("done", ready), "c": _w("idle", ready),
-                            "d": _w("done", draft), "e": _w("working", ready)}}
-        self.assertTrue(watch.summary(snap).endswith(" · 3 PRs need you"))
-        one = {"workers": {"a": _w("working", approved)}}
-        self.assertTrue(watch.summary(one).endswith(" · 1 PR needs you"))
+        def pr(n, **kw):
+            return {"state": "OPEN", "draft": False, "review": "", "url": f"https://github.com/o/r/pull/{n}", **kw}
+        snap = {"workers": {"a": _w("working", pr(1, draft=True, review="APPROVED")), "b": _w("done", pr(2)),
+                            "c": _w("idle", pr(3)), "d": _w("done", pr(4, draft=True)), "e": _w("working", pr(5)),
+                            "f": _w("idle", pr(6, state="MERGED"))}}
+        self.assertEqual(watch.board(snap)["prs"], ["#1", "#2", "#3"])
+        self.assertEqual(watch.summary(snap), "3 PRs need you · a, e working · c, f idle · b, d done")
+        one = {"workers": {"a": _w("working", pr(1, review="APPROVED"))}}
+        self.assertEqual(watch.summary(one), "1 PR needs you · a working")
 
-    def test_conflicting_stack_needs_the_human(self):
-        snap = {"workers": {}, "stacks": {"o/r#1": "OPEN base=a CONFLICTING", "o/r#2": "OPEN base=a MERGEABLE"}}
-        self.assertEqual(watch.summary(snap), "no live workers · 1 PR needs you")
+    def test_stack_prs_awaiting_the_human(self):
+        # The bottom of a chain (based on main, not a draft) awaits a review or merge; a conflicting one too.
+        snap = {"workers": {}, "stacks": {"o/r#1": "OPEN base=b CONFLICTING", "o/r#2": "OPEN base=b MERGEABLE",
+                                          "o/r#3": "OPEN base=main MERGEABLE", "o/r#4": "OPEN base=main DRAFT MERGEABLE",
+                                          "o/r#5": "MERGED base=main UNKNOWN"}}
+        self.assertEqual(watch.board(snap)["prs"], ["#1", "#3"])
+        self.assertEqual(watch.summary(snap), "2 PRs need you · no live workers")
+
+    def test_prs_named_in_needs_you_and_one_pr_counted_once(self):
+        paths.ensure()
+        (paths.state_dir() / "needs-you.md").write_text(
+            "- Approve and merge platform #6547: https://github.com/o/platform/pull/6547\n"
+            "- Approve and merge #6552: https://github.com/o/platform/pull/6552.\n"
+            "- File a ticket? nothing to merge\n")
+        snap = {"workers": {"plt-4041": _w("idle", {"state": "OPEN", "draft": False, "review": "",
+                                                    "url": "https://github.com/o/platform/pull/6552"},
+                                           report={"status": "DONE"})},
+                "stacks": {"o/platform#5856": "OPEN base=main MERGEABLE", "o/platform#6552": "OPEN base=main MERGEABLE"}}
+        self.assertEqual(watch.board(snap)["prs"], ["#5856", "#6547", "#6552"])
+        self.assertEqual(watch.summary(snap), "3 PRs need you · plt-4041 done")
 
 
 class StackTest(unittest.TestCase):
@@ -135,10 +173,14 @@ class StackTest(unittest.TestCase):
     def test_stack_snapshot_reads_gh_and_skips_unknown(self):
         watch.set_stack("o/platform", [1, 2, 3])
         answers = {"1": {"state": "OPEN", "baseRefName": "main", "mergeable": "MERGEABLE"},
-                   "2": {"state": "OPEN", "baseRefName": "b1", "mergeable": "UNKNOWN"}}
+                   "2": {"state": "OPEN", "baseRefName": "b1", "mergeable": "UNKNOWN"},
+                   "3": {"state": "OPEN", "baseRefName": "main", "mergeable": "CONFLICTING", "isDraft": True}}
         with self._gh(answers) as run:
             snap = watch.stack_snapshot({"o/platform#2": "OPEN base=b1 MERGEABLE"})
-        self.assertEqual(snap, {"o/platform#1": "OPEN base=main MERGEABLE", "o/platform#2": "OPEN base=b1 MERGEABLE"})
+        self.assertEqual(snap, {"o/platform#1": "OPEN base=main MERGEABLE", "o/platform#2": "OPEN base=b1 MERGEABLE",
+                                "o/platform#3": "OPEN base=main DRAFT CONFLICTING"})
+        self.assertEqual(watch.classify("stack o/platform#3: OPEN base=main DRAFT MERGEABLE -> OPEN base=main DRAFT CONFLICTING"),
+                         "wake")
         self.assertEqual(run.call_args_list[0].args[0][:6], ["gh", "pr", "view", "1", "--repo", "o/platform"])
 
     def test_stack_lines_in_diff(self):
@@ -182,13 +224,14 @@ class TaggedTest(unittest.TestCase):
     def test_tagged_lines_and_status_once_per_change(self):
         snap = {"workers": {"a": _w("working")}}
         rows, last = self._emit(["watching: a=working"], snap, tagged=True)
-        self.assertEqual(rows, [{"line": "watching: a=working", "wake": False}, {"status": "a working"}])
+        board = {"needs": [], "prs": [], "active": [["working", ["a"]]], "done": []}
+        self.assertEqual(rows, [{"line": "watching: a=working", "wake": False}, {"status": "a working", "board": board}])
         rows, last = self._emit([], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [])
         snap = {"workers": {"a": _w("done", report={"status": "DONE"})}}
         rows, _ = self._emit(["a state working->done", "a report DONE"], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [{"line": "a state working->done", "wake": False}, {"line": "a report DONE", "wake": True},
-                                {"status": "a done"}])
+                                {"status": "a done", "board": {"needs": [], "prs": [], "active": [], "done": ["a"]}}])
 
     def test_tagged_gone_after_retire_stays_quiet(self):
         ledger.append("spawn", "a")

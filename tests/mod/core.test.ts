@@ -1,16 +1,33 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { isMonitorNotice, MAX_LINES, promptText, readRecords, restartDelay, Waker } from '../../hooks/watch-mod/core'
+import {
+  fitStatus,
+  isMonitorNotice,
+  MAX_LINES,
+  parseWake,
+  promptText,
+  readRecords,
+  restartDelay,
+  Waker,
+} from '../../hooks/watch-mod/core'
+import type { Board } from '../../hooks/watch-mod/core'
+
+/** The prompt for a batch stamped 22:19, one event per line. */
+const p = (...lines: string[]) => `athena watch 22:19:\n${lines.join('\n')}`
 
 /** A hand-moved clock for the Waker: timers fire only when the test advances it. */
-function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {
+function harness(opts: { batchMs?: number; submitResolves?: boolean | 'reject-once'; sent?: Record<string, number> } = {}) {
   let now = 0
   let timers: { at: number; fn: () => void; isCancelled: boolean }[] = []
   const sent: string[] = []
   const pendingSubmits: (() => void)[] = []
+  const remembered: Record<string, number>[] = []
   const w = new Waker({
     batchMs: opts.batchMs ?? 3000,
     now: () => now,
+    stamp: () => '22:19',
+    sent: opts.sent,
+    remember: told => remembered.push(told),
     after: (ms, fn) => {
       const t = { at: now + ms, fn, isCancelled: false }
       timers.push(t)
@@ -19,6 +36,7 @@ function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {
     submit: text => {
       sent.push(text)
       if (opts.submitResolves === false) return new Promise<void>(resolve => pendingSubmits.push(resolve))
+      if (opts.submitResolves === 'reject-once' && sent.length === 1) return Promise.reject(new Error('refused'))
       return Promise.resolve()
     },
   })
@@ -34,7 +52,7 @@ function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {
     }
     for (let i = 0; i < 5; i++) await Promise.resolve()
   }
-  return { w, sent, advance, pendingSubmits }
+  return { w, sent, advance, pendingSubmits, remembered, at: () => now }
 }
 
 describe('readRecords', () => {
@@ -54,16 +72,46 @@ describe('readRecords', () => {
 })
 
 describe('promptText', () => {
-  test('one terse line', () => {
-    expect(promptText(['plt-4041 report DONE'])).toBe('athena watch: plt-4041 report DONE')
-    expect(promptText(['plt-4041 report DONE', 'pr6519 checks pending->failure'])).toBe(
-      'athena watch: plt-4041 report DONE · pr6519 checks pending->failure',
+  test('a stamped header, then one event per line', () => {
+    expect(promptText(['plt-4041 report DONE'], '22:19')).toBe(p('plt-4041 report DONE'))
+    expect(promptText(['plt-4041 report DONE', 'pr6519 checks pending->failure'], '22:19')).toBe(
+      'athena watch 22:19:\nplt-4041 report DONE\npr6519 checks pending->failure',
     )
+    expect(promptText(['a report DONE'])).toBe('athena watch:\na report DONE')
   })
 
   test('caps a burst', () => {
     const lines = Array.from({ length: MAX_LINES + 3 }, (_, i) => `w${i} report DONE`)
-    expect(promptText(lines).endsWith(' · +3 more (athena status)')).toBe(true)
+    expect(promptText(lines, '22:19').endsWith('\n+3 more (athena status)')).toBe(true)
+  })
+})
+
+describe('parseWake', () => {
+  test('reads back the stamp and the events', () => {
+    expect(parseWake(p('a state working->blocked', 'a report BLOCKED'))).toEqual({
+      time: '22:19',
+      events: ['a state working->blocked', 'a report BLOCKED'],
+    })
+  })
+
+  test('drops the engine frame around a plugin prompt', () => {
+    const framed =
+      'The athena plugin sent a message:\n' +
+      p('a report DONE') +
+      "\n\nThis is how Claude Code surfaces a prompt a plugin submits between turns — it starts this turn in the user's place. Address the message above."
+    expect(parseWake(framed)).toEqual({ time: '22:19', events: ['a report DONE'] })
+  })
+
+  test('reads the one-line prompts sent before the stamp', () => {
+    expect(parseWake('athena watch: a report DONE · b checks pending->failure')).toEqual({
+      time: undefined,
+      events: ['a report DONE', 'b checks pending->failure'],
+    })
+  })
+
+  test('anything else is not a wake', () => {
+    expect(parseWake('athena: what is plt-4041 doing?')).toBeUndefined()
+    expect(parseWake('athena watch 22:19:')).toBeUndefined()
   })
 })
 
@@ -75,7 +123,7 @@ describe('Waker', () => {
     w.add('pr6519 checks pending->failure')
     expect(sent).toEqual([])
     await advance(2000)
-    expect(sent).toEqual(['athena watch: plt-4041 report DONE · pr6519 checks pending->failure'])
+    expect(sent).toEqual([p('plt-4041 report DONE', 'pr6519 checks pending->failure')])
     await advance(10000)
     expect(sent.length).toBe(1)
   })
@@ -90,7 +138,7 @@ describe('Waker', () => {
     expect(sent).toEqual([])
     w.turnEnded()
     await advance(3000)
-    expect(sent).toEqual(['athena watch: a report DONE · b review APPROVED'])
+    expect(sent).toEqual([p('a report DONE', 'b review APPROVED')])
   })
 
   test('holds new lines until the previous prompt has started its turn', async () => {
@@ -103,7 +151,7 @@ describe('Waker', () => {
     pendingSubmits[0]!()
     await advance(0)
     await advance(3000)
-    expect(sent).toEqual(['athena watch: a report DONE', 'athena watch: b report BLOCKED'])
+    expect(sent).toEqual([p('a report DONE'), p('b report BLOCKED')])
   })
 
   test('the same watch error is told once in ten minutes', async () => {
@@ -119,12 +167,105 @@ describe('Waker', () => {
     expect(sent.length).toBe(2)
   })
 
+  test('the same event within ten minutes wakes HQ once', async () => {
+    // pr6519-design was re-prompted, ran, and ended BLOCKED again: athena watch said the same two lines 3.5 min apart.
+    const { w, sent, advance } = harness()
+    w.add('pr6519-design state working->blocked')
+    w.add('pr6519-design report BLOCKED')
+    await advance(3000)
+    await advance(3.5 * 60 * 1000)
+    w.add('pr6519-design state working->blocked')
+    w.add('pr6519-design report BLOCKED')
+    await advance(3000)
+    expect(sent).toEqual([p('pr6519-design state working->blocked', 'pr6519-design report BLOCKED')])
+    await advance(10 * 60 * 1000)
+    w.add('pr6519-design report BLOCKED')
+    await advance(3000)
+    expect(sent.length).toBe(2)
+  })
+
+  test('a repeat is dropped alone: a new event in its batch still goes out', async () => {
+    const { w, sent, advance } = harness()
+    w.add('a report BLOCKED')
+    await advance(3000)
+    w.add('a report BLOCKED')
+    w.add('b report DONE')
+    await advance(3000)
+    expect(sent).toEqual([p('a report BLOCKED'), p('b report DONE')])
+  })
+
+  test('what was told is remembered, so a reload or HQ restart does not tell it again', async () => {
+    const first = harness()
+    first.w.add('a report BLOCKED')
+    await first.advance(3000)
+    const told = first.remembered.at(-1)!
+    expect(told).toEqual({ 'a report BLOCKED': 3000 })
+    const second = harness({ sent: told })
+    await second.advance(60 * 1000)
+    second.w.add('a report BLOCKED')
+    await second.advance(3000)
+    expect(second.sent).toEqual([])
+  })
+
+  test('old entries are pruned from what is remembered', async () => {
+    const { w, advance, remembered } = harness({ sent: { 'old report DONE': -11 * 60 * 1000 } })
+    w.add('a report DONE')
+    await advance(3000)
+    expect(remembered.at(-1)).toEqual({ 'a report DONE': 3000 })
+  })
+
+  test('a refused submit is tried again, not dropped as a repeat', async () => {
+    const { w, sent, advance } = harness({ submitResolves: 'reject-once' })
+    w.add('a report DONE')
+    await advance(3000)
+    await advance(3000)
+    expect(sent).toEqual([p('a report DONE'), p('a report DONE')])
+  })
+
   test('a duplicate line in one batch is told once', async () => {
     const { w, sent, advance } = harness()
     w.add('a report DONE')
     w.add('a report DONE')
     await advance(3000)
-    expect(sent).toEqual(['athena watch: a report DONE'])
+    expect(sent).toEqual([p('a report DONE')])
+  })
+})
+
+describe('fitStatus', () => {
+  const board: Board = {
+    needs: ['pr6519-design blocked'],
+    prs: ['#5856', '#6547', '#6552'],
+    active: [['working', ['wake-ui', 'plt-7']]],
+    done: ['plt-4041', 'plt-4042'],
+  }
+  const texts = (columns: number) => fitStatus(board, columns).map(s => `${s.tone}:${s.text}`)
+
+  test('needs you first, then the active workers, then the done ones, in full when they fit', () => {
+    expect(texts(200)).toEqual([
+      'needs:pr6519-design blocked',
+      'needs:#5856 #6547 #6552 need you',
+      'active:wake-ui, plt-7 working',
+      'done:✓ plt-4041, plt-4042 done',
+    ])
+  })
+
+  test('narrower, the done ones fold to a count first, then the active ones, then the PRs, then needs you', () => {
+    expect(texts(90)).toEqual([
+      'needs:pr6519-design blocked',
+      'needs:#5856 #6547 #6552 need you',
+      'active:wake-ui, plt-7 working',
+      'done:✓ 2 done',
+    ])
+    expect(texts(75)).toEqual(['needs:pr6519-design blocked', 'needs:#5856 #6547 #6552 need you', 'active:2 working', 'done:✓ 2 done'])
+    expect(texts(65)).toEqual(['needs:pr6519-design blocked', 'needs:3 PRs need you', 'active:2 working', 'done:✓ 2 done'])
+    expect(texts(20)).toEqual(['needs:1 blocked', 'needs:3 PRs need you', 'active:2 working', 'done:✓ 2 done'])
+  })
+
+  test('one PR, several kinds of need, and nothing at all', () => {
+    const one: Board = { needs: ['a blocked', 'b needs context', 'c blocked'], prs: ['#7'], active: [], done: [] }
+    expect(fitStatus(one, 200).map(s => s.text)).toEqual(['a blocked', 'b needs context', 'c blocked', '#7 needs you'])
+    expect(fitStatus(one, 10).map(s => s.text)).toEqual(['2 blocked', '1 needs context', '1 PR needs you'])
+    expect(fitStatus({ needs: [], prs: [], active: [], done: [] }, 80)).toEqual([{ text: 'no live workers', tone: 'active' }])
   })
 })
 

@@ -1,7 +1,7 @@
 // The athena-watch mod's logic, free of the engine so it is tested on its own: reading `athena watch --tagged`
 // output, and turning its actionable lines into as few HQ prompts as possible.
 
-export type WatchRecord = { line: string; wake: boolean } | { status: string }
+export type WatchRecord = { line: string; wake: boolean } | { status: string; board?: unknown }
 
 /** Splits what the child wrote into whole lines; a line that is not a record of ours is an actionable line as is. */
 export function readRecords(rest: string, text: string): { records: WatchRecord[]; rest: string } {
@@ -21,7 +21,7 @@ function parseRecord(line: string): WatchRecord {
     const value: unknown = JSON.parse(line)
     if (value && typeof value === 'object') {
       const v = value as Record<string, unknown>
-      if (typeof v.status === 'string') return { status: v.status }
+      if (typeof v.status === 'string') return { status: v.status, board: v.board }
       if (typeof v.line === 'string') return { line: v.line, wake: v.wake === true }
     }
   } catch {
@@ -33,11 +33,44 @@ function parseRecord(line: string): WatchRecord {
 export const MAX_LINES = 8
 const MAX_LINE = 200
 
-/** One short prompt for a batch: `athena watch: plt-4041 report DONE · pr6519 checks pending->failure`. */
-export function promptText(lines: readonly string[]): string {
+/**
+ * One prompt for a batch: a stamped header, then one event per line. The model reads it as is; the HQ transcript
+ * draws it as athena's own row (parseWake reads it back).
+ *
+ *     athena watch 22:19:
+ *     plt-4041 report DONE
+ *     pr6519 checks pending->failure
+ */
+export function promptText(lines: readonly string[], at?: string): string {
   const shown = lines.slice(0, MAX_LINES).map(l => (l.length > MAX_LINE ? l.slice(0, MAX_LINE - 1) + '…' : l))
   const more = lines.length - shown.length
-  return `athena watch: ${shown.join(' · ')}${more > 0 ? ` · +${more} more (athena status)` : ''}`
+  if (more > 0) shown.push(`+${more} more (athena status)`)
+  return `athena watch${at ? ` ${at}` : ''}:\n${shown.join('\n')}`
+}
+
+const HEADER = /^athena watch(?: (\d{1,2}:\d{2}))?:\s*(.*)$/
+const FRAME = /^(The \S+ plugin sent a message|This is how Claude Code surfaces)/
+
+/** A wake prompt read back from a transcript row: its stamp and events. Tolerates the engine's frame around it and
+ *  the one-line `athena watch: a · b` prompts sent before the stamp. Undefined for anything else. */
+export function parseWake(text: string): { time: string | undefined; events: string[] } | undefined {
+  const lines = text.split('\n')
+  const at = lines.findIndex(l => HEADER.test(l.trim()))
+  if (at < 0) return undefined
+  const [, time, rest] = HEADER.exec(lines[at]!.trim())!
+  const events = rest ? rest.split(' · ') : []
+  for (const raw of lines.slice(at + 1)) {
+    const line = raw.trim()
+    if (FRAME.test(line)) break
+    if (line) events.push(line)
+  }
+  return events.length ? { time, events } : undefined
+}
+
+/** `HH:MM` of a moment, in the zone `offsetMinutes` east of UTC (the module's clock reads UTC). */
+export function clockText(ms: number, offsetMinutes: number): string {
+  const d = new Date(ms + offsetMinutes * 60000)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
 export type Timer = { cancel: () => void }
@@ -47,37 +80,41 @@ export type WakerOptions = {
   submit: (text: string) => Promise<unknown>
   after: (ms: number, fn: () => void) => Timer
   now: () => number
+  /** The `HH:MM` a prompt is stamped with. */
+  stamp?: () => string
   /** Lines arriving within this window go out as one prompt. */
   batchMs?: number
-  /** The same watch error is told once in this window; the status line still shows it. */
+  /** A line told within this window is not told again: the same worker and event wakes HQ once. */
   repeatMs?: number
+  /** What was told, and when, from before a reload or an HQ restart. */
+  sent?: Readonly<Record<string, number>>
+  /** Called with what was told in the window each time it changes, to keep it across a reload. */
+  remember?: (sent: Record<string, number>) => void
 }
 
 /**
  * Holds actionable lines and submits them as one prompt: after a short quiet window, never while HQ runs a turn
- * (they wait for its end, then go out together), and never while an earlier submit is still on its way.
+ * (they wait for its end, then go out together), and never while an earlier submit is still on its way. A line
+ * already told in the last ten minutes is dropped, so a worker that ends blocked twice wakes HQ once.
  */
 export class Waker {
   private pending: string[] = []
   private timer: Timer | undefined
   private isBusy = false
   private isSending = false
-  private told = new Map<string, number>()
+  private told: Map<string, number>
   private readonly batchMs: number
   private readonly repeatMs: number
 
   constructor(private readonly opts: WakerOptions) {
     this.batchMs = opts.batchMs ?? 3000
     this.repeatMs = opts.repeatMs ?? 10 * 60 * 1000
+    this.told = new Map(Object.entries(opts.sent ?? {}))
   }
 
   add(line: string): void {
-    if (line.startsWith('watch error')) {
-      const at = this.opts.now()
-      const last = this.told.get(line)
-      if (last !== undefined && at - last < this.repeatMs) return
-      this.told.set(line, at)
-    }
+    const last = this.told.get(line)
+    if (last !== undefined && this.opts.now() - last < this.repeatMs) return
     if (!this.pending.includes(line)) this.pending.push(line)
     this.schedule()
   }
@@ -103,21 +140,110 @@ export class Waker {
     })
   }
 
+  private mark(lines: readonly string[], at: number | undefined): void {
+    const now = this.opts.now()
+    for (const [line, when] of this.told) if (now - when >= this.repeatMs) this.told.delete(line)
+    for (const line of lines) {
+      if (at === undefined) this.told.delete(line)
+      else this.told.set(line, at)
+    }
+    this.opts.remember?.(Object.fromEntries(this.told))
+  }
+
   private flush(): void {
     if (this.isBusy || this.isSending || !this.pending.length) return
     const lines = this.pending
     this.pending = []
     this.isSending = true
+    // Told from the moment it is sent: a repeat arriving while the submit waits for its turn is dropped too.
+    this.mark(lines, this.opts.now())
     this.opts
-      .submit(promptText(lines))
+      .submit(promptText(lines, this.opts.stamp?.()))
       .catch(() => {
-        this.pending = [...lines, ...this.pending]
+        this.mark(lines, undefined)
+        this.pending = [...lines, ...this.pending.filter(l => !lines.includes(l))]
       })
       .finally(() => {
         this.isSending = false
         if (this.pending.length) this.schedule()
       })
   }
+}
+
+/** The status line's parts as `athena watch --tagged` reports them, most urgent first. */
+export type Board = {
+  /** `<worker> blocked`, `<worker> needs context`, `<worker> exited` */
+  needs: string[]
+  /** `#n` per PR waiting on the human */
+  prs: string[]
+  /** [state, workers] per active state: working, idle, starting */
+  active: [string, string[]][]
+  done: string[]
+}
+
+export type Segment = { text: string; tone: 'needs' | 'active' | 'done' }
+
+/** Width of the ` · ` between segments. */
+export const GAP = 3
+
+function needsCounted(b: Board): string[] {
+  const kinds = new Map<string, number>()
+  for (const item of b.needs) {
+    const kind = item.slice(item.indexOf(' ') + 1)
+    kinds.set(kind, (kinds.get(kind) ?? 0) + 1)
+  }
+  return [...kinds].map(([kind, n]) => `${n} ${kind}`)
+}
+
+function prsNamed(b: Board): string[] {
+  return b.prs.length ? [`${b.prs.join(' ')} ${b.prs.length === 1 ? 'needs' : 'need'} you`] : []
+}
+
+function prsCounted(b: Board): string[] {
+  return b.prs.length ? [b.prs.length === 1 ? '1 PR needs you' : `${b.prs.length} PRs need you`] : []
+}
+
+/**
+ * The status line, laid out for `columns`: what needs the human, then the active workers, then the done ones,
+ * each named while the line fits. As it narrows, the done ones fold to a count first, then the active ones, then
+ * the PRs, then the needs; whatever is still too wide is cut by the drawing.
+ */
+export function fitStatus(b: Board, columns: number): Segment[] {
+  if (!b.needs.length && !b.prs.length && !b.active.length && !b.done.length) {
+    return [{ text: 'no live workers', tone: 'active' }]
+  }
+  const activeNamed = b.active.map(([state, names]) => `${names.join(', ')} ${state}`)
+  const activeCounted = b.active.map(([state, names]) => `${names.length} ${state}`)
+  const doneNamed = b.done.length ? [`✓ ${b.done.join(', ')} done`] : []
+  const doneCounted = b.done.length ? [`✓ ${b.done.length} done`] : []
+  const levels: [string[], string[], string[], string[]][] = [
+    [b.needs, prsNamed(b), activeNamed, doneNamed],
+    [b.needs, prsNamed(b), activeNamed, doneCounted],
+    [b.needs, prsNamed(b), activeCounted, doneCounted],
+    [b.needs, prsCounted(b), activeCounted, doneCounted],
+    [needsCounted(b), prsCounted(b), activeCounted, doneCounted],
+  ]
+  const segments = ([needs, prs, active, done]: [string[], string[], string[], string[]]): Segment[] => [
+    ...[...needs, ...prs].map(text => ({ text, tone: 'needs' as const })),
+    ...active.map(text => ({ text, tone: 'active' as const })),
+    ...done.map(text => ({ text, tone: 'done' as const })),
+  ]
+  for (const level of levels) {
+    const s = segments(level)
+    if (s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1) <= columns) return s
+  }
+  return segments(levels[levels.length - 1]!)
+}
+
+/** Reads a `board` record, or undefined when it is not one. */
+export function readBoard(value: unknown): Board | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const strings = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [])
+  const active = Array.isArray(v.active)
+    ? v.active.flatMap(g => (Array.isArray(g) && typeof g[0] === 'string' ? [[g[0], strings(g[1])] as [string, string[]]] : []))
+    : []
+  return { needs: strings(v.needs), prs: strings(v.prs), active, done: strings(v.done) }
 }
 
 /** How long to wait before starting the watch again: doubles per quick exit, from 5 s up to a minute. */
