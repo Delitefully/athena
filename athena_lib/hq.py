@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from athena_lib import board, dash, herdr, paths, retire
 
@@ -219,9 +220,23 @@ def _claude_bin():
     return shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
-def update_claude():
-    """`claude update`, then the marketplaces and the user-scope plugins. A failure is a warning, never a stop.
+# Not in `claude plugin marketplace list --json`, but refreshed by a plain `claude plugin marketplace update`.
+BUILT_IN_MARKETPLACE = "anthropic-plugin-directory"
 
+
+def _json(proc, default):
+    try:
+        return json.loads(proc.stdout) if proc else default
+    except ValueError:
+        return default
+
+
+def update_claude():
+    """`claude update`, the marketplaces and the user-scope plugins, concurrently. A failure is a warning, never a stop.
+
+    `claude update` and the marketplaces run side by side, one process per marketplace; then every user-scope plugin
+    updates at once, from the refreshed marketplaces. Concurrent runs keep every entry of
+    ~/.claude/plugins/known_marketplaces.json and installed_plugins.json (checked in the lab, Claude Code 2.1.296).
     Project-scope installs belong to other checkouts (often live workers'), so they are left alone. No `--yes`:
     a plugin whose marketplace changed its install command waits for a person to accept it by hand.
     """
@@ -230,6 +245,7 @@ def update_claude():
     warnings = []
 
     def run(*args, timeout=300, quiet=False):
+        started = time.monotonic()
         try:
             proc = subprocess.run([claude, *args], capture_output=True, text=True, timeout=timeout, env=env,
                                   stdin=subprocess.DEVNULL)
@@ -238,25 +254,33 @@ def update_claude():
             detail = str(exc)
         else:
             detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+            took = f"({time.monotonic() - started:.1f}s)"
             if proc.returncode == 0:
-                _say(f"claude {' '.join(args)}: {'ok' if quiet else (proc.stdout or '').strip()[-200:] or 'ok'}")
+                _say(f"claude {' '.join(args)} {took}: {'ok' if quiet else (proc.stdout or '').strip()[-200:] or 'ok'}")
                 return proc
         warnings.append(f"claude {' '.join(args)} failed: {detail}")
         _say("warning: " + warnings[-1])
         return None
 
-    run("update")
-    run("plugin", "marketplace", "update")
-    listed = run("plugin", "list", "--json", timeout=60, quiet=True)
-    try:
-        plugins = json.loads(listed.stdout) if listed else []
-    except ValueError:
-        plugins = []
-    seen = []
-    for p in plugins:
-        if isinstance(p, dict) and p.get("scope") == "user" and p.get("id") and p["id"] not in seen:
-            seen.append(p["id"])
-            run("plugin", "update", p["id"], "--scope", "user", timeout=120)
+    def marketplaces():
+        names = [m["name"] for m in _json(run("plugin", "marketplace", "list", "--json", timeout=60, quiet=True), [])
+                 if isinstance(m, dict) and m.get("name")]
+        if not names:
+            run("plugin", "marketplace", "update")
+            return
+        names += [BUILT_IN_MARKETPLACE] if BUILT_IN_MARKETPLACE not in names else []
+        list(pool.map(lambda name: run("plugin", "marketplace", "update", name), names))
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        cli = pool.submit(run, "update")
+        listed = pool.submit(run, "plugin", "list", "--json", timeout=60, quiet=True)
+        marketplaces()
+        ids = []
+        for p in _json(listed.result(), []):
+            if isinstance(p, dict) and p.get("scope") == "user" and p.get("id") and p["id"] not in ids:
+                ids.append(p["id"])
+        list(pool.map(lambda pid: run("plugin", "update", pid, "--scope", "user", timeout=120), ids))
+        cli.result()
     return warnings
 
 
@@ -285,8 +309,13 @@ def _restart(update):
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
         raise RestartError("there is no HQ to restart: start one with `athena hq`")
+    began = time.monotonic()
+
+    def took(since):
+        return f"{time.monotonic() - since:.1f}s"
     if update:
         update_claude()
+        _say(f"updates took {took(began)}")
     session = _session() or record.get("session")
     if retire.agent_owned(name):
         if not _wait_idle():
@@ -296,15 +325,17 @@ def _restart(update):
             _notify("athena: HQ restart skipped", msg)
             raise RestartError(msg)
         grace = float(os.environ.get("ATHENA_EXIT_GRACE") or 20)
+        exiting = time.monotonic()
         if not retire.exit_claude(name, grace):
             msg = f"HQ's Claude ({name} in pane {pane}) did not exit; it is still running and nothing was restarted"
             _say("FAILED: " + msg)
             _notify("athena: HQ restart failed", msg)
             raise RestartError(msg)
-        _say(f"HQ's Claude exited (conversation {session or 'unknown'})")
+        _say(f"HQ's Claude exited in {took(exiting)} (conversation {session or 'unknown'})")
     else:
         _say(f"HQ's Claude was not running; resuming conversation {session or 'unknown'}")
-    time.sleep(1)  # let the pane's shell draw its prompt
+    time.sleep(0.2)  # herdr reports the agent gone a moment after the shell is back; this is only a margin
+    resuming = time.monotonic()
     if session:
         try:
             _start_agent(pane, "--resume", session)
@@ -317,7 +348,7 @@ def _restart(update):
     _remember_session(load())
     keep_label(owned=True)
     herdr.call("agent", "prompt", name, RESTART_ROUTINE)
-    _say(f"HQ resumed conversation {session} in pane {pane}")
+    _say(f"HQ resumed conversation {session} in pane {pane} in {took(resuming)}; the restart took {took(began)} in all")
     return {"resumed": True, "session": session, "pane": pane}
 
 

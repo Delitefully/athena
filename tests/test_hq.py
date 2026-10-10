@@ -1,12 +1,14 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
+from tests.test_retire import DIALOG
 from athena_lib import cli, dash, hq, paths
 
 CREATED = {"result": {"workspace": {"workspace_id": "w8"}, "root_pane": {"pane_id": "w8:p1", "terminal_id": "term_h"}}}
@@ -116,6 +118,8 @@ def alive(session="sess-1", after=None):
 
 GONE = {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1}
 HQ_SPACE = {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}}
+# HQ normally has watches running, so /exit brings up the background-work dialog.
+ON_EXIT = {"match": ["agent", "read", "athena"], "stdout": DIALOG}
 
 
 class RestartTest(unittest.TestCase):
@@ -141,12 +145,12 @@ class RestartTest(unittest.TestCase):
 
     def test_exits_then_resumes_the_same_conversation_and_runs_the_routine(self):
         write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
-                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE])
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         result = hq.restart_now(update=False)
         self.assertTrue(result["resumed"])
         calls = self.calls()
         exit_at = calls.index(["agent", "prompt", "athena", "/exit"])
-        after_exit = [c for c in calls[exit_at + 1:] if c[:2] != ["agent", "get"]]
+        after_exit = [c for c in calls[exit_at + 1:] if c[:2] not in (["agent", "get"], ["agent", "read"])]
         self.assertEqual(after_exit[0], ["agent", "send-keys", "athena", "enter"])
         (start,) = self.starts()
         self.assertGreater(calls.index(start), exit_at)
@@ -166,7 +170,7 @@ class RestartTest(unittest.TestCase):
         self.assertFalse(hq.lock_file().exists())
 
     def test_waits_for_hq_to_finish_its_turn_before_exit(self):
-        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE])
+        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         hq.restart_now(update=False)
         calls = self.calls()
         wait = next(c for c in calls if c[:2] == ["agent", "wait"])
@@ -206,7 +210,7 @@ class RestartTest(unittest.TestCase):
     def test_a_failed_resume_falls_back_to_a_fresh_hq_and_says_so(self):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "no session"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1, "times": 1},
-                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE])
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         result = hq.restart_now(update=False)
         self.assertTrue(result["fallback"])
         first, second = self.starts()
@@ -220,7 +224,7 @@ class RestartTest(unittest.TestCase):
         err = json.dumps({"error": {"code": "cli_timeout", "message": "slow"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1},
                                        alive("sess-1", after=["agent", "start"]),
-                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE])
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         result = hq.restart_now(update=False)
         self.assertTrue(result["resumed"])
         self.assertEqual(len(self.starts()), 1)
@@ -237,7 +241,7 @@ class RestartTest(unittest.TestCase):
 
     def test_a_stale_lock_is_taken_over(self):
         hq.lock_file().write_text("999999")
-        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE])
+        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         self.assertTrue(hq.restart_now(update=False)["resumed"])
         self.assertFalse(hq.lock_file().exists())
 
@@ -259,24 +263,65 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(result["log"].endswith("hq-restart.log"))
         self.assertIn("restarting HQ; log at", result["message"])
 
-    def test_update_runs_claude_update_then_user_plugins_and_survives_failures(self):
+    def fake_claude(self, fail=(), meet=()):
+        """A stand-in for `subprocess.run` of the claude CLI. Commands in `fail` exit 1. Commands in `meet` each wait
+        until all of them are running at once, so a test fails if update_claude runs them one after another."""
         plugins = [{"id": "athena@athena", "scope": "user"}, {"id": "linear@x", "scope": "project", "projectPath": "/p"},
-                   {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"}]
-        ran = []
+                   {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"},
+                   {"id": "figma@y", "scope": "user"}]
+        markets = [{"name": "athena"}, {"name": "claude-plugins-official"}]
+        ran, lock = [], threading.Lock()
+        barrier = threading.Barrier(len(meet), timeout=5) if meet else None
 
         def run(cmd, **kw):
-            ran.append(cmd[1:])
-            if cmd[1:3] == ["plugin", "list"]:
+            args = cmd[1:]
+            with lock:
+                ran.append(args)
+            if tuple(args) in meet:
+                barrier.wait()
+            if tuple(args) in fail:
+                return mock.Mock(returncode=1, stdout="", stderr="boom")
+            if args[:3] == ["plugin", "list", "--json"]:
                 return mock.Mock(returncode=0, stdout=json.dumps(plugins), stderr="")
-            return mock.Mock(returncode=1 if cmd[1] == "update" else 0, stdout="", stderr="boom")
+            if args[:4] == ["plugin", "marketplace", "list", "--json"]:
+                return mock.Mock(returncode=0, stdout=json.dumps(markets), stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return run, ran
+
+    def test_update_runs_claude_update_marketplaces_and_user_plugins_and_survives_failures(self):
+        run, ran = self.fake_claude(fail={("update",), ("plugin", "update", "athena@athena", "--scope", "user")})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             warnings = hq.update_claude()
-        self.assertEqual(ran[0], ["update"])
-        self.assertIn(["plugin", "marketplace", "update"], ran)
-        updates = [c for c in ran if c[:2] == ["plugin", "update"]]
+        self.assertIn(["update"], ran)
+        markets = sorted(c[3] for c in ran if c[:3] == ["plugin", "marketplace", "update"])
+        self.assertEqual(markets, ["anthropic-plugin-directory", "athena", "claude-plugins-official"])
+        updates = sorted(c for c in ran if c[:2] == ["plugin", "update"])
         self.assertEqual(updates, [["plugin", "update", "athena@athena", "--scope", "user"],
+                                   ["plugin", "update", "figma@y", "--scope", "user"],
                                    ["plugin", "update", "linear@x", "--scope", "user"]])
-        self.assertTrue(any("claude update" in w for w in warnings))
+        last_market = max(i for i, c in enumerate(ran) if c[:3] == ["plugin", "marketplace", "update"])
+        first_update = min(i for i, c in enumerate(ran) if c[:2] == ["plugin", "update"])
+        self.assertLess(last_market, first_update)  # plugins update from refreshed marketplaces
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any("claude update failed" in w for w in warnings))
+        self.assertTrue(any("athena@athena" in w for w in warnings))
+
+    def test_updates_run_concurrently(self):
+        run, ran = self.fake_claude(meet={("update",), ("plugin", "marketplace", "update", "athena"),
+                                          ("plugin", "marketplace", "update", "claude-plugins-official"),
+                                          ("plugin", "marketplace", "update", "anthropic-plugin-directory")})
+        with mock.patch.object(hq.subprocess, "run", side_effect=run):
+            self.assertEqual(hq.update_claude(), [])
+        run, ran = self.fake_claude(meet={("plugin", "update", p, "--scope", "user")
+                                          for p in ("athena@athena", "linear@x", "figma@y")})
+        with mock.patch.object(hq.subprocess, "run", side_effect=run):
+            self.assertEqual(hq.update_claude(), [])
+
+    def test_a_failed_marketplace_listing_updates_them_all_in_one_call(self):
+        run, ran = self.fake_claude(fail={("plugin", "marketplace", "list", "--json")})
+        with mock.patch.object(hq.subprocess, "run", side_effect=run):
+            hq.update_claude()
+        self.assertIn(["plugin", "marketplace", "update"], ran)
 
     def test_fresh_hq_records_its_session(self):
         write_scenario(self.tmp.name, [{"match": ["agent", "get", "w8:p1"], "stdout": "", "exit": 1},
