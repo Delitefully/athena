@@ -265,13 +265,15 @@ class RestartTest(unittest.TestCase):
 
     def fake_claude(self, fail=(), meet=()):
         """A stand-in for `subprocess.run` of the claude CLI. Commands in `fail` exit 1. Commands in `meet` each wait
-        until all of them are running at once, so a test fails if update_claude runs them one after another."""
+        until all of them are running at once, so a test fails if update_claude runs them one after another.
+        `overlap["max"]` is the most plugin updates that ran at the same time."""
         plugins = [{"id": "athena@athena", "scope": "user"}, {"id": "linear@x", "scope": "project", "projectPath": "/p"},
                    {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"},
                    {"id": "figma@y", "scope": "user"}]
         markets = [{"name": "athena"}, {"name": "claude-plugins-official"}]
         ran, lock = [], threading.Lock()
         barrier = threading.Barrier(len(meet), timeout=5) if meet else None
+        overlap = {"now": 0, "max": 0}
 
         def run(cmd, **kw):
             args = cmd[1:]
@@ -279,6 +281,13 @@ class RestartTest(unittest.TestCase):
                 ran.append(args)
             if tuple(args) in meet:
                 barrier.wait()
+            if args[:2] == ["plugin", "update"]:
+                with lock:
+                    overlap["now"] += 1
+                    overlap["max"] = max(overlap["max"], overlap["now"])
+                threading.Event().wait(0.05)  # time.sleep is patched out in these tests
+                with lock:
+                    overlap["now"] -= 1
             if tuple(args) in fail:
                 return mock.Mock(returncode=1, stdout="", stderr="boom")
             if args[:3] == ["plugin", "list", "--json"]:
@@ -286,6 +295,7 @@ class RestartTest(unittest.TestCase):
             if args[:4] == ["plugin", "marketplace", "list", "--json"]:
                 return mock.Mock(returncode=0, stdout=json.dumps(markets), stderr="")
             return mock.Mock(returncode=0, stdout="", stderr="")
+        self.overlap = overlap
         return run, ran
 
     def test_update_runs_claude_update_marketplaces_and_user_plugins_and_survives_failures(self):
@@ -312,10 +322,18 @@ class RestartTest(unittest.TestCase):
                                           ("plugin", "marketplace", "update", "anthropic-plugin-directory")})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             self.assertEqual(hq.update_claude(), [])
-        run, ran = self.fake_claude(meet={("plugin", "update", p, "--scope", "user")
-                                          for p in ("athena@athena", "linear@x", "figma@y")})
+        # The plugin updates start once the marketplaces are done, without waiting for `claude update`.
+        run, ran = self.fake_claude(meet={("update",), ("plugin", "update", "athena@athena", "--scope", "user")})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             self.assertEqual(hq.update_claude(), [])
+
+    def test_plugin_updates_never_overlap(self):
+        # An update that installs a new version rewrites ~/.claude/plugins/installed_plugins.json.
+        run, ran = self.fake_claude()
+        with mock.patch.object(hq.subprocess, "run", side_effect=run):
+            self.assertEqual(hq.update_claude(), [])
+        self.assertEqual(len([c for c in ran if c[:2] == ["plugin", "update"]]), 3)
+        self.assertEqual(self.overlap["max"], 1)
 
     def test_a_failed_marketplace_listing_updates_them_all_in_one_call(self):
         run, ran = self.fake_claude(fail={("plugin", "marketplace", "list", "--json")})

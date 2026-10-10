@@ -232,12 +232,12 @@ def _json(proc, default):
 
 
 def update_claude():
-    """`claude update`, the marketplaces and the user-scope plugins, concurrently. A failure is a warning, never a stop.
+    """`claude update`, the marketplaces and the user-scope plugins. A failure is a warning, never a stop.
 
-    `claude update` and the marketplaces run side by side, one process per marketplace; then every user-scope plugin
-    updates at once, from the refreshed marketplaces. In the lab (Claude Code 2.1.296) concurrent marketplace updates
-    each landed in ~/.claude/plugins/known_marketplaces.json, and plugins already at their latest version leave
-    installed_plugins.json untouched.
+    `claude update` runs alongside the rest. The marketplaces update side by side, one process per marketplace (in the
+    lab, Claude Code 2.1.296, each landed in ~/.claude/plugins/known_marketplaces.json). The user-scope plugins then
+    update from the refreshed marketplaces one at a time: an update that installs a new version rewrites
+    installed_plugins.json, and nothing read-only says in advance which plugins have one.
     Project-scope installs belong to other checkouts (often live workers'), so they are left alone. No `--yes`:
     a plugin whose marketplace changed its install command waits for a person to accept it by hand.
     """
@@ -280,7 +280,8 @@ def update_claude():
         for p in _json(listed.result(), []):
             if isinstance(p, dict) and p.get("scope") == "user" and p.get("id") and p["id"] not in ids:
                 ids.append(p["id"])
-        list(pool.map(lambda pid: run("plugin", "update", pid, "--scope", "user", timeout=120), ids))
+        for pid in ids:
+            run("plugin", "update", pid, "--scope", "user", timeout=120)
         cli.result()
     return warnings
 
