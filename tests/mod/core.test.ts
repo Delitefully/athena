@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { MAX_LINES, promptText, readRecords, restartDelay, Waker } from '../../hooks/watch-mod/core.ts'
+import { MAX_LINES, promptText, readRecords, restartDelay, Waker } from '../../hooks/watch-mod/core'
 
 /** A hand-moved clock for the Waker: timers fire only when the test advances it. */
 function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {

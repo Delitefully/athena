@@ -3,7 +3,7 @@
 // It also hides any Monitor rows left in HQ's transcript. Every other session sees no change.
 import type { EngineInterface, Register } from 'claude-code'
 
-import { readRecords, restartDelay, Waker } from './core.ts'
+import { readRecords, restartDelay, Waker } from './core'
 
 /** A run shorter than this counts as a quick exit, and the next start waits longer. */
 const STEADY_MS = 60000
