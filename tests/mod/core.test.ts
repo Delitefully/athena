@@ -323,7 +323,8 @@ describe('reportView', () => {
   test('the PR as #n with its head, the verify line, and the lists', () => {
     expect(reportView({ ...base, status: 'DONE' })).toEqual({
       status: { text: 'Done', color: 'success' },
-      pr: { href: 'https://github.com/o/r/pull/6553', label: '#6553', head: '797b679' },
+      pr: { href: 'https://github.com/o/r/pull/6553', label: '#6553' },
+      head: '797b679',
       verify: 'make test -> pass',
       decisions: ['d1'],
       concerns: ['c1'],
@@ -334,6 +335,7 @@ describe('reportView', () => {
     expect(reportView({ status: 'BLOCKED', pr: '', head: '', verify: '', decisions: [], concerns: [] })).toEqual({
       status: { text: 'Blocked', color: 'error' },
       pr: undefined,
+      head: undefined,
       verify: undefined,
       decisions: [],
       concerns: [],
@@ -341,7 +343,7 @@ describe('reportView', () => {
     expect(reportView({ status: 'DONE', pr: 'not a url', decisions: [], concerns: [] }).pr).toEqual({
       href: undefined,
       label: 'not a url',
-      head: undefined,
     })
+    expect(reportView({ status: 'BLOCKED', head: '1a2b3c4d', decisions: [], concerns: [] }).head).toBe('1a2b3c4')
   })
 })

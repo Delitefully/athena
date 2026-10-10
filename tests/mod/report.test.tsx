@@ -39,7 +39,7 @@ describe('a worker draws its ATHENA-REPORT as a completion block', () => {
       expect((await ui.find({ type: 'Text', text: word }))?.props.color).toBe(color)
       expect(await ui.find({ type: 'Text', text: '∞ athena report' })).toBeDefined()
       expect((await ui.find({ type: 'Link' }))?.props).toMatchObject({ href: FULL.pr, label: '#6553' })
-      expect(await ui.find({ type: 'Text', text: 'at 797b679' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '797b679' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: 'make test -> pass' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: '• kept the frame for the model' })).toBeDefined()
       expect((await ui.find({ type: 'Text', text: '• needs a human look' }))?.props.color).toBe('warning')

@@ -269,15 +269,8 @@ export const register: Register = on => {
               {v.status.text}
             </Text>
           </Box>
-          {v.pr
-            ? row(
-                'PR',
-                <Box flexDirection="row" columnGap={1}>
-                  {v.pr.href ? <Link href={v.pr.href} label={v.pr.label} /> : <Text>{v.pr.label}</Text>}
-                  {v.pr.head ? <Text dimColor>{`at ${v.pr.head}`}</Text> : null}
-                </Box>,
-              )
-            : null}
+          {v.pr ? row('PR', v.pr.href ? <Link href={v.pr.href} label={v.pr.label} /> : <Text>{v.pr.label}</Text>) : null}
+          {v.head ? row('head', <Text dimColor>{v.head}</Text>) : null}
           {v.verify ? row('verify', <Text>{v.verify}</Text>) : null}
           {v.decisions.length ? row('decisions', bullets(v.decisions)) : null}
           {v.concerns.length ? row('concerns', bullets(v.concerns, 'warning')) : null}

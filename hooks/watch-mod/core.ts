@@ -320,7 +320,8 @@ const LOOKS: Record<string, { text: string; color: string }> = {
 
 export type ReportView = {
   status: { text: string; color: string | undefined }
-  pr: { href: string | undefined; label: string; head: string | undefined } | undefined
+  pr: { href: string | undefined; label: string } | undefined
+  head: string | undefined
   verify: string | undefined
   decisions: string[]
   concerns: string[]
@@ -332,7 +333,8 @@ export function reportView(r: Report): ReportView {
   const m = /^https?:\/\/\S+\/pull\/(\d+)\/?$/.exec(r.pr ?? '')
   return {
     status: look,
-    pr: r.pr ? { href: m ? r.pr : undefined, label: m ? `#${m[1]}` : r.pr, head: r.head ? r.head.slice(0, 7) : undefined } : undefined,
+    pr: r.pr ? { href: m ? r.pr : undefined, label: m ? `#${m[1]}` : r.pr } : undefined,
+    head: r.head ? r.head.slice(0, 7) : undefined,
     verify: r.verify || undefined,
     decisions: r.decisions,
     concerns: r.concerns,
