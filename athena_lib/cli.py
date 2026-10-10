@@ -121,7 +121,22 @@ def cmd_dash(a):
 
 
 def cmd_watch(a):
-    watch.run(interval=a.interval)
+    watch.run(interval=a.interval, tagged=a.tagged)
+    return 0
+
+
+def cmd_stack(a):
+    if a.action == "set":
+        if not a.repo or not a.prs:
+            print("athena stack set <owner/repo> <pr> [<pr> ...]", file=sys.stderr)
+            return 2
+        watch.set_stack(a.repo, a.prs)
+    elif a.action == "clear":
+        if not a.repo:
+            print("athena stack clear <owner/repo>", file=sys.stderr)
+            return 2
+        watch.set_stack(a.repo, [])
+    _print(watch.stacks())
     return 0
 
 
@@ -227,9 +242,16 @@ def parser():
     s.add_argument("action", choices=["on", "off", "show", "open"], nargs="?", default="show")
     s.set_defaults(func=cmd_dash)
 
-    s = sub.add_parser("watch", help="print one line per change (run under Monitor)")
+    s = sub.add_parser("watch", help="print one line per change (the athena-watch mod runs it in HQ; Monitor is the fallback)")
     s.add_argument("--interval", type=float, default=20)
+    s.add_argument("--tagged", action="store_true", help="JSON lines for the mod: each change marked wake or not, and the status line")
     s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser("stack", help="the stacked-PR chains athena watch follows (stack.json): set, clear, show")
+    s.add_argument("action", choices=["set", "clear", "show"], nargs="?", default="show")
+    s.add_argument("repo", nargs="?", help="owner/name, as gh --repo takes it")
+    s.add_argument("prs", nargs="*", type=int, help="the chain's PR numbers, bottom first")
+    s.set_defaults(func=cmd_stack)
 
     s = sub.add_parser("pr", help="PR summary for a worker")
     s.add_argument("name")

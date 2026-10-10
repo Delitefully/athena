@@ -11,6 +11,10 @@ bin/athena status; bin/athena board show
 tests/lab/lab.sh down
 ```
 
+## The watch mod
+
+`tests/lab/fake-watch` stands in for `athena watch --tagged`: it follows `$FAKE_WATCH_LINES` and prints each raw watch line appended there through the real classifier (`exit` makes it exit, to try the mod's restart). Give a throwaway Claude session `--plugin-dir <this repo>` and a `--settings` file whose `env` sets `ATHENA_ROLE=hq`, its own `ATHENA_STATE_DIR` and `ATHENA_HQ`, `ATHENA_WATCH_CMD=<repo>/tests/lab/fake-watch` and `FAKE_WATCH_LINES`, and `enabledPlugins` `{"athena@athena": false}` so the installed copy stays out. Use worker names that do not exist, and an `--append-system-prompt` that keeps the session from acting on real workers.
+
 ## Result on 2026-10-07 (herdr 0.9.1, Claude Code 2.1.293)
 
 - Two Haiku workers launched by `athena spawn` ran their `/goal` to "Goal achieved", committed and pushed, and reported by SendMessage to the session named in `ATHENA_HQ`.

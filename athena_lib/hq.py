@@ -100,7 +100,8 @@ def _workspace_is_hq(record) -> bool:
 
 def _routine():
     herdr.call("agent", "prompt", paths.hq_name(),
-               "Start your HQ routine: run `athena status`, start `athena watch` under Monitor, then tell me what is live and wait.")
+               "Start your HQ routine: run `athena status`, check the athena-watch mod runs `athena watch` (Monitor only as the "
+               "skill's fallback), then tell me what is live and wait.")
 
 
 def _helpers(start_board, start_dash):
@@ -153,9 +154,9 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None) -> dict:
     return {**record, "created": True}
 
 
-RESTART_ROUTINE = ("HQ restarted: run your session-start routine (athena status --pr, re-arm athena watch under Monitor, "
-                   "re-arm any stacked-PR watch you were running per standing-orders.md, check needs-you.md), "
-                   "then tell me what changed.")
+RESTART_ROUTINE = ("HQ restarted: run your session-start routine (athena status --pr; the athena-watch mod restarts "
+                   "athena watch and its stacked-PR watch on its own, so arm no Monitor unless the skill's fallback applies; "
+                   "check `athena stack` lists the chains you follow, check needs-you.md), then tell me what changed.")
 
 
 class RestartError(Exception):

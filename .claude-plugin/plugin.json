@@ -1,6 +1,6 @@
 {
   "name": "athena",
   "description": "Chief of staff: launches visible worker Claude sessions in herdr worktree spaces from Linear tickets and supervises them to merge-ready PRs.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": { "name": "Gabriel (delitefully)" }
 }
