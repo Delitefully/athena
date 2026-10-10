@@ -23,7 +23,7 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 
 - `prefix+shift+c` (or `athena hq`): open or focus the hq space. The chief of staff starts with its brief (`hq.md`) and the `athena` skill.
 - Tell it what to start: "start abc-101 and abc-102". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
-- `prefix+shift+r` (or `athena hq restart`): update Claude Code and its plugins, then restart HQ's Claude in the same pane on the same conversation; it runs its start routine by itself. HQ can run it about itself. Workers and the dashboard keep running.
+- `prefix+shift+h` (or `athena hq restart`): update Claude Code and its plugins, then restart HQ's Claude in the same pane on the same conversation; it runs its start routine by itself. HQ can run it about itself. Workers and the dashboard keep running.
 - `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq.
 - `athena dash open`: the dashboard in your browser.
 
@@ -51,7 +51,7 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
 | `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space |
 | `athena hq` | Create or focus hq |
-| `athena hq restart [--no-update]` | Detached: `claude update` and the user-scope plugin updates, `/exit` HQ's Claude, `--resume` its conversation in the same pane, prompt its start routine. A failed resume starts a fresh HQ and says so; log in `logs/hq-restart.log` |
+| `athena hq restart [--no-update]` | Detached: `claude update`, the marketplaces and the user-scope plugin updates (concurrently), `/exit` HQ's Claude (confirming the background-work dialog), `--resume` its conversation in the same pane, prompt its start routine. A failed resume starts a fresh HQ and says so; log in `logs/hq-restart.log` |
 
 ## Pieces
 
