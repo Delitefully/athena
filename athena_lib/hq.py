@@ -235,8 +235,9 @@ def update_claude():
     """`claude update`, the marketplaces and the user-scope plugins, concurrently. A failure is a warning, never a stop.
 
     `claude update` and the marketplaces run side by side, one process per marketplace; then every user-scope plugin
-    updates at once, from the refreshed marketplaces. Concurrent runs keep every entry of
-    ~/.claude/plugins/known_marketplaces.json and installed_plugins.json (checked in the lab, Claude Code 2.1.296).
+    updates at once, from the refreshed marketplaces. In the lab (Claude Code 2.1.296) concurrent marketplace updates
+    each landed in ~/.claude/plugins/known_marketplaces.json, and plugins already at their latest version leave
+    installed_plugins.json untouched.
     Project-scope installs belong to other checkouts (often live workers'), so they are left alone. No `--yes`:
     a plugin whose marketplace changed its install command waits for a person to accept it by hand.
     """
