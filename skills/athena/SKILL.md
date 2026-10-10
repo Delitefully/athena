@@ -10,7 +10,7 @@ description: Chief-of-staff procedures for the hq session - turning Linear ticke
 ## 1. Session start (and after a restart or compaction)
 
 1. `athena status --pr` to see every live worker, its state, git and PR.
-2. Start the watcher with the Monitor tool: command `athena watch`, `timeout_ms` 1800000 (the maximum). Each change arrives as a line. Monitor expires after 30 minutes and sends one expiry notice: re-arm it every time, and after a restart (Monitor is not restored on resume). Workers' SendMessage reports wake you independently of the watcher.
+2. Do not arm Monitor for `athena watch`: the athena-watch mod in this plugin runs it for the whole session (HQ only, `ATHENA_ROLE=hq`), restarts it if it exits, and keeps a one-line summary under the prompt for the human. Routine changes never reach you. A change you must act on arrives as one short prompt, `athena watch: <line> · <line>`, sent when you are idle; lines that arrive together come as one. Check it runs with `pgrep -fl 'athena watch --tagged'`. **Fallback** when nothing runs (the mod is not loaded: Claude Code older than 2.1.286, mods turned off, or the plugin not reloaded since an update): arm the Monitor tool yourself, command `athena watch`, `timeout_ms` 1800000, and re-arm it on its expiry notice and after a restart. Workers' SendMessage reports wake you either way.
 3. `athena board on` if the board watcher is not running (`athena board show` lists columns), and `athena dash on` if the dashboard is not (`athena dash show` prints its URL).
 4. Tell the human, in at most five lines: what needs them, then one line per worker.
 
@@ -64,6 +64,10 @@ Exit code 3 means the worker is live but pending: its Claude stopped at a startu
 
 ## 3. Reacting to `athena watch` lines
 
+The mod sends only the lines below that need you (`athena watch: <line> · <line>`); working/idle flips, pending or green checks, `done->idle`, the `watching:` line and a retired worker's `gone` line only update its status line. Under the Monitor fallback every line arrives: act on these, and let the rest pass without a reply.
+
+**Stacked PRs.** When you set up a chain of stacked PRs, register it: `athena stack set <owner/repo> <pr> <pr> ...` (bottom first; it replaces that repo's chain in `stack.json`). `athena stack clear <owner/repo>` once the chain is merged, `athena stack` to show it. `athena watch` checks each PR's state, base and mergeability every two minutes and says `stack <owner/repo>#<n>: <before> -> <after>`; a merge or a new conflict needs you, a retargeted base does not.
+
 | Line | Do |
 |---|---|
 | `<w> state ...->blocked` | `athena status`; read its summary. A permission prompt: tell the human which worker and what it wants, they answer in its column. A `NEED:` question: answer if it is within the brief; otherwise ask the human with your recommendation and relay the answer. |
@@ -75,6 +79,9 @@ Exit code 3 means the worker is live but pending: its Claude stopped at a startu
 | `<w> review comments +N` / `review CHANGES_REQUESTED` | Triage each comment: fix (send to worker), dismiss (reply with a reason only if the human allows), or ask. Security, auth, billing and migrations always go to the human. Order: conflicts, then threads, then CI. |
 | `<repo> main moved` | SendMessage every live worker on that repo with an open branch: "main moved; when your tree is clean, rebase on origin/main, re-run VERIFY, push with --force-with-lease, report." Skip workers whose PR is approved in platform unless the human agrees (a push after approval needs re-approval). |
 | `<w> gone from the ledger` | Expected after retire; otherwise investigate. |
+| `stack <repo>#<n>: ... -> MERGED ...` | Check the next PR in the chain retargeted cleanly; tell the human what is next to merge. |
+| `stack <repo>#<n>: ... -> ... CONFLICTING` | Find the PR's worker (or tell the human): rebase it on its new base, push with `--force-with-lease`. |
+| `watch error: ...` | The watch itself failed (gh, herdr, or it exited and the mod restarts it). Look once; tell the human if it repeats. |
 
 ## 4. Verify and review a DONE report
 

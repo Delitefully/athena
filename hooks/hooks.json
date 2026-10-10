@@ -1,5 +1,6 @@
 {
-  "description": "athena worker status: writes ~/.local/state/athena/workers/<name>.json for athena worker sessions only.",
+  "description": "athena worker status: writes ~/.local/state/athena/workers/<name>.json for athena worker sessions only. The athena-watch mod runs athena watch in the HQ session only.",
+  "modules": ["./watch-mod/register.tsx"],
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],

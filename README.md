@@ -17,7 +17,21 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 
 ![athena watch: routine progress streams by quietly; athena acts on a blocked worker, a failed check, a finished worker and a moved main](assets/watch.svg)
 
-`athena watch` prints one line per change, and athena reacts to each: it asks you about a blocked worker, sends a failed check back to its worker, starts a review on DONE, and asks a repo's workers to rebase when its main moves. Routine progress stays quiet.
+`athena watch` prints one line per change, and athena reacts to the ones that matter: it asks you about a blocked worker, sends a failed check back to its worker, starts a review on DONE, and asks a repo's workers to rebase when its main moves. Routine progress stays quiet.
+
+### The watch mod
+
+In the HQ session, `athena watch` is run by a Claude Code mod that ships in this plugin (`hooks/watch-mod/`), not by Monitor tool calls, so routine changes never reach HQ's chat. The mod is active only where `ATHENA_ROLE=hq` (which `athena hq` sets); workers and every other session load it and see no change.
+
+- It runs `athena watch --tagged` for the whole session and restarts it if it exits (5 s, backing off to a minute). There is no 30-minute expiry to re-arm.
+- Each line is marked actionable or routine by `watch.classify`. Actionable lines wake HQ with one short prompt, such as `athena watch: plt-4041 report DONE`: a report (DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT), a worker turning blocked or exiting, a PR opened, merged or closed, failing checks, CHANGES_REQUESTED or APPROVED, new review comments, `main moved`, a stacked PR merged or newly CONFLICTING, an unexpected `gone from the ledger`, a worker that failed to start, and watch errors. Lines that arrive within a few seconds, or while HQ is running a turn, go out together once HQ is idle.
+- Routine lines (working and idle flips, pending or green checks, `done->idle`, the `watching:` line) only update the status line under HQ's prompt, such as `athena: plt-9 blocked · plt-4041 done · pr6519 working · 2 PRs need you`. The model never reads it.
+- Monitor rows in HQ's transcript (from before the mod, or from the fallback) are drawn as nothing, in HQ only: the call, its result, and its `Monitor event:`, stream-ended and expiry notifications. The model still reads them; ctrl+o still shows the notifications.
+- Stacked PRs: `athena stack set <owner/repo> <pr> ...` lists a chain in `stack.json`; `athena watch` follows each PR's state, base and mergeability every two minutes.
+
+**Fallback.** If the mod is not loaded (Claude Code older than 2.1.286, mods turned off, or the plugin not reloaded since an update; `pgrep -fl 'athena watch --tagged'` shows nothing), HQ arms Monitor with `athena watch` itself and re-arms it every 30 minutes, as the `athena` skill says.
+
+To try the mod without real workers, start a throwaway session with `ATHENA_ROLE=hq` and `ATHENA_WATCH_CMD=tests/lab/fake-watch` in its `--settings` env, and append watch lines to its `FAKE_WATCH_LINES` file.
 
 ## Use
 
@@ -45,7 +59,8 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 | `athena status [--json] [--pr]` | Merged status: ATHENA-REPORT, hook state, git, PR, herdr |
 | `athena board on\|off\|toggle\|sync\|show` | Attach columns beside hq; a watcher keeps them in step with width and workers |
 | `athena dash on\|off\|show\|open` | The dashboard on 127.0.0.1; `show` prints its URL and pid |
-| `athena watch` | One line per change, for Monitor; also saves its snapshot to `watch.json` for the dashboard |
+| `athena watch [--tagged]` | One line per change; also saves its snapshot to `watch.json` for the dashboard. The watch mod runs it `--tagged` (JSON lines: each change marked wake or not, and the status line); plain output is for the Monitor fallback |
+| `athena stack [set <owner/repo> <pr>... \| clear <owner/repo>]` | The stacked-PR chains `athena watch` follows (`stack.json`) |
 | `athena pr <name>` | PR summary |
 | `athena nudge <name> <text>` | Type a slash command into a worker |
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
@@ -55,9 +70,9 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 
 ## Pieces
 
-- `athena_lib/`: stdlib Python 3.9+. State in `~/.local/state/athena/` (`ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.md`).
+- `athena_lib/`: stdlib Python 3.9+. State in `~/.local/state/athena/` (`ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.md`).
 - `dash/`: the dashboard server, Go standard library only, with the Instrument fonts (OFL) embedded.
-- `hooks/`: Claude Code plugin hooks that write `workers/<name>.json`; a no-op outside athena workers.
+- `hooks/`: Claude Code plugin hooks that write `workers/<name>.json` (a no-op outside athena workers), and `hooks/watch-mod/`, the watch mod (a no-op outside HQ).
 - `hq.md`, `worker.md`, `skills/athena/SKILL.md`: the prompts.
 - `repos/<repo>.setup`: optional per-repo worktree setup (platform: env files, certs, `pnpm install`).
 - The herdr auto-claude plugin skips spaces that `athena` claims (`~/.local/state/athena/claims/`).
@@ -72,7 +87,7 @@ claude plugin install athena@athena
 
 ## Test
 
-`make test` (unit tests with a fake herdr, and `go test` for the dashboard). `tests/lab/` runs real workers against an isolated herdr server.
+`make test` (unit tests with a fake herdr, `go test` for the dashboard, and `claude plugin validate` and `claude plugin test` for the watch mod when `claude` is installed). `tests/lab/` runs real workers against an isolated herdr server.
 
 ## Environment
 
@@ -80,4 +95,4 @@ claude plugin install athena@athena
 
 ## Update after editing
 
-The `athena` CLI and the prompt files (`hq.md`, `worker.md`) run from this repository. The hooks and the `athena` skill run from the plugin cache: bump `version` in `.claude-plugin/plugin.json`, then `claude plugin marketplace update athena && claude plugin update athena@athena`, and restart the sessions that should pick it up.
+The `athena` CLI and the prompt files (`hq.md`, `worker.md`) run from this repository. The hooks, the watch mod and the `athena` skill run from the plugin: bump `version` in `.claude-plugin/plugin.json`, then `claude plugin marketplace update athena && claude plugin update athena@athena`, and restart the sessions that should pick it up (or `/reload-plugins` in them; the plugin is read from its folder when its marketplace is that folder).
