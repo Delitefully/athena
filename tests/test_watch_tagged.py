@@ -136,6 +136,73 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(watch.summary(snap), "3 PRs need you · plt-4041 done")
 
 
+class BoardLinksTest(unittest.TestCase):
+    """What the mod links: each PR to its repo from the ledger (a worker's origin) or stack.json, and the dash."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_links_and_repos_come_from_the_worker_repo_and_the_stack(self):
+        def pr(n):
+            # GitHub's URL names another repo: the link still goes by the worker's own repo.
+            return {"state": "OPEN", "draft": False, "review": "APPROVED", "number": n,
+                    "url": f"https://github.com/evil/elsewhere/pull/{n}"}
+        snap = {"workers": {"a": {**_w("idle", pr(12)), "slug": "Delitefully/athena"},
+                            "b": {**_w("idle", pr(13)), "slug": None},
+                            "c": _w("working")},
+                "stacks": {"o/stack#5856": "OPEN base=main MERGEABLE"}}
+        b = watch.board(snap, notes="")
+        self.assertEqual(b["prs"], ["#12", "#13", "#5856"])
+        self.assertEqual(b["links"], {"12": "Delitefully/athena", "5856": "o/stack"})
+        self.assertEqual(b["repos"], {"a": "Delitefully/athena"})
+        self.assertNotIn("dash", b)
+
+    def test_a_number_two_repos_share_links_nowhere(self):
+        snap = {"workers": {"a": {**_w("idle", {"state": "OPEN", "number": 7}), "slug": "o/one"}},
+                "stacks": {"o/two#7": "OPEN base=main MERGEABLE"}}
+        self.assertEqual(watch.board(snap, notes="")["links"], {})
+
+    def test_needs_you_notes_name_prs_but_give_no_links(self):
+        snap = {"workers": {}}
+        b = watch.board(snap, notes="- merge https://github.com/o/r/pull/9\n")
+        self.assertEqual((b["prs"], b["links"]), (["#9"], {}))
+
+    def test_the_dash_url_while_it_runs(self):
+        b = watch.board({"workers": {}, "dash": "http://127.0.0.1:28431/"}, notes="")
+        self.assertEqual(b["dash"], "http://127.0.0.1:28431/")
+
+    def test_step_records_the_running_dash_and_nothing_once_it_stops(self):
+        with mock.patch.object(watch.dash, "running", return_value={"url": "http://127.0.0.1:2843/", "pid": 1}), \
+                mock.patch.object(watch, "snapshot", return_value={"workers": {}, "mains": {}}), \
+                mock.patch.object(watch.spawn, "deliver_pending", return_value=[]):
+            cur, _ = watch.step(None)
+            self.assertEqual(cur["dash"], "http://127.0.0.1:2843/")
+            watch.dash.running.return_value = None
+            cur, _ = watch.step(None)
+            self.assertIsNone(cur["dash"])
+
+    def test_origin_slug_of_a_repo(self):
+        repo = helpers_repo(self.tmp.name, "git@github.com:Delitefully/athena.git")
+        self.assertEqual(watch.repo_slug(repo), "Delitefully/athena")
+        other = helpers_repo(self.tmp.name + "/x", "/private/tmp/lab/origin.git")
+        self.assertIsNone(watch.repo_slug(other))
+        self.assertIsNone(watch.repo_slug(self.tmp.name + "/missing"))
+
+
+def helpers_repo(path, remote):
+    import os
+    import subprocess
+    os.makedirs(path, exist_ok=True)
+    subprocess.run(["git", "init", "-q", path], check=True)
+    subprocess.run(["git", "-C", path, "remote", "add", "origin", remote], check=True)
+    return path
+
+
 class StackTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -224,14 +291,15 @@ class TaggedTest(unittest.TestCase):
     def test_tagged_lines_and_status_once_per_change(self):
         snap = {"workers": {"a": _w("working")}}
         rows, last = self._emit(["watching: a=working"], snap, tagged=True)
-        board = {"needs": [], "prs": [], "active": [["working", ["a"]]], "done": []}
+        board = {"needs": [], "prs": [], "active": [["working", ["a"]]], "done": [], "links": {}, "repos": {}}
         self.assertEqual(rows, [{"line": "watching: a=working", "wake": False}, {"status": "a working", "board": board}])
         rows, last = self._emit([], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [])
         snap = {"workers": {"a": _w("done", report={"status": "DONE"})}}
         rows, _ = self._emit(["a state working->done", "a report DONE"], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [{"line": "a state working->done", "wake": False}, {"line": "a report DONE", "wake": True},
-                                {"status": "a done", "board": {"needs": [], "prs": [], "active": [], "done": ["a"]}}])
+                                {"status": "a done", "board": {"needs": [], "prs": [], "active": [], "done": ["a"],
+                                                                "links": {}, "repos": {}}}])
 
     def test_tagged_gone_after_retire_stays_quiet(self):
         ledger.append("spawn", "a")

@@ -257,9 +257,107 @@ export type Board = {
   /** [state, workers] per active state: working, idle, starting */
   active: [string, string[]][]
   done: string[]
+  /** `owner/repo` per PR number the watch knows from the ledger: a live worker's repo, or a stack's. */
+  links?: Record<string, string>
+  /** `owner/repo` per live worker, from its repo's origin remote. */
+  repos?: Record<string, string>
+  /** The local dashboard's URL while it runs, as `athena dash show` reads it. */
+  dash?: string
 }
 
-export type Segment = { text: string; tone: 'needs' | 'active' | 'done' }
+export type Segment = { text: string; tone: 'needs' | 'active' | 'done' | 'dash'; href?: string }
+
+/** One run of drawn text: plain, or a masked link to `href`. */
+export type Part = { text: string; href?: string }
+
+const SLUG = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
+
+/**
+ * A PR's page, built only from an `owner/repo` the watch read from the ledger (never from worker, GitHub or PR
+ * text) and a number. Undefined when either is not one, so the PR draws as plain `#n`.
+ */
+export function prUrl(repo: string | undefined, n: string | number): string | undefined {
+  const num = String(n)
+  if (!repo || !SLUG.test(repo) || !/^\d{1,7}$/.test(num)) return undefined
+  return `https://github.com/${repo}/pull/${num}`
+}
+
+/** `owner/repo` of a GitHub remote, https or ssh; undefined for any other remote. */
+export function repoSlug(remote: string): string | undefined {
+  const m = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(remote.trim())
+  return m && SLUG.test(m[1]!) ? m[1] : undefined
+}
+
+/** A drawn text split around each `#n`, each with its link where `href` knows one. */
+export function linkParts(text: string, href: (n: string) => string | undefined): Part[] {
+  const parts: Part[] = []
+  let at = 0
+  for (const m of text.matchAll(/#(\d{1,7})\b/g)) {
+    if (m.index! > at) parts.push({ text: text.slice(at, m.index) })
+    const url = href(m[1]!)
+    parts.push(url ? { text: m[0], href: url } : { text: m[0] })
+    at = m.index! + m[0].length
+  }
+  if (at < text.length || !parts.length) parts.push({ text: text.slice(at) })
+  return parts
+}
+
+/** A PR number's link on the band: by the board's links, plain when it knows none. */
+export function boardHref(b: Board | undefined): (n: string) => string | undefined {
+  return n => prUrl(b?.links?.[n], n)
+}
+
+/** A wake event's parts: a PR it names links by the worker the event is about, else by the board's links. */
+export function eventParts(event: string, b: Board | undefined): Part[] {
+  const worker = /^([a-z][a-z0-9_-]{0,31}) /.exec(event)?.[1]
+  const repo = worker ? b?.repos?.[worker] : undefined
+  return linkParts(event, n => prUrl(repo ?? b?.links?.[n], n))
+}
+
+/** FORCE_HYPERLINK, then the terminals Claude Code 2.1.296 draws OSC 8 links for (else it adds the raw URL). */
+const LINKING = ['ghostty', 'Hyper', 'kitty', 'alacritty', 'iTerm.app', 'iTerm2', 'WarpTerminal', 'WezTerm', 'vscode']
+
+/**
+ * Whether the engine draws a `Link` as a masked OSC 8 span: a mirror of Claude Code's own check, read from the same
+ * variables. Where it does not (herdr unless FORCE_HYPERLINK is set), the mod draws plain text instead of the
+ * engine's `label URL` fallback. A wrong answer costs little: false draws plain text, true the engine's fallback.
+ */
+export function hyperlinks(env: Readonly<Record<string, string | undefined>>): boolean {
+  const force = env.FORCE_HYPERLINK
+  if (force !== undefined) return !(force.length > 0 && parseInt(force, 10) === 0)
+  const program = env.TERM_PROGRAM
+  if (program && LINKING.includes(program)) return true
+  if (env.LC_TERMINAL && LINKING.includes(env.LC_TERMINAL)) return true
+  if (env.TERM?.includes('kitty') || env.TERM === 'alacritty') return true
+  if (env.TERMINAL_EMULATOR === 'JetBrains-JediTerm') return true
+  if (env.WT_SESSION && program !== 'tmux' && !env.TMUX) return true
+  if (program === 'tmux') {
+    const [major, minor] = (env.TERM_PROGRAM_VERSION ?? '').split('.').map(x => parseInt(x, 10))
+    if (major! > 3 || (major === 3 && minor! >= 4)) return true
+  }
+  if (env.VTE_VERSION && env.VTE_VERSION !== '0.50.0') {
+    const v = env.VTE_VERSION
+    const minor = /^\d{3,4}$/.test(v) ? parseInt(v.slice(0, -2), 10) : parseInt(v.split('.')[1] ?? '', 10)
+    const major = /^\d{3,4}$/.test(v) ? 0 : parseInt(v.split('.')[0] ?? '', 10)
+    if (major > 0 || minor >= 50) return true
+  }
+  return false
+}
+
+/** The variables `hyperlinks` reads. */
+export const LINK_ENV = [
+  'FORCE_HYPERLINK',
+  'TERM_PROGRAM',
+  'TERM_PROGRAM_VERSION',
+  'LC_TERMINAL',
+  'TERM',
+  'TERMINAL_EMULATOR',
+  'WT_SESSION',
+  'TMUX',
+  'VTE_VERSION',
+] as const
+
+export const DASH_LINK = 'open dash →'
 
 /** Width of the ` · ` between segments. */
 export const GAP = 3
@@ -287,8 +385,9 @@ function prsCounted(b: Board): string[] {
  * the PRs, then the needs; whatever is still too wide is cut by the drawing.
  */
 export function fitStatus(b: Board, columns: number): Segment[] {
+  const dash: Segment[] = b.dash ? [{ text: DASH_LINK, tone: 'dash', href: b.dash }] : []
   if (!b.needs.length && !b.prs.length && !b.active.length && !b.done.length) {
-    return [{ text: 'no live workers', tone: 'active' }]
+    return [{ text: 'no live workers', tone: 'active' }, ...dash]
   }
   const activeNamed = b.active.map(([state, names]) => `${names.join(', ')} ${state}`)
   const activeCounted = b.active.map(([state, names]) => `${names.length} ${state}`)
@@ -301,11 +400,12 @@ export function fitStatus(b: Board, columns: number): Segment[] {
     [b.needs, prsCounted(b), activeCounted, doneCounted],
     [needsCounted(b), prsCounted(b), activeCounted, doneCounted],
   ]
-  const segments = ([needs, prs, active, done]: [string[], string[], string[], string[]]): Segment[] => [
-    ...[...needs, ...prs].map(text => ({ text, tone: 'needs' as const })),
-    ...active.map(text => ({ text, tone: 'active' as const })),
-    ...done.map(text => ({ text, tone: 'done' as const })),
-  ]
+  // The dash link sits right after what needs the human, or at the end when nothing does.
+  const segments = ([needs, prs, active, done]: [string[], string[], string[], string[]]): Segment[] => {
+    const urgent = [...needs, ...prs].map(text => ({ text, tone: 'needs' as const }))
+    const rest = [...active.map(text => ({ text, tone: 'active' as const })), ...done.map(text => ({ text, tone: 'done' as const }))]
+    return urgent.length ? [...urgent, ...dash, ...rest] : [...rest, ...dash]
+  }
   for (const level of levels) {
     const s = segments(level)
     if (s.reduce((n, x) => n + x.text.length, 0) + GAP * (s.length - 1) <= columns) return s
@@ -321,7 +421,20 @@ export function readBoard(value: unknown): Board | undefined {
   const active = Array.isArray(v.active)
     ? v.active.flatMap(g => (Array.isArray(g) && typeof g[0] === 'string' ? [[g[0], strings(g[1])] as [string, string[]]] : []))
     : []
-  return { needs: strings(v.needs), prs: strings(v.prs), active, done: strings(v.done) }
+  const map = (x: unknown, key: RegExp) =>
+    x && typeof x === 'object' && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x).filter((kv): kv is [string, string] => key.test(kv[0]) && typeof kv[1] === 'string' && SLUG.test(kv[1])))
+      : {}
+  const dash = typeof v.dash === 'string' && /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}\/$/.test(v.dash) ? v.dash : undefined
+  return {
+    needs: strings(v.needs),
+    prs: strings(v.prs),
+    active,
+    done: strings(v.done),
+    links: map(v.links, /^\d{1,7}$/),
+    repos: map(v.repos, /^[a-z][a-z0-9_-]{0,31}$/),
+    dash,
+  }
 }
 
 /** How long to wait before starting the watch again: doubles per quick exit, from 5 s up to a minute. */
@@ -413,8 +526,12 @@ export function clean(text: string): string {
   return text.replace(UNSAFE, '')
 }
 
-/** What the completion block shows: the status in its word and colour, the PR as `#n` with its head, the rest. */
-export function reportView(raw: Report): ReportView {
+/**
+ * What the completion block shows: the status in its word and colour, the PR as `#n` with its head, the rest. The
+ * PR links to its page in `repo`, the worker's own repo from its origin remote: the report's URL gives only the
+ * number, and a URL into another repo draws as plain `owner/repo#n`.
+ */
+export function reportView(raw: Report, repo?: string): ReportView {
   const r: Report = {
     status: clean(raw.status),
     pr: raw.pr === undefined ? undefined : clean(raw.pr),
@@ -424,13 +541,22 @@ export function reportView(raw: Report): ReportView {
     concerns: raw.concerns.map(clean),
   }
   const look = LOOKS[r.status.toUpperCase()] ?? { text: r.status, color: undefined }
-  const m = /^https?:\/\/\S+\/pull\/(\d+)\/?$/.exec(r.pr ?? '')
   return {
     status: look,
-    pr: r.pr ? { href: m ? r.pr : undefined, label: m ? `#${m[1]}` : r.pr } : undefined,
+    pr: r.pr ? prView(r.pr, repo) : undefined,
     head: r.head ? r.head.slice(0, 7) : undefined,
     verify: r.verify || undefined,
     decisions: r.decisions,
     concerns: r.concerns,
   }
+}
+
+function prView(pr: string, repo: string | undefined): { href: string | undefined; label: string } {
+  const url = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d{1,7})\/?$/.exec(pr)
+  const n = url?.[2] ?? /^#?(\d{1,7})$/.exec(pr)?.[1]
+  if (!n) return { href: undefined, label: pr }
+  if (url && url[1]!.toLowerCase() !== repo?.toLowerCase()) {
+    return { href: undefined, label: repo ? `${url[1]}#${n}` : `#${n}` }
+  }
+  return { href: prUrl(repo, n), label: `#${n}` }
 }
