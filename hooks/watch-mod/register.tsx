@@ -34,7 +34,7 @@ async function watch($: EngineInterface): Promise<void> {
   const command = (await $.env.get('ATHENA_WATCH_CMD')) || `${$.plugin.root}/bin/athena`
   let quickExits = 0
   for (;;) {
-    $.ui.status('athena · watch starting')
+    $.ui.status('watch starting')
     const startedAt = Date.now()
     let rest = ''
     let errors = ''
@@ -67,7 +67,7 @@ async function watch($: EngineInterface): Promise<void> {
     const lastError = errors.trim().split('\n').pop()
     // Told once per run of quick exits, so a watch that cannot start does not wake HQ every minute.
     if (quickExits <= 1) w.add(`watch error: athena watch exited (${how})${lastError ? `: ${lastError}` : ''}; restarting`)
-    $.ui.status(`athena · watch exited (${how}); restarting in ${Math.round(delay / 1000)}s`)
+    $.ui.status(`watch exited (${how}); restarting in ${Math.round(delay / 1000)}s`)
     await new Promise<void>(resolve => $.clock.after(delay, resolve))
   }
 }

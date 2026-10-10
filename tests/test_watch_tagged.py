@@ -81,7 +81,7 @@ def _w(state, pr=None, report=None):
 class SummaryTest(unittest.TestCase):
     def test_last_state_per_worker_most_urgent_first(self):
         snap = {"workers": {"pr6519": _w("working"), "plt-4041": _w("done"), "plt-9": _w("blocked")}}
-        self.assertEqual(watch.summary(snap), "athena · plt-9 blocked · plt-4041 done · pr6519 working")
+        self.assertEqual(watch.summary(snap), "plt-9 blocked · plt-4041 done · pr6519 working")
 
     def test_prs_that_need_the_human(self):
         approved = {"state": "OPEN", "draft": True, "review": "APPROVED"}
@@ -95,7 +95,7 @@ class SummaryTest(unittest.TestCase):
 
     def test_conflicting_stack_needs_the_human(self):
         snap = {"workers": {}, "stacks": {"o/r#1": "OPEN base=a CONFLICTING", "o/r#2": "OPEN base=a MERGEABLE"}}
-        self.assertEqual(watch.summary(snap), "athena · no live workers · 1 PR needs you")
+        self.assertEqual(watch.summary(snap), "no live workers · 1 PR needs you")
 
 
 class StackTest(unittest.TestCase):
@@ -181,13 +181,13 @@ class TaggedTest(unittest.TestCase):
     def test_tagged_lines_and_status_once_per_change(self):
         snap = {"workers": {"a": _w("working")}}
         rows, last = self._emit(["watching: a=working"], snap, tagged=True)
-        self.assertEqual(rows, [{"line": "watching: a=working", "wake": False}, {"status": "athena · a working"}])
+        self.assertEqual(rows, [{"line": "watching: a=working", "wake": False}, {"status": "a working"}])
         rows, last = self._emit([], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [])
         snap = {"workers": {"a": _w("done", report={"status": "DONE"})}}
         rows, _ = self._emit(["a state working->done", "a report DONE"], snap, tagged=True, last_status=last)
         self.assertEqual(rows, [{"line": "a state working->done", "wake": False}, {"line": "a report DONE", "wake": True},
-                                {"status": "athena · a done"}])
+                                {"status": "a done"}])
 
     def test_tagged_gone_after_retire_stays_quiet(self):
         ledger.append("spawn", "a")

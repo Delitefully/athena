@@ -39,10 +39,10 @@ function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {
 
 describe('readRecords', () => {
   test('joins pieces into lines and parses tagged records', () => {
-    const a = readRecords('', '{"line":"a report DONE","wake":true}\n{"status":"athena · a do')
+    const a = readRecords('', '{"line":"a report DONE","wake":true}\n{"status":"a do')
     expect(a.records).toEqual([{ line: 'a report DONE', wake: true }])
     const b = readRecords(a.rest, 'ne"}\n{"line":"a state working->idle","wake":false}\n')
-    expect(b.records).toEqual([{ status: 'athena · a done' }, { line: 'a state working->idle', wake: false }])
+    expect(b.records).toEqual([{ status: 'a done' }, { line: 'a state working->idle', wake: false }])
     expect(b.rest).toBe('')
   })
 

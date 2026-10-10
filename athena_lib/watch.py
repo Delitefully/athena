@@ -161,14 +161,15 @@ def _needs_you(w) -> bool:
 
 
 def summary(snap) -> str:
-    """The status line: each worker's last state, most urgent first, and how many PRs wait on the human."""
+    """The status line (Claude Code shows it as `athena: <this>`): each worker's last state, most urgent first,
+    and how many PRs wait on the human."""
     workers = snap.get("workers", {})
     parts = [f"{n} {w.get('state')}" for n, w in sorted(workers.items(), key=lambda kv: (status.urgency(kv[1].get("state")), kv[0]))]
     need = sum(1 for w in workers.values() if _needs_you(w))
     need += sum(1 for v in (snap.get("stacks") or {}).values() if v.startswith("OPEN") and v.endswith(" CONFLICTING"))
     if need:
         parts.append(f"{need} PR needs you" if need == 1 else f"{need} PRs need you")
-    return " · ".join(["athena"] + (parts if workers else ["no live workers"] + parts))
+    return " · ".join(parts if workers else ["no live workers"] + parts)
 
 
 def _retired() -> set:
