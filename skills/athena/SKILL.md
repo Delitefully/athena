@@ -10,7 +10,7 @@ description: Chief-of-staff procedures for the hq session - turning Linear ticke
 ## 1. Session start (and after a restart or compaction)
 
 1. `athena status --pr` to see every live worker, its state, git and PR.
-2. Do not arm Monitor for `athena watch`: the athena-watch mod in this plugin runs it for the whole session (HQ only, `ATHENA_ROLE=hq`), restarts it if it exits, and keeps a one-line summary under the prompt for the human. Routine changes never reach you. A change you must act on arrives as one short prompt, `athena watch: <line> · <line>`, sent when you are idle; lines that arrive together come as one. Check it runs with `pgrep -fl 'athena watch --tagged'`. **Fallback** when nothing runs (the mod is not loaded: Claude Code older than 2.1.286, mods turned off, or the plugin not reloaded since an update): arm the Monitor tool yourself, command `athena watch`, `timeout_ms` 1800000, and re-arm it on its expiry notice and after a restart. Workers' SendMessage reports wake you either way.
+2. Do not arm Monitor for `athena watch`: the athena-watch mod in this plugin runs it for the whole session (HQ only, `ATHENA_ROLE=hq`), restarts it if it exits, and keeps a one-line status band above the prompt for the human. Routine changes never reach you. A change you must act on arrives as one short prompt, `athena watch HH:MM:` then one line per event, sent when you are idle; lines that arrive together come as one, and the same line is not sent again within ten minutes. The mod submits it bare (as the person's words, so the human's row carries no plugin boilerplate): it is the mod's notice, not the human talking. Check it runs with `pgrep -fl 'athena watch --tagged'`. **Fallback** when nothing runs (the mod is not loaded: Claude Code older than 2.1.286, mods turned off, or the plugin not reloaded since an update): arm the Monitor tool yourself, command `athena watch`, `timeout_ms` 1800000, and re-arm it on its expiry notice and after a restart. Workers' SendMessage reports wake you either way.
 3. `athena board on` if the board watcher is not running (`athena board show` lists columns), and `athena dash on` if the dashboard is not (`athena dash show` prints its URL).
 4. Tell the human, in at most five lines: what needs them, then one line per worker.
 
@@ -64,7 +64,7 @@ Exit code 3 means the worker is live but pending: its Claude stopped at a startu
 
 ## 3. Reacting to `athena watch` lines
 
-The mod sends only the lines below that need you (`athena watch: <line> · <line>`); working/idle flips, pending or green checks, `done->idle`, the `watching:` line and a retired worker's `gone` line only update its status line. Under the Monitor fallback every line arrives: act on these, and let the rest pass without a reply.
+The mod sends only the lines below that need you (`athena watch HH:MM:`, then one per line); working/idle flips, pending or green checks, `done->idle`, the `watching:` line and a retired worker's `gone` line only update its status band. Under the Monitor fallback every line arrives: act on these, and let the rest pass without a reply.
 
 **Stacked PRs.** When you set up a chain of stacked PRs, register it: `athena stack set <owner/repo> <pr> <pr> ...` (bottom first; it replaces that repo's chain in `stack.json`). `athena stack clear <owner/repo>` once the chain is merged, `athena stack` to show it. `athena watch` checks each PR's state, base and mergeability every two minutes and says `stack <owner/repo>#<n>: <before> -> <after>`; a merge or a new conflict needs you, a retargeted base does not.
 
