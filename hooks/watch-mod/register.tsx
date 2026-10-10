@@ -38,6 +38,8 @@ let waker: Waker | undefined
 /** What the band shows: the board from the last status record, or a note while the watch starts or restarts. */
 let board: Board | undefined
 let note: string | undefined
+/** The last wake, drawn as athena's styled row at the top of the band until the person next types a prompt. */
+let lastWake: { time: string | undefined; events: string[] } | undefined
 
 /** The `env` of the settings files, or nothing where they cannot be read. */
 async function settingsEnv($: EngineInterface): Promise<Record<string, unknown>> {
@@ -100,7 +102,11 @@ async function watch($: EngineInterface): Promise<void> {
     // asUser: stored bare, so the row shows the `athena watch HH:MM:` prompt without the engine's plugin frame and
     // its "This is how Claude Code surfaces a prompt..." sentence. The header names the mod; hq.md and the skill tell the
     // model it is the mod's notice, not the human.
-    submit: text => $.prompt.submit({ text, asUser: true }),
+    submit: text => {
+      lastWake = parseWake(text)
+      $.ui.invalidate('ui.render')
+      return $.prompt.submit({ text, asUser: true })
+    },
     after: (ms, fn) => $.clock.after(ms, fn),
     now: () => Date.now(),
     stamp: () => clockText(Date.now(), offset),
@@ -165,6 +171,15 @@ export const register: Register = on => {
     return started
   })
 
+  // The person typed: they have seen the last wake, so its row leaves the band.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'composer' && lastWake) {
+      lastWake = undefined
+      $.ui.invalidate('ui.render')
+    }
+    return next(e)
+  })
+
   on('turn.start', async ($, e, next) => {
     waker?.turnStarted()
     return next(e)
@@ -197,34 +212,62 @@ export const register: Register = on => {
     )
   })
 
-  // The status band above the prompt: athena's mark, then what needs the human (warning), the active workers, and
-  // the done ones (success), folded to fit one line. Another plugin's band still draws under it.
+  // The band above the prompt. On top, the last wake as athena's own row: its mark, a dim time, one event per line
+  // (the transcript's row of it is the engine's to draw). Then the status: what needs the human (warning), the
+  // active workers, and the done ones (success), folded to fit one line. Another plugin's band still draws under it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(board || note) || !(await isHq($))) return next(e)
+    if (e.props.hasSurvey || !(board || note || lastWake) || !(await isHq($))) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const head = `${MARK} athena`
+    const indent = ' '.repeat(head.length + 1)
     const segments = board && !note ? fitStatus(board, e.props.bodyColumns - head.length - 1) : []
+    const status = note ? (
+      <Text dimColor>{note}</Text>
+    ) : (
+      segments.map((s, i) => (
+        <Text>
+          {i ? <Text dimColor>{' · '}</Text> : ''}
+          <Text color={TONE[s.tone]}>{s.text}</Text>
+        </Text>
+      ))
+    )
     const theirs = await next(e)
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row">
-          <Text wrap="truncate-end">
-            <Text color={MADDER} bold>
-              {head}
-            </Text>
-            {' '}
-            {note ? (
-              <Text dimColor>{note}</Text>
-            ) : (
-              segments.map((s, i) => (
-                <Text>
-                  {i ? <Text dimColor>{' · '}</Text> : ''}
-                  <Text color={TONE[s.tone]}>{s.text}</Text>
+        {lastWake ? (
+          <Box flexDirection="row" columnGap={1}>
+            <Box flexShrink={0}>
+              <Text color={MADDER} bold>
+                {head}
+              </Text>
+            </Box>
+            {lastWake.time ? (
+              <Box flexShrink={0}>
+                <Text dimColor>{lastWake.time}</Text>
+              </Box>
+            ) : null}
+            <Box flexDirection="column" flexShrink={1}>
+              {lastWake.events.map(event => (
+                <Text wrap="truncate-end">{event}</Text>
+              ))}
+            </Box>
+          </Box>
+        ) : null}
+        {board || note ? (
+          <Box flexDirection="row">
+            <Text wrap="truncate-end">
+              {lastWake ? (
+                <Text>{indent}</Text>
+              ) : (
+                <Text color={MADDER} bold>
+                  {head}
                 </Text>
-              ))
-            )}
-          </Text>
-        </Box>
+              )}
+              {lastWake ? '' : ' '}
+              {status}
+            </Text>
+          </Box>
+        ) : null}
         {theirs}
       </Box>
     )

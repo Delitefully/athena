@@ -73,6 +73,59 @@ export function clockText(ms: number, offsetMinutes: number): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
+// The words a wake may carry. HQ reads a wake as the person's own words (it is submitted asUser), so no text a
+// worker, GitHub or a PR controls may reach it: every line is rebuilt from these, and anything else is held back.
+const NAME = '[a-z0-9][a-z0-9_-]{0,31}'
+const STATE = '(?:working|idle|done|blocked|exited|starting|unknown)'
+const REPORT = '(?:DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)'
+const CHECK = '(?:none|pending|success|failure)'
+const EXIT = '(?:code -?\\d{1,3}|signal SIG[A-Z0-9]{1,10})'
+
+/** Lines allowed as they are, each regex anchored. */
+const EXACT = [
+  `${NAME} report ${REPORT}`,
+  `${NAME} state ${STATE}->${STATE}(?: \\(startup prompt\\))?`,
+  `${NAME} pr (?:merged|closed|open)`,
+  `${NAME} checks ${CHECK}->${CHECK}`,
+  `${NAME} review (?:CHANGES_REQUESTED|APPROVED|REVIEW_REQUIRED)`,
+  `${NAME} review comments \\+\\d{1,4}`,
+  `[A-Za-z0-9._-]{1,64} main moved [0-9a-f]{7}\\.\\.[0-9a-f]{7}`,
+  `${NAME} gone from the ledger`,
+  `${NAME} new worker \\(${STATE}(?:, startup prompt)?\\)`,
+  `${NAME} goal sent`,
+  `watch error: exited \\(${EXIT}\\); restarting`,
+].map(r => new RegExp(`^${r}$`))
+
+/** Lines that carry free text, reduced to their allowlisted part. */
+const REDUCED: [RegExp, (m: RegExpExecArray) => string][] = [
+  [new RegExp(`^(${NAME}) pr opened https://github\\.com/[\\w.-]+/[\\w.-]+/pull/(\\d{1,7})$`), m => `${m[1]} pr opened #${m[2]}`],
+  [
+    /^stack [\w.-]+\/[\w.-]+#(\d{1,7}): \S.* -> (OPEN|MERGED|CLOSED) base=\S+(?: DRAFT)? (MERGEABLE|CONFLICTING|UNKNOWN)$/,
+    m => (m[2] === 'OPEN' ? `stack #${m[1]}: OPEN ${m[3]}` : `stack #${m[1]}: ${m[2]}`),
+  ],
+  [new RegExp(`^(${NAME}) goal not sent: .+$`), m => `${m[1]} goal not sent`],
+  [
+    new RegExp(`^(${NAME}) goal unconfirmed \\(.*\\): check its pane, do not resend blindly$`),
+    m => `${m[1]} goal unconfirmed: check its pane, do not resend blindly`,
+  ],
+  [new RegExp(`^watch error: exited \\((${EXIT})\\): .*; restarting$`), m => `watch error: exited (${m[1]}); restarting`],
+  [/^watch error\b.*$/, () => 'watch error (athena status)'],
+]
+
+/** What a wake says in place of a line it may not carry, so HQ still looks. */
+export const HELD = 'a watch line not shown here (athena status)'
+
+/** A watch line in the words a wake may carry, or undefined when it holds anything else. */
+export function allowLine(line: string): string | undefined {
+  if (/[\r\n]/.test(line)) return undefined
+  if (EXACT.some(r => r.test(line))) return line
+  for (const [r, rebuild] of REDUCED) {
+    const m = r.exec(line)
+    if (m) return rebuild(m)
+  }
+  return undefined
+}
+
 export type Timer = { cancel: () => void }
 
 export type WakerOptions = {
@@ -94,8 +147,9 @@ export type WakerOptions = {
 
 /**
  * Holds actionable lines and submits them as one prompt: after a short quiet window, never while HQ runs a turn
- * (they wait for its end, then go out together), and never while an earlier submit is still on its way. A line
- * already told in the last ten minutes is dropped, so a worker that ends blocked twice wakes HQ once.
+ * (they wait for its end, then go out together), and never while an earlier submit is still on its way. Each line
+ * is rebuilt from allowLine's words first (one it cannot rebuild goes out as HELD); a line already told in the last
+ * ten minutes is dropped, so a worker that ends blocked twice wakes HQ once.
  */
 export class Waker {
   private pending: string[] = []
@@ -112,8 +166,9 @@ export class Waker {
     this.told = new Map(Object.entries(opts.sent ?? {}))
   }
 
-  add(line: string): void {
-    const last = this.told.get(line)
+  add(raw: string): void {
+    const line = allowLine(raw) ?? HELD
+    const last = line === HELD ? undefined : this.told.get(line)
     if (last !== undefined && this.opts.now() - last < this.repeatMs) return
     if (!this.pending.includes(line)) this.pending.push(line)
     this.schedule()
@@ -144,6 +199,7 @@ export class Waker {
     const now = this.opts.now()
     for (const [line, when] of this.told) if (now - when >= this.repeatMs) this.told.delete(line)
     for (const line of lines) {
+      if (line === HELD) continue
       if (at === undefined) this.told.delete(line)
       else this.told.set(line, at)
     }
