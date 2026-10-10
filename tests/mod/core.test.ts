@@ -547,21 +547,21 @@ describe('links', () => {
     expect(eventParts('stack #5856: MERGED', named)[1]).toEqual({ text: '#5856', href: 'https://github.com/o/stack/pull/5856' })
   })
 
-  test('the dash link sits right after what needs the human, or at the end, and only while the dash runs', () => {
+  test('the dash link is always the last segment, with or without what needs the human, and only while the dash runs', () => {
     const base: Board = { needs: ['a blocked'], prs: ['#7'], active: [['working', ['w']]], done: ['d'] }
     const dash = 'http://127.0.0.1:28431/'
     const segs = (b: Board, columns = 200) => fitStatus(b, columns).map(s => `${s.tone}:${s.text}${s.href ? `@${s.href}` : ''}`)
     expect(segs({ ...base, dash })).toEqual([
       'needs:a blocked',
       'needs:#7 needs you',
-      `dash:open dash →@${dash}`,
       'active:w working',
       'done:✓ d done',
+      `dash:open dash →@${dash}`,
     ])
     expect(segs({ ...base, needs: [], prs: [], dash })).toEqual(['active:w working', 'done:✓ d done', `dash:open dash →@${dash}`])
     expect(segs({ needs: [], prs: [], active: [], done: [], dash })).toEqual(['active:no live workers', `dash:open dash →@${dash}`])
     expect(segs(base)).not.toContain(`dash:open dash →@${dash}`)
-    expect(segs({ ...base, dash }, 63)).toContain(`dash:open dash →@${dash}`)
+    expect(segs({ ...base, dash }, 63).at(-1)).toBe(`dash:open dash →@${dash}`)
   })
 
   test("names and #n outrank the dash link: at HQ's width it goes before anything folds", () => {
@@ -570,7 +570,7 @@ describe('links', () => {
     // 70 columns less `∞ athena `: 61. In full the line is 55 wide, 69 with the link.
     expect(fitStatus(b, 61).map(s => s.text)).toEqual(named)
     for (let columns = 55; columns <= 68; columns++) expect(fitStatus(b, columns).map(s => s.text)).toEqual(named)
-    expect(fitStatus(b, 69).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'open dash →', 'w working', '✓ d, e done'])
+    expect(fitStatus(b, 69).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ d, e done', 'open dash →'])
     // Narrower, the done ones fold to a count and the names stay (with the link this fold is 66 wide).
     expect(fitStatus(b, 54).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
     expect(fitStatus(b, 52).map(s => s.text)).toEqual(['a blocked', '#1 #2 #3 need you', 'w working', '✓ 2 done'])
