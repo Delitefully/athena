@@ -85,7 +85,10 @@ def set_stack(repo: str, prs) -> list:
         old = [c["repo"] for c in stacks()]
         chains.insert(old.index(repo) if repo in old else len(chains), mine)
     paths.ensure()
-    _stack_file().write_text(json.dumps({"stacks": chains}, indent=2) + "\n")
+    target = _stack_file()
+    tmp = target.with_suffix(".json.tmp%d" % os.getpid())
+    tmp.write_text(json.dumps({"stacks": chains}, indent=2) + "\n")
+    os.replace(tmp, target)  # a watch tick never reads it half-written
     return chains
 
 

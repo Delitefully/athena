@@ -116,6 +116,7 @@ class StackTest(unittest.TestCase):
         self.assertEqual(json.loads((paths.state_dir() / "stack.json").read_text())["stacks"][1]["repo"], "o/other")
         watch.set_stack("o/platform", [])
         self.assertEqual(watch.stacks(), [{"repo": "o/other", "prs": [12]}])
+        self.assertEqual([p.name for p in paths.state_dir().iterdir() if p.name.startswith("stack")], ["stack.json"])
 
     def test_unreadable_stack_file_is_no_stack(self):
         paths.ensure()

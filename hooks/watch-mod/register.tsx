@@ -12,11 +12,12 @@ let role: Promise<boolean> | undefined
 let isWatching = false
 let waker: Waker | undefined
 
+// HQ only: ATHENA_ROLE=hq, and never a worker, even one that inherited HQ's environment.
 async function readRole($: EngineInterface): Promise<boolean> {
-  const fromEnv = await $.env.get('ATHENA_ROLE')
-  if (fromEnv !== undefined) return fromEnv === 'hq'
   const env = (await $.settings.read()).env as Record<string, unknown> | undefined
-  return env?.ATHENA_ROLE === 'hq'
+  const role = (await $.env.get('ATHENA_ROLE')) ?? env?.ATHENA_ROLE
+  const worker = (await $.env.get('ATHENA_WORKER')) ?? env?.ATHENA_WORKER
+  return role === 'hq' && !worker
 }
 
 // Read lazily and once: a render on --resume can come before session.start settles.
@@ -109,6 +110,8 @@ export const register: Register = on => {
   // A Monitor's events, end and expiry notices are task-notification rows. Drawing changes the row alone, never
   // what the model read; under ctrl+o (isExpanded) they draw in full.
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } }, async ($, e, next) =>
-    !e.props.isExpanded && isMonitorNotice(e.props.text) && (await isHq($)) ? hidden($, e) : next(e),
+    // The task carries no tool name (2.1.296: id, status, type, toolUseId; a Monitor's event rows only an id), so
+    // a Monitor's rows are told by the engine's own text for them.
+    !e.props.isExpanded && e.props.task && isMonitorNotice(e.props.text) && (await isHq($)) ? hidden($, e) : next(e),
   )
 }
