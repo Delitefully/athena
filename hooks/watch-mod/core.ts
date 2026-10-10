@@ -255,3 +255,86 @@ export function restartDelay(quickExits: number): number {
 export function isMonitorNotice(text: string): boolean {
   return /^\[?Monitor (event:|")/.test(text) || /^\[?Monitor expired\b/.test(text)
 }
+
+/** A worker's ATHENA-REPORT, as its final message carries it. */
+export type Report = {
+  status: string
+  pr?: string
+  head?: string
+  verify?: string
+  decisions: string[]
+  concerns: string[]
+}
+
+const REPORT_LINE = /^`?ATHENA-REPORT\s+(\{.*\})`?$/
+const FENCE = /^```\w*$/
+
+/**
+ * The ATHENA-REPORT line of a message, parsed, with the text before and after it (a code fence around the line
+ * goes with it). Undefined when there is none or its JSON does not parse to an object with a status.
+ */
+export function splitReport(text: string): { before: string; after: string; report: Report } | undefined {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = REPORT_LINE.exec(lines[i]!.trim())
+    if (!m) continue
+    let value: unknown
+    try {
+      value = JSON.parse(m[1]!)
+    } catch {
+      return undefined
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const v = value as Record<string, unknown>
+    if (typeof v.status !== 'string') return undefined
+    const str = (x: unknown) => (typeof x === 'string' ? x : undefined)
+    const list = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [])
+    const fenced = i > 0 && i < lines.length - 1 && FENCE.test(lines[i - 1]!.trim()) && lines[i + 1]!.trim() === '```'
+    const from = fenced ? i - 1 : i
+    const to = fenced ? i + 2 : i + 1
+    return {
+      before: lines.slice(0, from).join('\n').trim(),
+      after: lines.slice(to).join('\n').trim(),
+      report: {
+        status: v.status,
+        pr: str(v.pr),
+        head: str(v.head),
+        verify: str(v.verify),
+        decisions: list(v.decisions),
+        concerns: list(v.concerns),
+      },
+    }
+  }
+  return undefined
+}
+
+/** Needs context: an orange between the theme's warning and error. */
+export const ORANGE = '#E8913A'
+
+const LOOKS: Record<string, { text: string; color: string }> = {
+  DONE: { text: 'Done', color: 'success' },
+  DONE_WITH_CONCERNS: { text: 'Done with concerns', color: 'warning' },
+  BLOCKED: { text: 'Blocked', color: 'error' },
+  NEEDS_CONTEXT: { text: 'Needs context', color: ORANGE },
+}
+
+export type ReportView = {
+  status: { text: string; color: string | undefined }
+  pr: { href: string | undefined; label: string; head: string | undefined } | undefined
+  verify: string | undefined
+  decisions: string[]
+  concerns: string[]
+}
+
+/** What the completion block shows: the status in its word and colour, the PR as `#n` with its head, the rest. */
+export function reportView(r: Report): ReportView {
+  const look = LOOKS[r.status.toUpperCase()] ?? { text: r.status, color: undefined }
+  const m = /^https?:\/\/\S+\/pull\/(\d+)\/?$/.exec(r.pr ?? '')
+  return {
+    status: look,
+    pr: r.pr ? { href: m ? r.pr : undefined, label: m ? `#${m[1]}` : r.pr, head: r.head ? r.head.slice(0, 7) : undefined } : undefined,
+    verify: r.verify || undefined,
+    decisions: r.decisions,
+    concerns: r.concerns,
+  }
+}

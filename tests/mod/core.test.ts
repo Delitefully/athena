@@ -4,10 +4,13 @@ import {
   fitStatus,
   isMonitorNotice,
   MAX_LINES,
+  ORANGE,
   parseWake,
   promptText,
   readRecords,
+  reportView,
   restartDelay,
+  splitReport,
   Waker,
 } from '../../hooks/watch-mod/core'
 import type { Board } from '../../hooks/watch-mod/core'
@@ -279,4 +282,66 @@ test('Monitor notification rows are told apart from other task notifications', (
   expect(isMonitorNotice('[Monitor expired after 30m: athena watch]')).toBe(true)
   expect(isMonitorNotice('Background command "make test" completed (exit code 0)')).toBe(false)
   expect(isMonitorNotice('Agent "reviewer" completed')).toBe(false)
+})
+
+describe('splitReport', () => {
+  const json = (o: object) => JSON.stringify(o)
+  const done = { status: 'DONE', pr: 'https://github.com/o/r/pull/6553', head: '797b67975c13', verify: 'make test -> pass', decisions: ['a', 'b'], concerns: [] }
+
+  test('finds the line, parses it, and keeps the text around it', () => {
+    const text = `Pushed and opened the PR.\n\nATHENA-REPORT ${json(done)}`
+    expect(splitReport(text)).toEqual({ before: 'Pushed and opened the PR.', after: '', report: { ...done, concerns: [] } })
+  })
+
+  test('a line in backticks or a code fence, and text after it', () => {
+    expect(splitReport(`x\n\`ATHENA-REPORT ${json(done)}\``)?.before).toBe('x')
+    const fenced = splitReport(`x\n\`\`\`\nATHENA-REPORT ${json(done)}\n\`\`\`\nthanks`)
+    expect([fenced?.before, fenced?.after, fenced?.report.status]).toEqual(['x', 'thanks', 'DONE'])
+  })
+
+  test('malformed or missing: no report, so the engine draws the message as is', () => {
+    expect(splitReport('ATHENA-REPORT {"status":"DONE",')).toBeUndefined()
+    expect(splitReport('ATHENA-REPORT {"pr":"x"}')).toBeUndefined()
+    expect(splitReport('ATHENA-REPORT ["DONE"]')).toBeUndefined()
+    expect(splitReport('no report here')).toBeUndefined()
+    expect(splitReport('see the ATHENA-REPORT {"status":"DONE"} format')).toBeUndefined()
+  })
+})
+
+describe('reportView', () => {
+  const base = { pr: 'https://github.com/o/r/pull/6553', head: '797b67975c13', verify: 'make test -> pass', decisions: ['d1'], concerns: ['c1'] }
+
+  test('each status has its word and colour', () => {
+    const look = (status: string) => reportView({ ...base, status }).status
+    expect(look('DONE')).toEqual({ text: 'Done', color: 'success' })
+    expect(look('DONE_WITH_CONCERNS')).toEqual({ text: 'Done with concerns', color: 'warning' })
+    expect(look('BLOCKED')).toEqual({ text: 'Blocked', color: 'error' })
+    expect(look('NEEDS_CONTEXT')).toEqual({ text: 'Needs context', color: ORANGE })
+    expect(look('SOMETHING_ELSE')).toEqual({ text: 'SOMETHING_ELSE', color: undefined })
+  })
+
+  test('the PR as #n with its head, the verify line, and the lists', () => {
+    expect(reportView({ ...base, status: 'DONE' })).toEqual({
+      status: { text: 'Done', color: 'success' },
+      pr: { href: 'https://github.com/o/r/pull/6553', label: '#6553', head: '797b679' },
+      verify: 'make test -> pass',
+      decisions: ['d1'],
+      concerns: ['c1'],
+    })
+  })
+
+  test('what is empty is left out', () => {
+    expect(reportView({ status: 'BLOCKED', pr: '', head: '', verify: '', decisions: [], concerns: [] })).toEqual({
+      status: { text: 'Blocked', color: 'error' },
+      pr: undefined,
+      verify: undefined,
+      decisions: [],
+      concerns: [],
+    })
+    expect(reportView({ status: 'DONE', pr: 'not a url', decisions: [], concerns: [] }).pr).toEqual({
+      href: undefined,
+      label: 'not a url',
+      head: undefined,
+    })
+  })
 })

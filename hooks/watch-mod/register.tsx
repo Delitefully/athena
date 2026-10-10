@@ -1,11 +1,23 @@
 // athena-watch: in the HQ session alone (ATHENA_ROLE=hq), runs `athena watch --tagged` for the session's life,
 // draws a one-line status band above the prompt, and wakes HQ with one short prompt only for lines that need it,
 // each event once in ten minutes. A wake draws as athena's own compact row, without the engine's plugin frame.
-// It also hides any Monitor rows left in HQ's transcript (the call, its result and its notifications). Every other session sees no change.
+// It also hides any Monitor rows left in HQ's transcript (the call, its result and its notifications). In a worker
+// (ATHENA_WORKER set), it draws the ATHENA-REPORT line as a completion block. Every other session sees no change.
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Board, Segment } from './core'
-import { clockText, fitStatus, isMonitorNotice, parseWake, readBoard, readRecords, restartDelay, Waker } from './core'
+import {
+  clockText,
+  fitStatus,
+  isMonitorNotice,
+  parseWake,
+  readBoard,
+  readRecords,
+  reportView,
+  restartDelay,
+  splitReport,
+  Waker,
+} from './core'
 
 /** A run shorter than this counts as a quick exit, and the next start waits longer. */
 const STEADY_MS = 60000
@@ -27,12 +39,28 @@ let waker: Waker | undefined
 let board: Board | undefined
 let note: string | undefined
 
+/** The `env` of the settings files, or nothing where they cannot be read. */
+async function settingsEnv($: EngineInterface): Promise<Record<string, unknown>> {
+  const env = await $.settings.read().then(s => s.env as Record<string, unknown> | undefined, () => undefined)
+  return env ?? {}
+}
+
 // HQ only: ATHENA_ROLE=hq, and never a worker, even one that inherited HQ's environment.
 async function readRole($: EngineInterface): Promise<boolean> {
-  const env = (await $.settings.read()).env as Record<string, unknown> | undefined
-  const role = (await $.env.get('ATHENA_ROLE')) ?? env?.ATHENA_ROLE
-  const worker = (await $.env.get('ATHENA_WORKER')) ?? env?.ATHENA_WORKER
-  return role === 'hq' && !worker
+  const role = (await $.env.get('ATHENA_ROLE')) ?? (await settingsEnv($)).ATHENA_ROLE
+  return role === 'hq' && !(await readWorker($))
+}
+
+let worker: Promise<boolean> | undefined
+
+// A worker session: ATHENA_WORKER set, in its environment or its settings.
+async function readWorker($: EngineInterface): Promise<boolean> {
+  return Boolean((await $.env.get('ATHENA_WORKER')) ?? (await settingsEnv($)).ATHENA_WORKER)
+}
+
+function isWorker($: EngineInterface): Promise<boolean> {
+  worker ??= readWorker($).catch(() => false)
+  return worker
 }
 
 // Read lazily and once: a render on --resume can come before session.start settles.
@@ -197,6 +225,63 @@ export const register: Register = on => {
           </Text>
         </Box>
         {theirs}
+      </Box>
+    )
+  })
+
+  // In a worker, the ATHENA-REPORT line its final message ends with draws as a completion block: the status in
+  // its colour, the PR and head, the verify line, the decisions and the concerns. Drawing only: the stored message,
+  // what the hooks parse and what athena reads are unchanged. A line that does not parse keeps the engine's drawing.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.props.isSummary || !e.props.text.includes('ATHENA-REPORT')) return next(e)
+    const split = splitReport(e.props.text)
+    if (!split || !(await isWorker($))) return next(e)
+    const v = reportView(split.report)
+    const { Box, Text, Link } = $.ui.resolve(e)
+    const rest = [split.before, split.after].filter(Boolean).join('\n\n')
+    const drawn = rest ? await next({ ...e, props: { ...e.props, text: rest } }) : null
+    const row = (label: string, value: ReturnType<typeof Text>) => (
+      <Box flexDirection="row">
+        <Box width={10} flexShrink={0}>
+          <Text dimColor>{label}</Text>
+        </Box>
+        <Box flexDirection="column" flexShrink={1}>
+          {value}
+        </Box>
+      </Box>
+    )
+    const bullets = (items: string[], color?: string) => (
+      <Box flexDirection="column">
+        {items.map(item => (
+          <Text color={color}>{`• ${item}`}</Text>
+        ))}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column">
+        {drawn}
+        <Box flexDirection="column" borderStyle="round" borderColor={MADDER} paddingX={1} marginTop={rest ? 1 : 0}>
+          <Box flexDirection="row" columnGap={1}>
+            <Text color={MADDER} bold>
+              {`${MARK} athena report`}
+            </Text>
+            <Text color={v.status.color} bold>
+              {v.status.text}
+            </Text>
+          </Box>
+          {v.pr
+            ? row(
+                'PR',
+                <Box flexDirection="row" columnGap={1}>
+                  {v.pr.href ? <Link href={v.pr.href} label={v.pr.label} /> : <Text>{v.pr.label}</Text>}
+                  {v.pr.head ? <Text dimColor>{`at ${v.pr.head}`}</Text> : null}
+                </Box>,
+              )
+            : null}
+          {v.verify ? row('verify', <Text>{v.verify}</Text>) : null}
+          {v.decisions.length ? row('decisions', bullets(v.decisions)) : null}
+          {v.concerns.length ? row('concerns', bullets(v.concerns, 'warning')) : null}
+        </Box>
       </Box>
     )
   })
