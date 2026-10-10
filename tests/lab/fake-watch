@@ -3,7 +3,9 @@
 
 Point the mod at it with ATHENA_WATCH_CMD=<this file>, then append raw watch lines to $FAKE_WATCH_LINES
 (one per line, as `athena watch` prints them; `exit` makes it exit). Each is classified by the real `watch.classify` and printed as
-`--tagged` output, with the status line rebuilt from the `<w> state a->b` lines seen so far.
+`--tagged` output, with the status line rebuilt from the `<w> state a->b` lines seen so far. A `<w> pr opened <url>`
+line gives the worker an open PR; `<w> repo <owner/name>` (not printed) stands in for its repo's origin remote. The
+board carries the dashboard's URL while `athena dash` runs for this state dir.
 """
 import os
 import re
@@ -15,7 +17,7 @@ from athena_lib import watch  # noqa: E402
 
 path = os.environ.get("FAKE_WATCH_LINES") or os.path.join(os.environ.get("ATHENA_STATE_DIR", "."), "fake-watch.lines")
 open(path, "a").close()
-snap = {"workers": {}}
+snap = {"workers": {}, "dash": watch._dash_url()}
 shown = watch.emit(["watching: no live workers"], snap, tagged=True)
 with open(path) as f:
     f.seek(0, os.SEEK_END)
@@ -23,6 +25,9 @@ with open(path) as f:
         line = f.readline()
         if not line:
             time.sleep(0.2)
+            if watch._dash_url() != snap["dash"]:
+                snap["dash"] = watch._dash_url()
+                shown = watch.emit([], snap, tagged=True, last_status=shown)
             continue
         line = line.strip()
         if not line:
@@ -30,6 +35,15 @@ with open(path) as f:
         m = re.match(r"^(\S+) (?:state \S+->(\S+)|new worker \((\w+))", line)
         if m:
             snap["workers"].setdefault(m.group(1), {})["state"] = m.group(2) or m.group(3)
+        m = re.match(r"^(\S+) repo (\S+)$", line)
+        if m:
+            snap["workers"].setdefault(m.group(1), {"state": "working"})["slug"] = m.group(2)
+            shown = watch.emit([], snap, tagged=True, last_status=shown)
+            continue
+        m = re.match(r"^(\S+) pr opened https://github\.com/\S+/pull/(\d+)$", line)
+        if m:
+            snap["workers"].setdefault(m.group(1), {"state": "working"})["pr"] = {
+                "state": "OPEN", "draft": False, "review": "", "number": int(m.group(2))}
         m = re.match(r"^(\S+) report (\S+)$", line)
         if m:
             snap["workers"].setdefault(m.group(1), {"state": "done"})["report"] = {"status": m.group(2)}
