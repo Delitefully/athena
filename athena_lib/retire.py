@@ -1,6 +1,7 @@
 """Retire a worker: back up its head, refuse to lose work, stop its Claude, remove its worktree space."""
 import os
 import shutil
+import subprocess
 import time
 
 from athena_lib import dashstate, gitops, herdr, ledger
@@ -30,32 +31,71 @@ def agent_owned(name) -> bool:
     return agent.get("name") == name
 
 
-def _gone(name, grace) -> bool:
-    deadline = time.monotonic() + grace
-    while agent_owned(name):
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.25)
-    return True
+_EXITED = "Resume this session with:"
+_SELECTED = "❯"
+
+
+def exit_screen(screen):
+    """What Claude's screen shows after /exit, read from its last selected line (`❯`) down.
+
+    "confirm": the "Background work is running" dialog with "1. Exit and stop tasks" selected. It comes up when
+    Claude has background shells or monitors running, and Enter picks that option. Its "Move to background and
+    exit" would leave the session running under Claude's background supervisor
+    (https://code.claude.com/docs/en/agent-view.md), so athena never picks it.
+    "submit": the slash-command menu with /exit highlighted; Enter submits it.
+    "exited": Claude printed its resume hint below everything else; it is on its way out.
+    None: anything else, such as a permission dialog. No key may be sent to it.
+    """
+    lines = [line.strip() for line in (screen or "").splitlines()]
+    selected = [i for i, line in enumerate(lines) if line.startswith(_SELECTED)]
+    exited = [i for i, line in enumerate(lines) if line.startswith(_EXITED)]
+    if exited and (not selected or exited[-1] > selected[-1]):
+        return "exited"
+    if not selected:
+        return None
+    last = " ".join(lines[selected[-1]].split())
+    above = lines[(exited[-1] if exited else 0):selected[-1]]
+    if last == "❯ 1. Exit and stop tasks" and "Background work is running" in above:
+        return "confirm"
+    if last == "❯ /exit Exit the CLI":
+        return "submit"
+    return None
+
+
+def _screen(name) -> str:
+    try:
+        return herdr.text("agent", "read", name, "--source", "visible", timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
 def exit_claude(name, grace) -> bool:
-    """Type /exit into the agent's Claude and wait up to `grace` seconds after each step for it to go.
+    """Type /exit into the agent's Claude, then press Enter only on a screen that asks for exactly that.
 
-    `/exit` alone is not enough: typing it opens Claude Code's slash-command menu, and the single Enter that
-    `agent prompt` sends picks the suggestion instead of submitting it. So: /exit, then one more Enter.
+    The single Enter that `agent prompt` sends can leave /exit sitting in the slash-command menu, and a Claude
+    with background work running answers /exit with a confirmation dialog: both get one Enter (see
+    `exit_screen`). Polls every 0.2s for up to `grace` seconds, and always looks once more after a key.
     True when the Claude is gone.
     """
     if not agent_owned(name):
         return True
-    for step in (("agent", "prompt", name, "/exit"), ("agent", "send-keys", name, "enter")):
-        try:
-            herdr.call(*step, timeout=15)
-        except herdr.HerdrError:
-            pass
-        if _gone(name, grace):
-            return True
-    return False
+    try:
+        herdr.call("agent", "prompt", name, "/exit", timeout=15)
+    except herdr.HerdrError:
+        pass
+    deadline, presses = time.monotonic() + grace, 0
+    while agent_owned(name):
+        pressed = False
+        if presses < 3 and exit_screen(_screen(name)) in ("confirm", "submit"):
+            try:
+                herdr.call("agent", "send-keys", name, "enter", timeout=15)
+            except herdr.HerdrError:
+                pass
+            presses, pressed = presses + 1, True
+        if time.monotonic() >= deadline and not pressed:
+            return False
+        time.sleep(0.5 if pressed else 0.2)
+    return True
 
 
 def stop_claude(worker) -> bool:
