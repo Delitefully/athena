@@ -66,7 +66,7 @@ async function watch($: EngineInterface): Promise<void> {
     const delay = restartDelay(Math.max(quickExits, 1))
     const lastError = errors.trim().split('\n').pop()
     // Told once per run of quick exits, so a watch that cannot start does not wake HQ every minute.
-    if (quickExits <= 1) w.add(`watch error: athena watch exited (${how})${lastError ? `: ${lastError}` : ''}; restarting`)
+    if (quickExits <= 1) w.add(`watch error: exited (${how})${lastError ? `: ${lastError}` : ''}; restarting`)
     $.ui.status(`watch exited (${how}); restarting in ${Math.round(delay / 1000)}s`)
     await new Promise<void>(resolve => $.clock.after(delay, resolve))
   }

@@ -165,6 +165,8 @@ class RestartTest(unittest.TestCase):
         self.assertIn("athena status --pr", routine[0][3])
         self.assertIn("needs-you.md", routine[0][3])
         self.assertNotIn("ultracode", routine[0][3].lower())
+        self.assertIn("athena-watch mod", routine[0][3])
+        self.assertNotIn("under Monitor", routine[0][3])
         self.assertNotIn(["workspace", "create"], [c[:2] for c in calls])
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "sess-1")
         self.assertFalse(hq.lock_file().exists())
