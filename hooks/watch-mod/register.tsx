@@ -1,9 +1,9 @@
 // athena-watch: in the HQ session alone (ATHENA_ROLE=hq), runs `athena watch --tagged` for the session's life,
 // pins a one-line summary under the prompt, and wakes HQ with one short prompt only for lines that need it.
-// It also hides any Monitor rows left in HQ's transcript. Every other session sees no change.
+// It also hides any Monitor rows left in HQ's transcript (the call, its result and its notifications). Every other session sees no change.
 import type { EngineInterface, Register } from 'claude-code'
 
-import { readRecords, restartDelay, Waker } from './core'
+import { isMonitorNotice, readRecords, restartDelay, Waker } from './core'
 
 /** A run shorter than this counts as a quick exit, and the next start waits longer. */
 const STEADY_MS = 60000
@@ -104,5 +104,11 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolResult', props: { tool: 'Monitor' } }, async ($, e, next) =>
     (await isHq($)) ? hidden($, e) : next(e),
+  )
+
+  // A Monitor's events, end and expiry notices are task-notification rows. Drawing changes the row alone, never
+  // what the model read; under ctrl+o (isExpanded) they draw in full.
+  on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } }, async ($, e, next) =>
+    !e.props.isExpanded && isMonitorNotice(e.props.text) && (await isHq($)) ? hidden($, e) : next(e),
   )
 }

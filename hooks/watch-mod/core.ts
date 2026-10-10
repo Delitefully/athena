@@ -124,3 +124,8 @@ export class Waker {
 export function restartDelay(quickExits: number): number {
   return Math.min(5000 * 2 ** Math.max(0, quickExits - 1), 60000)
 }
+
+/** A Monitor task's notification row: `Monitor event: ...`, `Monitor "<name>" stream ended`, its expiry. */
+export function isMonitorNotice(text: string): boolean {
+  return /^\[?Monitor (event:|")/.test(text) || /^\[?Monitor expired\b/.test(text)
+}

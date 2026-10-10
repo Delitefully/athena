@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { MAX_LINES, promptText, readRecords, restartDelay, Waker } from '../../hooks/watch-mod/core'
+import { isMonitorNotice, MAX_LINES, promptText, readRecords, restartDelay, Waker } from '../../hooks/watch-mod/core'
 
 /** A hand-moved clock for the Waker: timers fire only when the test advances it. */
 function harness(opts: { batchMs?: number; submitResolves?: boolean } = {}) {
@@ -130,4 +130,12 @@ describe('Waker', () => {
 
 test('restart delay backs off to a minute', () => {
   expect([1, 2, 3, 4, 5, 9].map(restartDelay)).toEqual([5000, 10000, 20000, 40000, 60000, 60000])
+})
+
+test('Monitor notification rows are told apart from other task notifications', () => {
+  expect(isMonitorNotice('Monitor event: "tick test (echo tick; sleep 1)"')).toBe(true)
+  expect(isMonitorNotice('Monitor "tick test (echo tick; sleep 1)" stream ended')).toBe(true)
+  expect(isMonitorNotice('[Monitor expired after 30m: athena watch]')).toBe(true)
+  expect(isMonitorNotice('Background command "make test" completed (exit code 0)')).toBe(false)
+  expect(isMonitorNotice('Agent "reviewer" completed')).toBe(false)
 })
