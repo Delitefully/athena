@@ -1,0 +1,17 @@
+#!/bin/sh
+# An example per-repo worktree setup. athena spawn runs repos/<repo>.setup, where <repo> is the main
+# checkout's folder name, in each new worktree of that repo before the worker's Claude starts. It looks in
+# your config dir first (athena config show: the folder holding config.json, so
+# ~/.local/state/athena/repos/<repo>.setup by default), then in the plugin, which ships only this example.
+#
+# The script runs in the new worktree with ATHENA_REPO set to the main checkout and ATHENA_WORKTREE to the
+# worktree; a non-zero exit fails the launch, and its output goes to logs/<worker>-setup.log in the state dir.
+# Copy it to <config dir>/repos/<repo>.setup and edit it, for example to copy gitignored env files across:
+set -eu
+main="$ATHENA_REPO"
+wt=$(pwd)
+copy_file() { [ -f "$main/$1" ] && mkdir -p "$(dirname "$wt/$1")" && cp "$main/$1" "$wt/$1" || true; }
+copy_file .env
+if command -v npm >/dev/null 2>&1 && [ -f "$wt/package-lock.json" ]; then
+	npm ci --prefer-offline
+fi
