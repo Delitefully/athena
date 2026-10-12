@@ -180,8 +180,9 @@ export class Waker {
     const safe = allowLine(raw)
     if (safe && DOORBELL.test(safe)) {
       // Every ring is new (its seq only grows, and a restarted watch rings again for what is still queued), so the
-      // ten-minute memory never drops one; the newest stands for the rest, since HQ reads the whole queue.
-      this.pending = [...this.pending.filter(l => !DOORBELL.test(l)), safe]
+      // ten-minute memory never drops one; the newest stands for the rest, since HQ reads the whole queue. It goes
+      // first, so a busy turn's pile past MAX_LINES never cuts it: the watch will not ring for that seq again.
+      this.pending = [safe, ...this.pending.filter(l => !DOORBELL.test(l))]
       this.schedule()
       return
     }

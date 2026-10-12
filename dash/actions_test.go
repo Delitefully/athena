@@ -108,8 +108,8 @@ func TestPostsTheServerRefuses(t *testing.T) {
 		{"a wrong token", `{"item": "a5", "option": "yes"}`, func(r *http.Request) { r.Header.Set("X-Athena-Token", "0123") }, 403},
 		{"a GET", ``, func(r *http.Request) { r.Method = "GET" }, 405},
 		{"a preflight", ``, func(r *http.Request) { r.Method = "OPTIONS" }, 405},
-		{"a reply past 2 KB", long, nil, 400},
-		{"a body past 4 KB", `{"item": "a2", "text": "` + strings.Repeat("x", bodyMax) + `"}`, nil, 400},
+		{"a reply past 2000 characters", long, nil, 400},
+		{"a body past the cap", `{"item": "a2", "text": "` + strings.Repeat("x", bodyMax) + `"}`, nil, 400},
 		{"an empty reply", `{"item": "a2", "text": "   "}`, nil, 400},
 		{"two answers", `{"item": "a5", "option": "yes", "discuss": true}`, nil, 400},
 		{"no answer", `{"item": "a5"}`, nil, 400},
@@ -289,5 +289,88 @@ func TestPillsTakeThePlaceOfTheLabelLine(t *testing.T) {
 	}
 	if regexp.MustCompile(`class="pill[^"]*"[^>]* title=`).MatchString(page) {
 		t.Error("a pill has a native title as well as its tooltip")
+	}
+}
+
+func TestAReplyIsCountedInCharactersAsTheReplyBoxCountsThem(t *testing.T) {
+	dir := copyFixture(t)
+	srv, base := start(t, dir)
+	// 2000 two-byte characters: what the reply box's maxlength lets through, 4000 bytes.
+	if code, out := post(t, srv, base, `{"item": "a2", "text": "`+strings.Repeat("é", textMax)+`"}`, nil); code != http.StatusAccepted {
+		t.Fatalf("%d %v", code, out)
+	}
+	if got := queued(t, dir); len(got) != 1 || len([]rune(got[0].Text)) != textMax {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestTwoTabsAnsweringOneAskAtOnceQueueOneAnswer(t *testing.T) {
+	for round := 0; round < 5; round++ {
+		dir := copyFixture(t)
+		srv, base := start(t, dir)
+		var wg sync.WaitGroup
+		codes := make(chan int, 2)
+		for _, opt := range []string{"yes", "no"} {
+			wg.Add(1)
+			go func(opt string) {
+				defer wg.Done()
+				code, _ := post(t, srv, base, `{"item": "a5", "option": "`+opt+`"}`, nil)
+				codes <- code
+			}(opt)
+		}
+		wg.Wait()
+		close(codes)
+		got := map[int]int{}
+		for c := range codes {
+			got[c]++
+		}
+		// Whichever lost the race got 409, or 422 if the page had already dropped the ask.
+		if got[http.StatusAccepted] != 1 || got[http.StatusConflict]+got[http.StatusUnprocessableEntity] != 1 {
+			t.Fatalf("round %d: %v", round, got)
+		}
+		if q := queued(t, dir); len(q) != 1 {
+			t.Fatalf("round %d: %+v", round, q)
+		}
+	}
+}
+
+func TestTheLockRefusesASecondAnswerButNotAWorkersOrAStuckOne(t *testing.T) {
+	dir := copyFixture(t)
+	srv, base := start(t, dir)
+	post(t, srv, base, `{"item": "a5", "option": "yes"}`, nil)
+	// Another tab still shows the ask (its page check passes): the lock refuses it.
+	write(t, filepath.Join(dir, actionsFile), `{"seq": 1, "ts": 1791500000, "item": "a5", "option": "yes", "status": "queued"}`+"\n")
+	srv.view.actionable["a5"] = &Actions{Item: "a5", Options: []Option{{ID: "no", Label: "No"}}, Hides: true}
+	if code, out := post(t, srv, base, `{"item": "a5", "option": "no"}`, nil); code != http.StatusConflict {
+		t.Fatalf("%d %v", code, out)
+	}
+	// Past stuckAfter the ask shows again, and takes a new answer.
+	srv.now = func() time.Time { return time.Unix(fixtureNow+stuckAfter, 0) }
+	srv.Refresh(true)
+	if code, out := post(t, srv, base, `{"item": "a5", "option": "no"}`, nil); code != http.StatusAccepted {
+		t.Fatalf("stuck: %d %v", code, out)
+	}
+	for _, body := range []string{`{"item": "w-abc-101", "discuss": true}`, `{"item": "w-abc-101", "text": "and rebase"}`} {
+		if code, out := post(t, srv, base, body, nil); code != http.StatusAccepted {
+			t.Fatalf("a worker's row takes any number: %d %v", code, out)
+		}
+	}
+}
+
+func TestEventsTellThePageWhichStartServesIt(t *testing.T) {
+	srv, base := start(t, copyFixture(t))
+	_, page := get(t, base+"/", "")
+	if !strings.Contains(page, `<meta name="athena-boot" content="`+srv.boot+`">`) {
+		t.Fatal("the page lacks its start id")
+	}
+	resp, err := http.Get(base + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 256)
+	n, _ := io.ReadAtLeast(resp.Body, buf, 40)
+	if !strings.Contains(string(buf[:n]), "event: boot\ndata: "+srv.boot+"\n\n") {
+		t.Fatalf("%q", buf[:n])
 	}
 }

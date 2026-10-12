@@ -274,7 +274,20 @@ describe('the dashboard doorbell', () => {
     w.add('abc-1 report DONE')
     w.add('dash-queue 5')
     await advance(3000)
-    expect(sent).toEqual([p('abc-1 report DONE', 'dash-queue 5')])
+    expect(sent).toEqual([p('dash-queue 5', 'abc-1 report DONE')])
+  })
+
+  test('a ring after ten other lines in a busy turn is never cut by the line cap', async () => {
+    const { w, sent, advance } = harness()
+    w.turnStarted()
+    for (let i = 0; i < 10; i++) w.add(`w${i} report DONE`)
+    w.add('dash-queue 9')
+    w.turnEnded()
+    await advance(3000)
+    expect(sent.length).toBe(1)
+    const lines = sent[0]!.split('\n')
+    expect(lines[1]).toBe('dash-queue 9')
+    expect(lines[lines.length - 1]).toBe('+3 more (athena status)')
   })
 
   test('a ring is never dropped as a repeat: a restarted watch rings again for what is still queued', async () => {

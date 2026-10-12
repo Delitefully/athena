@@ -20,8 +20,8 @@ import (
 
 const (
 	lockFile = "ask.lock" // held while actions.jsonl is appended to or compacted, here and by `athena ask`
-	textMax  = 2048       // bytes of a reply
-	bodyMax  = 4096       // bytes of a POST
+	textMax  = 2000       // characters of a reply, as the page's reply box counts them (maxlength)
+	bodyMax  = 16 << 10   // bytes of a POST: a reply of textMax characters, escaped
 	// settleAfter: seconds an answer can still be undone. `athena ask queue` and the doorbell see only answers older
 	// than this, so athena never acts on one the human took back (athena_lib/asks.py SETTLE agrees).
 	settleAfter = 6
@@ -112,8 +112,8 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 	text := ""
 	if req.Text != nil {
 		text = strings.TrimSpace(*req.Text)
-		if text == "" || len(text) > textMax || !utf8.ValidString(text) {
-			return 0, &httpError{http.StatusBadRequest, fmt.Sprintf("a reply is 1 to %d bytes of text", textMax)}
+		if text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > textMax {
+			return 0, &httpError{http.StatusBadRequest, fmt.Sprintf("a reply is 1 to %d characters", textMax)}
 		}
 	}
 	answers := 0
@@ -131,7 +131,14 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 		return 0, &httpError{http.StatusUnprocessableEntity, "the page does not offer that answer"}
 	}
 	var seq int
-	err := s.appendAction(func(_ map[int]Action, max int) (map[string]any, error) {
+	err := s.appendAction(func(cur map[int]Action, max int) (map[string]any, error) {
+		// The page check above ran outside the lock: an ask a second tab answered meanwhile is refused here. An ask
+		// shown again because its answer is stuck takes a new one; a worker's row takes any number.
+		for _, a := range cur {
+			if acts.Hides && a.Item == req.Item && a.Status == "queued" && now-a.TS < stuckAfter {
+				return nil, &httpError{http.StatusConflict, "already answered"}
+			}
+		}
 		seq = max + 1
 		line := map[string]any{"seq": seq, "ts": now, "item": req.Item, "status": "queued"}
 		switch {

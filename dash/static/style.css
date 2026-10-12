@@ -119,7 +119,9 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
   .acts { clip-path: none !important; margin-top: 6px; }
   .swap > :not(.acts) { clip-path: none !important; }
 }
-.fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--thread); align-self: center; }
+.fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); align-self: center; }
+/* athena's accent is for what needs the human: a folded ask under an In progress or Done row stays muted, as its row is. */
+.needs .fold-label { color: var(--thread); }
 .pill {
   position: relative; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; margin: 0;
   border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);

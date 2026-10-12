@@ -298,6 +298,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
 	fmt.Fprint(w, "retry: 2000\n\n")
+	// This start's id: a page from an earlier start (a restarted dash) sees another and reloads, for its token and files.
+	fmt.Fprintf(w, "event: boot\ndata: %s\n\n", s.boot)
 	writeEvent(w, current)
 	flusher.Flush()
 	ping := time.NewTicker(25 * time.Second)

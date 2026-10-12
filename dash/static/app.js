@@ -209,6 +209,9 @@ addEventListener("pointerup", () => setTimeout(() => ((pressing = false), releas
 addEventListener("pointercancel", () => ((pressing = false), release()));
 
 const events = new EventSource("/events");
+const boot = document.querySelector('meta[name="athena-boot"]')?.content;
+// A restarted dash has a new token and maybe new files: a page from before it reloads, once per start.
+events.addEventListener("boot", (e) => boot && e.data !== boot && location.reload());
 events.addEventListener("main", (e) => render(e.data));
 events.onopen = () => document.body.classList.remove("offline");
 events.onerror = () => document.body.classList.add("offline");

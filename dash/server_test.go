@@ -166,6 +166,9 @@ func TestEventsPushAChangedFileToAnOpenPage(t *testing.T) {
 		t.Fatalf("content type %s", ct)
 	}
 	r := bufio.NewReader(resp.Body)
+	if boot := readEvent(t, r); boot != srv.boot {
+		t.Fatalf("the stream opens with its start id, not %q", boot)
+	}
 	first := readEvent(t, r)
 	if !strings.Contains(first, `id="w-abc-101"`) || !strings.Contains(first, "In progress") {
 		t.Fatalf("first event is not the page: %.200s", first)
