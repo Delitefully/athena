@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import board, dash, gitops, herdr, hq, ledger, pr, retire, spawn, status, watch
+from athena_lib import board, config, dash, gitops, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -191,6 +191,27 @@ def cmd_retire(a):
     return 0
 
 
+def _migrate():
+    """An install from before config.json: write down the values it runs on, once."""
+    if not config.is_legacy():
+        return
+    target = config.write(init.starting_values())
+    print(f"athena: wrote {target} from your current setup (athena config show)", file=sys.stderr)
+
+
+def _first_run():
+    """No config.json yet: a new user runs athena init. An older install was migrated in main, or, if writing its
+    config failed there, runs on its current values."""
+    if config.exists() or config.is_legacy():
+        return None
+    if not sys.stdin.isatty():
+        print("athena: no config yet: run `athena init` first", file=sys.stderr)
+        return 2
+    print("athena: first run, so athena init comes first\n")
+    code = init.main([])
+    return code or None
+
+
 def cmd_hq(a):
     if a.action == "restart":
         if a.child:
@@ -198,12 +219,32 @@ def cmd_hq(a):
         else:
             print(hq.restart(update=not a.no_update)["message"])
         return 0
-    _print(hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash))
+    stop = _first_run()
+    if stop is not None:
+        return stop
+    attach = not a.no_attach and launch.can_attach()
+    if attach and not launch.server_running():
+        print("athena: starting herdr")
+        launch.start_server()
+    result = hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash)
+    if not attach:
+        _print(result)
+        return 0
+    print(f"athena: HQ is {'open' if result.get('created') else 'ready'} in space {result.get('workspace')}; attaching to herdr")
+    launch.attach()
+    return 0
+
+
+def cmd_config(a):
+    if a.action == "path":
+        print(config.config_file())
+    else:
+        _print(config.show())
     return 0
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="athena", description="Plumbing for the chief of staff.")
+    p = argparse.ArgumentParser(prog="athena", description="Plumbing for the chief of staff. A bare `athena` opens HQ.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("preflight", help="check a main checkout is clean and on main, and fast-forward it")
@@ -221,8 +262,8 @@ def parser():
     g.add_argument("--goal-file")
     s.add_argument("--linear")
     s.add_argument("--title")
-    s.add_argument("--model", default="opus")
-    s.add_argument("--effort", default="high")
+    s.add_argument("--model", help="default: config `model` (athena config show)")
+    s.add_argument("--effort", help="default: config `effort`")
     s.add_argument("--force", action="store_true")
     s.add_argument("--no-setup", action="store_true")
     s.add_argument("--ignore-quota", action="store_true", help="launch even above the 5-hour quota gate")
@@ -284,18 +325,38 @@ def parser():
     s.add_argument("--no-focus", action="store_true")
     s.add_argument("--no-board", action="store_true")
     s.add_argument("--no-dash", action="store_true")
+    s.add_argument("--no-attach", action="store_true", help="outside herdr: open HQ but do not attach this terminal")
     s.set_defaults(func=cmd_hq)
+
+    sub.add_parser("init", help="check herdr, claude, gh and git, ask for your folders and merge rules, write config.json "
+                                "(athena init -h)")
+
+    s = sub.add_parser("config", help="the effective config and where each value comes from: show, path")
+    s.add_argument("action", choices=["show", "path"], nargs="?", default="show")
+    s.set_defaults(func=cmd_config)
     return p
 
 
 def main(argv=None):
     p = parser()
-    args = p.parse_args(argv)
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["init"]:  # init parses its own flags (athena init -h)
+        try:
+            return init.main(argv[1:])
+        except (config.ConfigError, OSError) as exc:
+            print(f"athena init: {exc}", file=sys.stderr)
+            return 2
+    args = p.parse_args(argv or ["hq"])  # a bare `athena` opens HQ
+    try:
+        _migrate()  # before any command, so every command reads the same written-down values
+    except (config.ConfigError, OSError) as exc:
+        print(f"athena: could not write the config ({exc}); running on the current values", file=sys.stderr)
+    config.sync_root_hint()
     if args.cmd == "spawn" and args.workflow_size and not args.ultracode:
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 

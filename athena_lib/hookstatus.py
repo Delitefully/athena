@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-from athena_lib import ledger, paths
+from athena_lib import config, ledger, paths
 
 SUMMARY_LIMIT = 300
 DONE = {"DONE", "DONE_WITH_CONCERNS"}
@@ -102,6 +102,7 @@ def apply(event, name):
 
 def main():
     try:
+        config.sync_root_hint()  # so the shell fast path reads a current worktree root next time
         raw = sys.stdin.read()
         event = json.loads(raw) if raw.strip() else {}
         if not isinstance(event, dict):

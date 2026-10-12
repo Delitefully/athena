@@ -1,4 +1,4 @@
-"""Where athena keeps things. Every location can be moved with an environment variable."""
+"""Where athena keeps things. The state dir moves with ATHENA_STATE_DIR; the rest come from config.json (config.py)."""
 import hashlib
 import os
 import re
@@ -16,14 +16,22 @@ def state_dir() -> Path:
     return _env_path("ATHENA_STATE_DIR", "~/.local/state/athena")
 
 
+def projects_dir() -> Path:
+    """Where HQ starts: config `projects_dir` (env ATHENA_HQ_CWD)."""
+    from athena_lib import config
+    return config.path("projects_dir")
+
+
 def worktree_root() -> Path:
-    return _env_path("ATHENA_WORKTREE_ROOT", "~/Developer/.worktrees")
+    """config `worktree_root` (env ATHENA_WORKTREE_ROOT), else <projects_dir>/.worktrees."""
+    from athena_lib import config
+    return config.path("worktree_root")
 
 
-def quota_file() -> Path:
-    return _env_path(
-        "ATHENA_QUOTA_FILE", "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json"
-    )
+def quota_file():
+    """config `quota_file` (env ATHENA_QUOTA_FILE), or None: no quota gate."""
+    from athena_lib import config
+    return config.path("quota_file")
 
 
 def herdr_bin() -> str:

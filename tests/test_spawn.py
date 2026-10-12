@@ -9,7 +9,7 @@ from pathlib import Path
 from tests import helpers
 from tests.gitrepo import make_repo
 from tests.test_herdr import logged_calls, write_scenario
-from athena_lib import ledger, paths, spawn
+from athena_lib import config, ledger, paths, spawn
 
 CREATED = {"result": {"type": "worktree_created",
                       "workspace": {"workspace_id": "w9"},
@@ -165,6 +165,37 @@ class SpawnTest(unittest.TestCase):
             spawn._create_worktree = original
         self.assertEqual(seen.read_text(), "yes")
         self.assertFalse(claim.exists())
+
+    def claude_args_passed(self):
+        start = [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]][0]
+        return start[start.index("--") + 1:]
+
+    def test_model_and_effort_default_to_opus_high(self):
+        self.scenario()
+        result = self.run_spawn()
+        claude = self.claude_args_passed()
+        self.assertEqual((claude[claude.index("--model") + 1], claude[claude.index("--effort") + 1]), ("opus", "high"))
+        self.assertEqual((result["model"], result["effort"]), ("opus", "high"))
+
+    def test_model_and_effort_come_from_the_config(self):
+        config.write({**config.DEFAULTS, "model": "sonnet", "effort": "medium"})
+        self.scenario()
+        self.run_spawn()
+        claude = self.claude_args_passed()
+        self.assertEqual((claude[claude.index("--model") + 1], claude[claude.index("--effort") + 1]),
+                         ("sonnet", "medium"))
+
+    def test_a_reapproval_repo_tells_its_worker(self):
+        config.write({**config.DEFAULTS, "reapproval_repos": [self.repo.name]})
+        self.scenario()
+        self.run_spawn()
+        self.assertEqual(self.settings_passed()["env"]["ATHENA_REAPPROVAL"], "1")
+
+    def test_other_repos_carry_no_reapproval_flag(self):
+        config.write({**config.DEFAULTS, "reapproval_repos": ["elsewhere"]})
+        self.scenario()
+        self.run_spawn()
+        self.assertNotIn("ATHENA_REAPPROVAL", self.settings_passed()["env"])
 
     def test_settings_without_ultracode_are_unchanged(self):
         brief = paths.ensure("briefs") / "abc-1.md"
@@ -329,3 +360,21 @@ class SetupEnvTest(unittest.TestCase):
         with mock.patch.object(paths, "PLUGIN_ROOT", root), mock.patch.dict(os.environ, {"FORCE_HYPERLINK": "1"}):
             log = spawn._run_setup("/src/app", wt, "w1")
         self.assertEqual(Path(log).read_text().strip(), "force=unset repo=/src/app")
+
+    def test_the_users_own_setup_script_wins_over_the_plugins(self):
+        from unittest import mock
+        root = Path(self.tmp.name) / "plugin"
+        (root / "repos").mkdir(parents=True)
+        (root / "repos" / "app.setup").write_text("echo plugin\n")
+        mine = config.config_dir() / "repos"
+        mine.mkdir(parents=True)
+        (mine / "app.setup").write_text("echo mine\n")
+        wt = Path(self.tmp.name) / "wt"
+        wt.mkdir()
+        with mock.patch.object(paths, "PLUGIN_ROOT", root):
+            log = spawn._run_setup("/src/app", wt, "w1")
+            self.assertEqual(Path(log).read_text().strip(), "mine")
+            self.assertIsNone(spawn._run_setup("/src/other", wt, "w2"))
+
+    def test_the_plugin_ships_only_the_example_setup(self):
+        self.assertEqual(sorted(p.name for p in (paths.PLUGIN_ROOT / "repos").iterdir()), ["example.setup"])
