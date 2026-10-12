@@ -1,0 +1,18 @@
+{
+  "next": 6,
+  "items": [
+    {"id": "a1", "kind": "question", "text": "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",
+     "why": "ABC-111 touches the same export queue as ABC-101.",
+     "options": [{"id": "now", "label": "Start now", "icon": "play", "do": "reply"},
+                 {"id": "later", "label": "After ABC-101", "icon": "clock", "do": "reply"}],
+     "created": 1791498000},
+    {"id": "a2", "kind": "question", "text": "The release notes for 2.4 need a date: Thursday or Monday? Draft: https://github.com/acme/web/pull/50",
+     "created": 1791498100},
+    {"id": "a3", "kind": "note", "text": "Approve and merge ABC-452: https://github.com/acme/web/pull/907", "created": 1791498200},
+    {"id": "a4", "kind": "note", "text": "Billing export step 2 is next to land", "pr": "acme/web#906", "created": 1791498300},
+    {"id": "a5", "kind": "question", "text": "Close ABC-4550 as a duplicate of ABC-4566?",
+     "options": [{"id": "yes", "label": "Close it", "icon": "check", "do": "reply"},
+                 {"id": "no", "label": "Not now", "icon": "x", "do": "dismiss"}],
+     "created": 1791498400}
+  ]
+}

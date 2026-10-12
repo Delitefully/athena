@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,8 +56,8 @@ func TestLoadFixture(t *testing.T) {
 	if len(s.History) != 3 || s.History[0].PR.State != "MERGED" {
 		t.Fatalf("history %+v", s.History)
 	}
-	if len(s.Notes) != 5 || len(s.Notices) != 0 {
-		t.Fatalf("notes %q notices %q", s.Notes, s.Notices)
+	if len(s.Asks) != 5 || len(s.Notices) != 0 {
+		t.Fatalf("asks %+v notices %q", s.Asks, s.Notices)
 	}
 	h := s.Hooks["abc-106"]
 	if h.State != "blocked" || h.Report.Status != "NEEDS_CONTEXT" || h.Report.Concerns[0] != "Which ceiling: 5 tries, or 24 hours?" {
@@ -185,7 +186,7 @@ func TestChangedSeesWritesNewFilesAndDeletes(t *testing.T) {
 	if !st.Changed() {
 		t.Fatal("missed a new worker file")
 	}
-	os.Remove(filepath.Join(dir, "needs-you.md"))
+	os.Remove(filepath.Join(dir, "needs-you.json"))
 	if !st.Changed() {
 		t.Fatal("missed a delete")
 	}
@@ -195,10 +196,41 @@ func TestChangedSeesWritesNewFilesAndDeletes(t *testing.T) {
 	}
 }
 
-func TestParseNotes(t *testing.T) {
-	got := parseNotes("# Needs you\n\n<!-- kept by athena\nover two lines -->\n- one\n* two\n  - [ ] three\nfour\n\n<!-- c -->\n")
-	if strings.Join(got, "|") != "one|two|three|four" {
-		t.Fatalf("%q", got)
+func TestParseAsksDropsWhatAthenaAskWouldRefuse(t *testing.T) {
+	var m map[string]any
+	json.Unmarshal([]byte(`{"items": [
+		{"id": "a1", "text": "Ship it?", "pr": "https://github.com/Acme/Web/pull/7", "options": [
+			{"id": "yes", "label": "Yes", "icon": "check"}, {"id": "no", "label": "No", "icon": "rm -rf", "do": "dismiss"},
+			{"id": "maybe", "label": "Maybe"}]},
+		{"id": "a2", "kind": "note", "text": "FYI", "options": [{"id": "x", "label": "A label past sixteen"}, {"id": "dismiss", "label": "Ok"}]},
+		{"id": "a1", "text": "a second a1"}, {"id": "Bad Id", "text": "t"}, {"id": "a3", "text": "  "}, "junk"]}`), &m)
+	got := parseAsks(m)
+	if len(got) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	a := got[0]
+	if a.Kind != "question" || a.PR != "acme/web#7" || len(a.Options) != 2 || a.Options[0] != (Option{"yes", "Yes", "check", "reply"}) ||
+		a.Options[1] != (Option{"no", "No", "", "dismiss"}) {
+		t.Fatalf("an unknown icon shows none, a third option is dropped: %+v", a)
+	}
+	if b := got[1]; b.Kind != "note" || len(b.Options) != 0 {
+		t.Fatalf("a long label and the reserved id are dropped: %+v", b)
+	}
+}
+
+func TestFoldActionsBySeq(t *testing.T) {
+	got := foldActions([]map[string]any{
+		{"seq": 1.0, "ts": 10.0, "item": "a1", "option": "yes", "status": "queued"},
+		{"seq": 2.0, "ts": 11.0, "item": "a2", "text": "hi", "status": "queued"},
+		{"seq": 1.0, "ts": 12.0, "status": "cancelled"},
+		{"seq": 3.0, "ts": 13.0, "item": "w-abc-1", "discuss": true, "status": "queued"},
+		{"seq": 3.0, "ts": 14.0, "status": "done"},
+		{"seq": 9.0, "status": "done"}, // a status for a seq never queued (compacted away) is skipped
+		{"seq": 2.0, "item": "a9", "status": "queued"},
+	})
+	want := []Action{{1, 10, "a1", "yes", "", false, "cancelled"}, {2, 11, "a2", "", "hi", false, "queued"}, {3, 13, "w-abc-1", "", "", true, "done"}}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("%+v", got)
 	}
 }
 

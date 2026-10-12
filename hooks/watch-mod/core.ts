@@ -81,6 +81,13 @@ const REPORT = '(?:DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)'
 const CHECK = '(?:none|pending|success|failure)'
 const EXIT = '(?:code -?\\d{1,3}|signal SIG[A-Z0-9]{1,10})'
 
+/**
+ * The dashboard's doorbell: the human answered there, and `athena ask queue` holds the answers up to this seq. It
+ * carries no text of theirs, and `dash-queue` is no worker's name (athena spawn refuses it).
+ */
+const DOORBELL_RE = 'dash-queue \\d{1,9}'
+const DOORBELL = new RegExp(`^${DOORBELL_RE}$`)
+
 /** Lines allowed as they are, each regex anchored. */
 const EXACT = [
   `${NAME} report ${REPORT}`,
@@ -94,6 +101,7 @@ const EXACT = [
   `${NAME} new worker \\(${STATE}(?:, startup prompt)?\\)`,
   `${NAME} goal sent`,
   `watch error: exited \\(${EXIT}\\); restarting`,
+  DOORBELL_RE,
 ].map(r => new RegExp(`^${r}$`))
 
 /** Lines that carry free text, reduced to their allowlisted part. */
@@ -170,6 +178,14 @@ export class Waker {
 
   add(raw: string): void {
     const safe = allowLine(raw)
+    if (safe && DOORBELL.test(safe)) {
+      // Every ring is new (its seq only grows, and a restarted watch rings again for what is still queued), so the
+      // ten-minute memory never drops one; the newest stands for the rest, since HQ reads the whole queue. It goes
+      // first, so a busy turn's pile past MAX_LINES never cuts it: the watch will not ring for that seq again.
+      this.pending = [safe, ...this.pending.filter(l => !DOORBELL.test(l))]
+      this.schedule()
+      return
+    }
     const line = safe ?? HELD
     // A held line is remembered by its raw text (kept here, never sent), so one unknown line is told once too.
     const key = safe ?? `held:${raw.slice(0, 500)}`

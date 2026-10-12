@@ -165,7 +165,7 @@ class RestartTest(unittest.TestCase):
         self.assertEqual(len(routine), 1)
         self.assertGreater(calls.index(routine[0]), calls.index(start))
         self.assertIn("athena status --pr", routine[0][3])
-        self.assertIn("needs-you.md", routine[0][3])
+        self.assertIn("athena ask queue", routine[0][3])
         self.assertNotIn("ultracode", routine[0][3].lower())
         self.assertIn("athena-watch mod", routine[0][3])
         self.assertNotIn("under Monitor", routine[0][3])

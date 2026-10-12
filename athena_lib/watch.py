@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from athena_lib import config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, spawn, status
+from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -234,11 +234,16 @@ _WAKE = [
 ]
 
 
+_DOORBELL = re.compile(r"^dash-queue \d{1,9}$")
+
+
 def classify(line: str, retired=frozenset()) -> str:
     """"wake" for a line HQ must act on, "status" for routine progress the status line shows.
 
     A line no rule knows wakes, so nothing new that athena watch says is lost.
     """
+    if _DOORBELL.match(line):
+        return "wake"  # the human answered on the dashboard: HQ reads `athena ask queue`
     name = line.split(" ", 1)[0]
     if line.endswith(" gone from the ledger"):
         return "status" if name in retired else "wake"
@@ -295,7 +300,7 @@ def _reported(w) -> bool:
 def _prs_awaiting(snap) -> list:
     """`#n` per PR whose dashboard row is in Needs you, each once: a live worker's PR whose move is the human's
     (unless the worker itself is blocked, or still working on it), a followed PR whose move is the human's, and a
-    teammate's PR asking the human for a review. needs-you.md adds none: it is for decisions."""
+    teammate's PR asking the human for a review. needs-you.json adds none: it is for decisions."""
     keys = []
     for w in snap.get("workers", {}).values():
         p = w.get("pr") or {}
@@ -346,7 +351,7 @@ def repo_slug(repo):
 def _links(snap) -> dict:
     """PR number -> `owner/name`, for the mod to link `#n`: a live worker's PR by the worker's own repo (its origin
     remote, from the ledger), a stacked PR by stack.json's repo, a retired worker's by its origin, a review request
-    by the repo searched. Never from a URL GitHub or a worker wrote, nor from needs-you.md; a number two repos
+    by the repo searched. Never from a URL GitHub or a worker wrote, nor from needs-you.json; a number two repos
     share is left out, so it draws plain."""
     seen = {}
     for w in snap.get("workers", {}).values():
@@ -508,9 +513,28 @@ def keep_labels():
             pass
 
 
+def ring(bell, tagged=False):
+    """Print the dashboard's doorbell when answers settled since it last rang: one line, never their text."""
+    try:
+        line = bell.check()
+    except Exception as exc:  # a queue it cannot read must not stop the watch; told once until it reads again
+        if str(exc) != bell.error:
+            bell.error = str(exc)
+            report_error(f"dash queue: {exc}", tagged=tagged)
+        return
+    bell.error = None
+    if line:
+        print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
+
+
 def run(interval=20, fetch_every=120, tagged=False):
     prev, shown = None, None
     last_fetch = 0.0
+    bell = asks.Doorbell()
+    try:
+        asks.migrate()  # needs-you.md, once, into needs-you.json
+    except (OSError, ValueError) as exc:
+        report_error(f"needs-you.md not migrated: {exc}", tagged=tagged)
     while True:
         fetch = time.time() - last_fetch >= fetch_every
         if fetch:
@@ -525,4 +549,11 @@ def run(interval=20, fetch_every=120, tagged=False):
             keep_labels()
         except Exception as exc:
             report_error(exc, tagged=tagged)
-        time.sleep(interval)
+        # Between ticks, look at the dashboard's queue every second: one stat while nothing changed.
+        deadline = time.time() + interval
+        while True:
+            ring(bell, tagged=tagged)
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            time.sleep(min(1.0, left))

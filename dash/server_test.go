@@ -69,7 +69,7 @@ func TestPageRendersTheThreeGroups(t *testing.T) {
 		`<h2 id="h-needs">Needs you <span class="count">8</span></h2>`,
 		`<h2 id="h-progress">In progress <span class="count">6</span></h2>`,
 		`<span class="label">awaiting review · alex</span>`,
-		`<p class="fold">Approve and merge ABC-452</p>`,
+		`<div class="fold" id="ask-a3"><p>Approve and merge ABC-452</p>`,
 		`<p class="meta">athena asks</p>`,
 		`<h2 id="h-done">Done <span class="count">4</span></h2>`,
 		`<a class="ticket" href="https://linear.app/acme/issue/ABC-108">ABC-108</a>`,
@@ -166,6 +166,9 @@ func TestEventsPushAChangedFileToAnOpenPage(t *testing.T) {
 		t.Fatalf("content type %s", ct)
 	}
 	r := bufio.NewReader(resp.Body)
+	if boot := readEvent(t, r); boot != srv.boot {
+		t.Fatalf("the stream opens with its start id, not %q", boot)
+	}
 	first := readEvent(t, r)
 	if !strings.Contains(first, `id="w-abc-101"`) || !strings.Contains(first, "In progress") {
 		t.Fatalf("first event is not the page: %.200s", first)
@@ -281,12 +284,8 @@ func TestEveryRowGlyphIsInTheSpriteAtOneWeight(t *testing.T) {
 
 func TestNotesShowTheQuestionMarkOrTheDash(t *testing.T) {
 	dir := copyFixture(t)
-	f, err := os.OpenFile(filepath.Join(dir, "needs-you.md"), os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.WriteString("- The quota resets at 14:00.\n")
-	f.Close()
+	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "kind": "question", "text": "Close ABC-4550?"},
+		{"id": "a2", "kind": "note", "text": "The quota resets at 14:00."}]}`)
 	_, base := start(t, dir)
 	_, body := get(t, base+"/", "")
 	ask := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-ask"/></svg>\s*<div class="body"><p class="note-text">Close ABC-4550`)

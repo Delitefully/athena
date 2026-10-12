@@ -244,6 +244,75 @@ describe('Waker', () => {
   })
 })
 
+describe('the dashboard doorbell', () => {
+  test('dash-queue <seq> is allowed as it is, and nothing else after it', () => {
+    expect(allowLine('dash-queue 12')).toBe('dash-queue 12')
+    expect(allowLine('dash-queue 123456789')).toBe('dash-queue 123456789')
+    for (const line of ['dash-queue', 'dash-queue 1234567890', 'dash-queue 12 ship it', 'dash-queue -1', 'dash-queue twelve']) {
+      expect(allowLine(line)).toBeUndefined()
+    }
+  })
+
+  test('twelve rapid answers during an HQ turn reach HQ as one prompt for the newest seq, none held or dropped', async () => {
+    const { w, sent, advance } = harness()
+    w.turnStarted()
+    for (let seq = 1; seq <= 12; seq++) {
+      w.add(`dash-queue ${seq}`) // the watch rings at most once a second as answers settle
+      await advance(1000)
+    }
+    expect(sent).toEqual([])
+    w.turnEnded()
+    await advance(3000)
+    // HQ reads the whole queue (athena ask queue): the newest ring stands for the twelve.
+    expect(sent).toEqual([p('dash-queue 12')])
+  })
+
+  test('rapid rings while HQ is idle go out in one batch, with any other event', async () => {
+    const { w, sent, advance } = harness()
+    w.add('dash-queue 3')
+    await advance(1000)
+    w.add('abc-1 report DONE')
+    w.add('dash-queue 5')
+    await advance(3000)
+    expect(sent).toEqual([p('dash-queue 5', 'abc-1 report DONE')])
+  })
+
+  test('a ring after ten other lines in a busy turn is never cut by the line cap', async () => {
+    const { w, sent, advance } = harness()
+    w.turnStarted()
+    for (let i = 0; i < 10; i++) w.add(`w${i} report DONE`)
+    w.add('dash-queue 9')
+    w.turnEnded()
+    await advance(3000)
+    expect(sent.length).toBe(1)
+    const lines = sent[0]!.split('\n')
+    expect(lines[1]).toBe('dash-queue 9')
+    expect(lines[lines.length - 1]).toBe('+3 more (athena status)')
+  })
+
+  test('a ring is never dropped as a repeat: a restarted watch rings again for what is still queued', async () => {
+    const { w, sent, advance } = harness({ sent: { 'dash-queue 7': 0 } })
+    w.add('dash-queue 7')
+    await advance(3000)
+    w.add('dash-queue 7')
+    await advance(3000)
+    expect(sent).toEqual([p('dash-queue 7'), p('dash-queue 7')])
+  })
+
+  test('a ring that arrives while the last prompt is on its way goes out next', async () => {
+    const { w, sent, advance, pendingSubmits } = harness({ submitResolves: false })
+    w.add('dash-queue 1')
+    await advance(3000)
+    w.add('dash-queue 2')
+    await advance(3000)
+    expect(sent).toEqual([p('dash-queue 1')])
+    pendingSubmits[0]!()
+    await advance(0)
+    await advance(3000)
+    expect(sent).toEqual([p('dash-queue 1'), p('dash-queue 2')])
+  })
+})
+
 describe('fitStatus', () => {
   const board: Board = {
     needs: ['pr47-design blocked'],

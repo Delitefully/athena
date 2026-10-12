@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import board, config, dash, gitops, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
+from athena_lib import asks, board, config, dash, gitops, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -125,6 +125,31 @@ def cmd_watch(a):
     # HQ's settings set FORCE_HYPERLINK for Claude Code's own drawing; the gh, git and herdr the watch runs get none.
     os.environ.pop("FORCE_HYPERLINK", None)
     watch.run(interval=a.interval, tagged=a.tagged)
+    return 0
+
+
+def cmd_ask(a):
+    if a.action == "add":
+        if not a.args or len(a.args) > 1:
+            print('athena ask add "<text>" [--why ...] [--pr ...] [--option label[:icon[:do]]] ...', file=sys.stderr)
+            return 2
+        kind = "note" if a.note else "question" if a.question else None
+        print(asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or []))
+    elif a.action == "done":
+        if len(a.args) != 1:
+            print("athena ask done <id>", file=sys.stderr)
+            return 2
+        _print(asks.done(a.args[0], keep=a.keep))
+    elif a.action == "queue":
+        _print(asks.queue())
+    elif a.args:
+        item = asks.show(a.args[0])
+        if not item:
+            print(f"no ask {a.args[0]}", file=sys.stderr)
+            return 2
+        _print(item)
+    else:
+        _print(asks.items())
     return 0
 
 
@@ -291,6 +316,19 @@ def parser():
     s.add_argument("--tagged", action="store_true", help="JSON lines for the mod: each change marked wake or not, and the status line")
     s.set_defaults(func=cmd_watch)
 
+    s = sub.add_parser("ask", help="athena's asks on the dashboard (needs-you.json) and the human's answers: add, done, show, queue")
+    s.add_argument("action", choices=["add", "done", "show", "queue"], nargs="?", default="show")
+    s.add_argument("args", nargs="*", help="add: the text; done, show: the id (show alone lists every ask)")
+    k = s.add_mutually_exclusive_group()
+    k.add_argument("--question", action="store_true", help="add: Discuss in Athena and Reply… on the dashboard (default when it has a ?)")
+    k.add_argument("--note", action="store_true", help="add: only its options, or × with none")
+    s.add_argument("--why", default="", help="add: one sentence, shown under it")
+    s.add_argument("--pr", help="add: owner/name#n or a PR URL: shown under that PR's row")
+    s.add_argument("--option", action="append", metavar="LABEL[:ICON[:DO]]",
+                   help=f"add: at most {asks.OPTIONS_MAX}; label up to {asks.LABEL_MAX} characters, icon from dash/icons.txt, do reply (default) or dismiss")
+    s.add_argument("--keep", action="store_true", help="done: mark its answers done but keep the ask on the dashboard")
+    s.set_defaults(func=cmd_ask)
+
     s = sub.add_parser("stack", help="the stacked-PR chains athena watch follows (stack.json): set, clear, show")
     s.add_argument("action", choices=["set", "clear", "show"], nargs="?", default="show")
     s.add_argument("repo", nargs="?", help="owner/name, as gh --repo takes it")
@@ -356,7 +394,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 

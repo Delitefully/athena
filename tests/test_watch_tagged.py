@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 
 from tests import helpers
-from athena_lib import dashstate, ledger, paths, watch
+from athena_lib import asks, dashstate, ledger, paths, watch
 
 WAKE = [
     "abc-1 report DONE",
@@ -33,6 +33,7 @@ WAKE = [
     "abc-1 goal not sent: herdr has no pane w9:p1",
     "abc-1 goal unconfirmed (timeout): check its pane, do not resend blindly",
     "watch error: gh: rate limited",
+    "dash-queue 41",
 ]
 
 ROUTINE = [
@@ -149,10 +150,10 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(watch.board(snap)["prs"], ["#7", "#149", "#149", "#150"])  # o/r#149 and o/x#149
         self.assertEqual(watch.summary(snap), "4 PRs need you · no live workers")
 
-    def test_needs_you_notes_never_add_prs(self):
-        # needs-you.md is for decisions: a PR it links counts only when its own row is in Needs you.
+    def test_asks_never_add_prs(self):
+        # needs-you.json is for decisions: a PR an ask is about counts only when its own row is in Needs you.
         paths.ensure()
-        (paths.state_dir() / "needs-you.md").write_text("- Merge web #43? https://github.com/o/web/pull/43\n")
+        asks.add("Merge web #43? https://github.com/o/web/pull/43", pr="o/web#43")
         self.assertEqual(watch.board({"workers": {}})["prs"], [])
 
 

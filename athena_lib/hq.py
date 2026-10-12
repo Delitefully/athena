@@ -159,7 +159,7 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None) -> dict:
 
 RESTART_ROUTINE = ("HQ restarted: run your session-start routine (athena status --pr; the athena-watch mod restarts "
                    "athena watch and its stacked-PR watch on its own, so arm no Monitor unless the skill's fallback applies; "
-                   "check `athena stack` lists the chains you follow, check needs-you.md), then tell me what changed.")
+                   "check `athena stack` lists the chains you follow, act on `athena ask queue`), then tell me what changed.")
 
 
 class RestartError(Exception):

@@ -130,6 +130,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
     model, effort = model or config.get("model"), effort or config.get("effort")
     if not paths.valid_name(name):
         raise SpawnError(f"invalid worker name {name!r}: use lowercase letters, digits, - and _ (max 32)")
+    if name in paths.RESERVED_NAMES:
+        raise SpawnError(f"{name!r} is reserved: athena watch prints lines that start with it")
     if workflow_size and not ultracode:
         raise SpawnError("--workflow-size needs --ultracode")
     _check_capacity(name, force, ignore_quota)

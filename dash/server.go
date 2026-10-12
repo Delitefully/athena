@@ -75,18 +75,21 @@ type Server struct {
 	linearWorkspace string
 	hqPid           int
 	now             func() time.Time
+	token           string // what a POST to /api/action must carry: per start, in the page's <meta>
+	boot            string // per start, on the stylesheet's and script's URLs, so a new build is never served stale
 
-	mu      sync.Mutex
-	main    []byte
-	view    View
-	version int
-	clients map[chan []byte]struct{}
-	done    chan struct{}
+	refreshing sync.Mutex // one Refresh at a time: the poll and a POST both call it
+	mu         sync.Mutex
+	main       []byte
+	view       View
+	version    int
+	clients    map[chan []byte]struct{}
+	done       chan struct{}
 }
 
 func NewServer(stateDir string, port int, linearWorkspace string) *Server {
 	s := &Server{store: NewStore(stateDir), port: port, linearWorkspace: linearWorkspace,
-		now: time.Now, clients: map[chan []byte]struct{}{}, done: make(chan struct{})}
+		now: time.Now, token: newToken(), boot: strconv.FormatInt(time.Now().UnixNano(), 36), clients: map[chan []byte]struct{}{}, done: make(chan struct{})}
 	s.tmpl = templates(func() time.Time { return s.now() })
 	return s
 }
@@ -94,6 +97,8 @@ func NewServer(stateDir string, port int, linearWorkspace string) *Server {
 // Refresh re-reads the state when force is set or a file changed, and broadcasts the result if the page differs.
 // A panic while building or rendering keeps the last good page.
 func (s *Server) Refresh(force bool) (changed bool) {
+	s.refreshing.Lock()
+	defer s.refreshing.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("render failed, keeping the last good page: %v", r)
@@ -185,6 +190,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.page)
 	mux.HandleFunc("/events", s.events)
 	mux.HandleFunc("/glyphs", s.glyphs)
+	mux.HandleFunc("/api/action", s.action)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()
 		w.Header().Set("Content-Type", "application/json")
@@ -224,7 +230,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, view, _ := s.snapshot()
-	s.render(w, "page", map[string]any{"Title": view.Title, "Scheme": scheme(r), "View": view})
+	s.render(w, "page", map[string]any{"Title": view.Title, "Scheme": scheme(r), "View": view, "Token": s.token, "Boot": s.boot})
 }
 
 // glyphSheet: every row glyph with what it stands for, in the dash's order of urgency.
@@ -292,6 +298,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
 	fmt.Fprint(w, "retry: 2000\n\n")
+	// This start's id: a page from an earlier start (a restarted dash) sees another and reloads, for its token and files.
+	fmt.Fprintf(w, "event: boot\ndata: %s\n\n", s.boot)
 	writeEvent(w, current)
 	flusher.Flush()
 	ping := time.NewTicker(25 * time.Second)

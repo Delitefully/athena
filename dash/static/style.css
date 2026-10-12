@@ -97,6 +97,69 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .fold a { color: inherit; }
 .code { background: var(--wash); border-radius: 3px; padding: 0 4px; }
 
+/* Quick actions: real buttons in the same grid cell as the row's label line, so no space is reserved for them. On hover
+   or focus a moving edge swaps the line for the pills, fading nothing (a clipped button still takes focus, so Tab
+   reaches them); the line is as tall as a pill on rows that have pills, so nothing moves. Touch and narrow screens
+   show the pills below the line, always. */
+.swap { display: grid; margin-top: 3px; }
+.swap > * { grid-area: 1 / 1; min-width: 0; }
+.swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
+.swap.has-acts { min-height: 22px; }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
+.item:hover:not(:has(.fold:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap > .acts,
+.fold:hover > .swap > .acts, .fold:focus-within > .swap > .acts, .acts.replying {
+  clip-path: inset(-34px -8px -6px -4px); /* room for a tooltip above and the focus ring */
+}
+.item:hover:not(:has(.fold:hover)) > .body > .swap:has(.acts) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap:has(.acts) > :not(.acts),
+.fold:hover > .swap > :not(.acts), .fold:focus-within > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
+  clip-path: inset(0 0 0 100%);
+}
+@media (hover: none), (max-width: 760px) {
+  .swap { display: block; }
+  .acts { clip-path: none !important; margin-top: 6px; }
+  .swap > :not(.acts) { clip-path: none !important; }
+}
+.fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); align-self: center; }
+/* athena's accent is for what needs the human: a folded ask under an In progress or Done row stays muted, as its row is. */
+.needs .fold-label { color: var(--thread); }
+.pill {
+  position: relative; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; margin: 0;
+  border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);
+  font: 500 13px/1 "Instrument Sans", system-ui, sans-serif; white-space: nowrap; cursor: pointer;
+}
+.pill:hover { background: var(--wash); border-color: var(--muted); }
+.pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.pill.dismiss { width: 22px; padding: 0; justify-content: center; }
+/* Beside athena's two options, Discuss and Reply are their icons alone, so four fit one line. An icon-only pill says
+   what it does in a tooltip, on hover and on keyboard focus alike. */
+.acts.options [data-discuss], .acts.options [data-reply] { width: 22px; padding: 0; justify-content: center; }
+.acts.options .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.acts.options [data-discuss]::after, .acts.options [data-reply]::after, .pill.dismiss::after {
+  content: attr(aria-label); display: none; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  padding: 4px 8px; border-radius: 5px; background: var(--ink); color: var(--bg); pointer-events: none;
+  font: 500 12px/1.2 "Instrument Sans", system-ui, sans-serif; white-space: nowrap;
+}
+.acts.options [data-discuss]:is(:hover, :focus-visible)::after, .acts.options [data-reply]:is(:hover, :focus-visible)::after,
+.pill.dismiss:is(:hover, :focus-visible)::after { display: block; }
+.pi { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.reply { flex: 1; margin: 0; }
+.reply input {
+  width: 100%; height: 22px; padding: 0 10px; border: 1px solid var(--muted); border-radius: 11px;
+  background: var(--bg); color: var(--ink); font: 500 13px "Instrument Sans", system-ui, sans-serif;
+}
+.reply input::placeholder { color: var(--muted); }
+/* An answered ask leaves by its height alone, never a fade. */
+.collapsing { overflow: hidden; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; border-bottom-width: 0 !important; }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1; max-width: calc(100vw - 32px);
+  display: flex; align-items: center; gap: 16px; padding: 10px 12px 10px 16px; border-radius: 8px;
+  background: var(--ink); color: var(--bg); font-size: 13px; box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+}
+.toast[hidden], .undo[hidden] { display: none; }
+.undo { margin: 0; padding: 2px 4px; border: 0; background: none; color: inherit; font: 600 13px "Instrument Sans", system-ui, sans-serif; text-decoration: underline 1px; text-underline-offset: 3px; cursor: pointer; }
+.undo:disabled { opacity: .5; cursor: default; }
+.undo:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; }
+
 .notices { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; color: var(--muted); }
 .notices p { margin: 0 0 2px; }
 
@@ -104,6 +167,9 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 @media (prefers-reduced-motion: no-preference) {
   header::after { animation: draw 1.1s var(--arrive) both; }
   .enter { animation: reveal .7s var(--arrive) both; }
+  .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
+  .collapsing { transition: height .16s ease-out, padding .16s ease-out, margin .16s ease-out; }
+  .toast.show { animation: reveal .3s var(--arrive) both; }
 }
 @keyframes draw { from { transform: scaleX(0); } }
 @keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }

@@ -4,3 +4,4 @@ __pycache__/
 .claude-plugin/types/
 *.log
 assets/candidates/
+dash/dash
