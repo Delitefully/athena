@@ -87,6 +87,16 @@ class HookStatusTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertFalse(mark.exists())
 
+    def test_an_older_install_reads_its_root_in_shell_before_any_config(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.sync_root_hint()  # what the first hook or athena command leaves behind
+        self.assertFalse(config.exists())
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, {"ATHENA_PYTHON": str(stub)}, cwd=other)
+        self.assertFalse(mark.exists())
+
     def test_a_config_newer_than_the_root_file_falls_back_to_python(self):
         os.environ.pop("ATHENA_WORKTREE_ROOT")
         config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})

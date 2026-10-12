@@ -11,6 +11,7 @@ from unittest import mock
 
 from tests import helpers
 from athena_lib import cli, config, init, ledger, paths
+from tests.test_config import REPO_MAP
 
 
 def tool(bin_dir, name, body):
@@ -218,6 +219,8 @@ class MigrationTest(InitBase):
         ledger.append("spawn", "abc-1", repo=str(self.home / "Developer" / "web"), branch="you/abc-1-x",
                       path=str(self.home / "Developer" / ".worktrees" / "web" / "abc-1-x"), model="opus",
                       effort="high")
+        (state / "repo-map.md").write_text(REPO_MAP)
+        self.expected = {"version": 1, **config.LEGACY, "human_merge_repos": ["web", "api"], "reapproval_repos": ["web"]}
 
     def snapshot(self):
         out = io.StringIO()
@@ -227,7 +230,7 @@ class MigrationTest(InitBase):
             cli.main(["status"])
         return (out.getvalue(), paths.worktree_path(self.home / "Developer" / "web", "you/abc-2-y"),
                 paths.projects_dir(), paths.quota_file(), config.get("model"), config.get("effort"),
-                config.listed("human_merge_repos", "platform"), config.listed("reapproval_repos", "platform"))
+                config.load()["human_merge_repos"], config.load()["reapproval_repos"])
 
     def test_the_migrated_config_equals_todays_values(self):
         before = self.snapshot()
@@ -235,10 +238,10 @@ class MigrationTest(InitBase):
         self.assertEqual(code, 0, out)
         self.assertEqual(asked, [])
         data = json.loads(config.config_file().read_text())
-        self.assertEqual(data, {"version": 1, **config.LEGACY})
+        self.assertEqual(data, self.expected)
         self.assertEqual(data["projects_dir"], "~/Developer")
         self.assertEqual(data["worktree_root"], "~/Developer/.worktrees")
-        self.assertEqual(data["human_merge_repos"], ["platform", "infrastructure"])
+        self.assertEqual((data["human_merge_repos"], data["reapproval_repos"]), (["web", "api"], ["web"]))
         self.assertEqual((data["model"], data["effort"]), ("opus", "high"))
         self.assertEqual(data["quota_file"], "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json")
         self.assertEqual(self.snapshot(), before)
@@ -248,8 +251,9 @@ class MigrationTest(InitBase):
         code, out, asked = self.init(answers=[""] * 7)
         self.assertEqual(code, 0, out)
         self.assertIn("[~/Developer]", asked[0])
-        self.assertIn("[platform, infrastructure]", asked[2])
-        self.assertEqual(json.loads(config.config_file().read_text()), {"version": 1, **config.LEGACY})
+        self.assertIn("[web, api]", asked[2])
+        self.assertIn("[web]", asked[3])
+        self.assertEqual(json.loads(config.config_file().read_text()), self.expected)
 
 
 if __name__ == "__main__":

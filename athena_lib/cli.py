@@ -200,8 +200,9 @@ def _migrate():
 
 
 def _first_run():
-    """No config.json yet: a new user runs athena init (an older install was migrated in main)."""
-    if config.exists():
+    """No config.json yet: a new user runs athena init. An older install was migrated in main, or, if writing its
+    config failed there, runs on its current values."""
+    if config.exists() or config.is_legacy():
         return None
     if not sys.stdin.isatty():
         print("athena: no config yet: run `athena init` first", file=sys.stderr)

@@ -8,6 +8,11 @@ from unittest import mock
 from tests import helpers
 from athena_lib import config, paths, quota
 
+# The shape of a real repo map's merge policy (synthetic names): owners in parentheses, prose after the list.
+REPO_MAP = ("# Repos\n- ABC: ~/src/web (acme/web)\n\n# Merge policy\n"
+            "- human-merged: web (acme/web), api (acme/api). The human merges these; athena never does.\n"
+            "- re-approval after push: web. A push after approval needs a new approval there.\n")
+
 
 class ConfigTest(unittest.TestCase):
     def setUp(self):
@@ -131,6 +136,12 @@ class RootHintTest(unittest.TestCase):
         config.sync_root_hint()
         self.assertFalse(self.hint.exists())
 
+    def test_sync_in_an_older_install_records_its_root_before_any_config(self):
+        (paths.ensure() / "ledger.jsonl").write_text("")
+        config.sync_root_hint()
+        self.assertFalse(config.exists())
+        self.assertEqual(self.hint.read_text(), str(self.home / "Developer" / ".worktrees") + "\n")
+
 
 class LegacyTest(unittest.TestCase):
     """A state dir from before config.json: today's effective values, unchanged, until `athena init` writes them."""
@@ -160,19 +171,26 @@ class LegacyTest(unittest.TestCase):
         self.assertEqual(paths.quota_file(),
                          self.home / ".local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json")
         self.assertEqual((config.get("model"), config.get("effort")), ("opus", "high"))
-        self.assertTrue(config.listed("human_merge_repos", "/x/platform"))
-        self.assertTrue(config.listed("human_merge_repos", "/x/infrastructure"))
-        self.assertTrue(config.listed("reapproval_repos", "/x/platform"))
-        self.assertFalse(config.listed("reapproval_repos", "/x/infrastructure"))
+        self.assertEqual((cfg["human_merge_repos"], cfg["reapproval_repos"]), ([], []))  # only the repo map names repos
         self.assertEqual(config.source("projects_dir"), "migrated (no config.json yet)")
 
-    def test_the_repo_maps_merge_policy_is_migrated(self):
-        (paths.state_dir() / "repo-map.md").write_text(
-            "# Repos\n- ABC: ~/src/web\n\n# Merge policy\n- human-merged: `web`, api\n"
-            "- re-approval after push: web\n")
+    def merge_lists(self, text):
+        (paths.state_dir() / "repo-map.md").write_text(text)
         cfg = config.load()
-        self.assertEqual((cfg["human_merge_repos"], cfg["reapproval_repos"]), (["web", "api"], ["web"]))
-        self.assertEqual(cfg["projects_dir"], "~/Developer")
+        return cfg["human_merge_repos"], cfg["reapproval_repos"]
+
+    def test_the_repo_maps_merge_policy_is_migrated(self):
+        self.assertEqual(self.merge_lists(REPO_MAP), (["web", "api"], ["web"]))
+        self.assertTrue(config.listed("human_merge_repos", "/x/api"))
+        self.assertFalse(config.listed("human_merge_repos", "/x/athena"))
+        self.assertEqual(config.load()["projects_dir"], "~/Developer")
+
+    def test_only_repo_names_are_read_from_a_merge_policy_line(self):
+        self.assertEqual(self.merge_lists("- human-merged: `web`, api\n- re-approval after push: none\n"),
+                         (["web", "api"], []))
+        self.assertEqual(self.merge_lists("* Human-merged: acme/web, ~/src/api.\n"), (["web", "api"], []))
+        self.assertEqual(self.merge_lists("- human-merged: my.repo (acme/my.repo); see notes.\n"), (["my.repo"], []))
+        self.assertEqual(self.merge_lists("- human-merged: web!, (acme/x), api\n"), (["api"], []))
 
     def test_a_repo_map_without_a_merge_policy_keeps_the_legacy_lists(self):
         (paths.state_dir() / "repo-map.md").write_text("# Repos\n- ABC: ~/src/web\n")

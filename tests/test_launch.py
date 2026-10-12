@@ -167,6 +167,18 @@ class FirstRunTest(unittest.TestCase):
         create = logged_calls(self.tmp.name)[0]
         self.assertEqual(create[create.index("--cwd") + 1], os.path.expanduser("~/Developer"))
 
+    def test_a_failed_write_leaves_an_older_install_running_on_its_values(self):
+        (paths.ensure() / "ledger.jsonl").write_text("")
+        err = io.StringIO()
+        with mock.patch.object(cli.sys.stdin, "isatty", return_value=False), \
+                mock.patch.object(cli.config, "write", side_effect=OSError("read-only")), \
+                redirect_stderr(err), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["hq"]), 0)
+        self.assertFalse(config.exists())
+        self.assertIn("could not write the config", err.getvalue())
+        self.assertEqual(logged_calls(self.tmp.name)[0][:2], ["workspace", "create"])
+        self.assertTrue((paths.state_dir() / "worktree-root").exists())  # the hook still reads its root in shell
+
     def test_any_command_in_an_older_install_writes_the_config(self):
         (paths.ensure() / "ledger.jsonl").write_text("")
         err = io.StringIO()

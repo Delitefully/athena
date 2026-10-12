@@ -28,8 +28,8 @@ DEFAULTS = {
 LEGACY = {
     "projects_dir": "~/Developer",
     "worktree_root": "~/Developer/.worktrees",
-    "human_merge_repos": ["platform", "infrastructure"],
-    "reapproval_repos": ["platform"],
+    "human_merge_repos": [],  # named only in the repo map's merge policy (legacy_values)
+    "reapproval_repos": [],
     "model": "opus",
     "effort": "high",
     "quota_file": "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json",
@@ -83,9 +83,26 @@ def legacy_values() -> dict:
     for key, label in MERGE_POLICY.items():
         found = re.search(rf"^\s*[-*]?\s*{re.escape(label)}\s*:(.*)$", text, re.I | re.M)
         if found:
-            names = [Path(n.strip("`'\" ")).name for n in re.split(r"[,\s]+", found.group(1)) if n.strip("`'\" ")]
-            values[key] = [n for n in names if n.lower() != "none"]
+            values[key] = repo_names(found.group(1))
     return values
+
+
+REPO_NAME = re.compile(r"[A-Za-z0-9_.-]*[A-Za-z0-9_]")
+
+
+def repo_names(text) -> list:
+    """`web (acme/web), api (acme/api). Prose after the list.` -> ['web', 'api']: the names only, each validated."""
+    text = re.sub(r"\([^)]*\)", " ", text)  # owner/name in parentheses
+    text = re.split(r"[.;:](?=\s|$)", text, maxsplit=1)[0]  # the list ends at the first sentence end
+    names = []
+    for item in text.split(","):
+        words = item.split()
+        if not words:
+            continue
+        name = words[0].strip("`'\"").rstrip("/").rsplit("/", 1)[-1]  # a path or owner/name: its last part
+        if REPO_NAME.fullmatch(name) and name.lower() != "none" and name not in names:
+            names.append(name)
+    return names
 
 
 def _read() -> dict:
@@ -167,8 +184,9 @@ def root_hint_file() -> Path:
 
 
 def _write_root_hint():
-    """The file's worktree root (not an env override) on one line: hooks/worker-status reads it without Python."""
-    data = _read()
+    """The worktree root from the file, or an older install's (never an env override), on one line:
+    hooks/worker-status reads it without Python."""
+    data = load() if is_legacy() else _read()
     root = data.get("worktree_root") or os.path.join(os.path.expanduser(data.get("projects_dir") or "~"), ".worktrees")
     hint = root_hint_file()
     hint.parent.mkdir(parents=True, exist_ok=True)
@@ -178,9 +196,16 @@ def _write_root_hint():
 
 
 def sync_root_hint():
-    """Rewrite the worktree-root file when config.json is newer (edited by hand) or the file is missing."""
+    """Write the worktree-root file when it is missing, or older than config.json (edited by hand).
+
+    An install from before config.json gets one too, so its hooks stay in shell even if the config is never written.
+    """
     hint = root_hint_file()
     try:
+        if is_legacy():
+            if not hint.exists():
+                _write_root_hint()
+            return
         if not exists() or (hint.exists() and hint.stat().st_mtime >= config_file().stat().st_mtime):
             return
         _write_root_hint()
