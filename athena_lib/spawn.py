@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from athena_lib import gitops, herdr, ledger, paths, quota, retire
+from athena_lib import config, gitops, herdr, ledger, paths, quota, retire
 
 HARD_CAP = 6
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
@@ -63,9 +63,19 @@ def _create_worktree(repo, branch, path, label):
     return herdr.call(*args)
 
 
+def setup_script(repo):
+    """repos/<name>.setup in the user's config dir, else in the plugin (which ships only example.setup)."""
+    name = Path(repo).name
+    for root in (config.config_dir(), paths.PLUGIN_ROOT):
+        script = root / "repos" / f"{name}.setup"
+        if script.is_file() and not (root == paths.PLUGIN_ROOT and name == "example"):
+            return script
+    return None
+
+
 def _run_setup(repo, path, name):
-    script = paths.PLUGIN_ROOT / "repos" / f"{Path(repo).name}.setup"
-    if not script.exists():
+    script = setup_script(repo)
+    if not script:
         return None
     log = paths.ensure("logs") / f"{name}-setup.log"
     # Without HQ's FORCE_HYPERLINK, so the script's tools write no OSC 8 links into its log.
@@ -78,13 +88,15 @@ def _run_setup(repo, path, name):
     return str(log)
 
 
-def _write_settings(name, brief, ultracode=False, workflow_size=None):
+def _write_settings(name, brief, ultracode=False, workflow_size=None, repo=None):
     settings = {
         "env": {"ATHENA_WORKER": name, "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
                 "ATHENA_BRIEF": str(brief)},
         "crossSessionInbound": "accept",
         "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
     }
+    if repo and config.listed("reapproval_repos", repo):  # worker.md: say a push after approval needs a new one
+        settings["env"]["ATHENA_REAPPROVAL"] = "1"
     if ultracode:  # the official settings key; the keyword in a prompt or file would not opt in
         settings["ultracode"] = True
         if workflow_size:
@@ -112,9 +124,10 @@ def claude_args(name, model, effort, settings):
     return args
 
 
-def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="opus", effort="high",
+def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=None, effort=None,
           force=False, setup=True, ignore_quota=False, ultracode=False, workflow_size=None):
     repo = Path(os.path.expanduser(str(repo))).resolve()
+    model, effort = model or config.get("model"), effort or config.get("effort")
     if not paths.valid_name(name):
         raise SpawnError(f"invalid worker name {name!r}: use lowercase letters, digits, - and _ (max 32)")
     if workflow_size and not ultracode:
@@ -147,7 +160,7 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model="
             record["setup_log"] = _run_setup(repo, path, name)
         brief = paths.ensure("briefs") / f"{name}.md"
         shutil.copyfile(brief_path, brief)
-        settings = _write_settings(name, brief, ultracode, workflow_size)
+        settings = _write_settings(name, brief, ultracode, workflow_size, repo)
         try:
             herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
                        "--", *claude_args(name, model, effort, settings), timeout=200)

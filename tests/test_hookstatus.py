@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers
-from athena_lib import hookstatus, ledger, paths
+from athena_lib import config, hookstatus, ledger, paths
 
 HOOK = helpers.ROOT / "hooks" / "worker-status"
 
@@ -54,6 +54,59 @@ class HookStatusTest(unittest.TestCase):
         ledger.append("spawn", "abc-1", path=os.path.realpath(self.wt))
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, cwd=self.wt)
         self.assertEqual(self.status("abc-1")["state"], "working")
+
+    def test_worker_found_under_the_configs_worktree_root(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        root = Path(self.tmp.name) / "projects" / ".wt"
+        wt = root / "proj" / "abc-2-y"
+        wt.mkdir(parents=True)
+        config.write({**config.DEFAULTS, "projects_dir": str(root.parent), "worktree_root": str(root)})
+        ledger.append("spawn", "abc-2", path=os.path.realpath(wt))
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(wt)}, cwd=wt)
+        self.assertEqual(self.status("abc-2")["state"], "working")
+        other = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1-x"
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, cwd=other)
+        self.assertIsNone(self.status("abc-1"))
+
+    def python_stub(self):
+        """An interpreter that fails loudly and leaves a mark, to prove the hook never started Python."""
+        mark = Path(self.tmp.name) / "python-ran"
+        stub = Path(self.tmp.name) / "python3"
+        stub.write_text(f"#!/bin/sh\ntouch {mark}\necho 'python3 must not run here' >&2\nexit 99\n")
+        stub.chmod(0o755)
+        return stub, mark
+
+    def test_a_non_worker_session_outside_the_root_never_starts_python(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)},
+                        {"ATHENA_PYTHON": str(stub), "PATH": f"{stub.parent}:/usr/bin:/bin"}, cwd=other)
+        self.assertEqual(proc.returncode, 0)
+        self.assertFalse(mark.exists())
+
+    def test_an_older_install_reads_its_root_in_shell_before_any_config(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.sync_root_hint()  # what the first hook or athena command leaves behind
+        self.assertFalse(config.exists())
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, {"ATHENA_PYTHON": str(stub)}, cwd=other)
+        self.assertFalse(mark.exists())
+
+    def test_a_config_newer_than_the_root_file_falls_back_to_python(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})
+        hint = paths.state_dir() / "worktree-root"
+        os.utime(hint, (1, 1))  # config.json edited by hand after the last write
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, {"ATHENA_PYTHON": str(stub)}, cwd=other)
+        self.assertTrue(mark.exists())
 
     def test_stop_with_report_sets_done(self):
         msg = 'All green.\nATHENA-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'
