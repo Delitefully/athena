@@ -66,7 +66,9 @@ def move(p, live: bool, human_merge: bool):
     """Whose move an open PR waits on: {"label", "kind", "needs"}; `needs` puts its row in the human's Needs you.
 
     `no reviewer requested` only where a review is required (REVIEW_REQUIRED); a repo whose branch has no review
-    rule (reviewDecision empty) waits on the merge alone.
+    rule (reviewDecision empty) waits on the merge alone. A merge is the human's only once checks are green (or the
+    repo runs none); before that it is `checks running`. A live worker's PR is the human's to merge only once the
+    worker reported DONE: the dashboard and the band check that, from the worker's state.
 
     `live`: a live worker owns the PR. `human_merge`: its repo is in `human_merge_repos`. None for a PR that is not
     open, or one with no review data (fetched before athena read reviewers): no guess at whose move it is.
@@ -78,6 +80,7 @@ def move(p, live: bool, human_merge: bool):
         return {"label": label, "kind": kind, "needs": needs}
 
     requested = list(p.get("requested") or [])
+    green = p.get("checks") in ("success", "none")  # nothing is the human's to merge while CI still runs
     if p.get("draft"):
         return out("draft", "draft", False)
     if p.get("checks") == "failure":
@@ -92,6 +95,8 @@ def move(p, live: bool, human_merge: bool):
             return out("approved · in merge queue", "queued", False)
         if p.get("auto_merge"):
             return out("approved · auto-merge on", "queued", False)
+        if not green:
+            return out("checks running", "pending", False)
         return out("approved · yours to merge" if human_merge else "approved · your go to merge", "approved", True)
     if requested:
         return out("awaiting review · " + _names(requested), "awaiting", False)
@@ -102,6 +107,8 @@ def move(p, live: bool, human_merge: bool):
         return out("in merge queue", "queued", False)
     if p.get("auto_merge"):
         return out("auto-merge on", "queued", False)
+    if not green:
+        return out("checks running", "pending", False)
     return out("yours to merge" if human_merge else "your go to merge", "mergeable", True)
 
 
@@ -196,10 +203,11 @@ def _title(text) -> str:
     return text if len(text) <= _TITLE_MAX else text[:_TITLE_MAX - 1].rstrip() + "…"
 
 
-def review_requested(slugs, cap=10) -> list:
+def review_requested(slugs, cap=10, last=None) -> list:
     """Open PRs that ask the human (`@me`) for a review, one `gh search prs` per repo, at most `cap` in all.
 
-    Each links by the repo searched and its number, never by the URL GitHub returns.
+    Each links by the repo searched and its number, never by the URL GitHub returns. A repo whose search fails keeps
+    its rows from `last`, the previous list.
     """
     out = []
     for slug in slugs:
@@ -209,10 +217,13 @@ def review_requested(slugs, cap=10) -> list:
             proc = subprocess.run(["gh", "search", "prs", "--review-requested=@me", "--state=open", "--repo", slug,
                                    "--json", "number,title,author", "--limit", str(cap)],
                                   capture_output=True, text=True, timeout=30)
-            items = json.loads(proc.stdout) if proc.returncode == 0 else []
+            items = json.loads(proc.stdout) if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired, ValueError):
-            items = []
-        for item in items if isinstance(items, list) else []:
+            items = None
+        if not isinstance(items, list):
+            out += [r for r in last or [] if isinstance(r, dict) and r.get("repo") == slug][:cap - len(out)]
+            continue
+        for item in items:
             n = item.get("number") if isinstance(item, dict) else None
             if isinstance(n, int) and n > 0 and len(out) < cap:
                 out.append({"repo": slug, "number": n, "title": _title(item.get("title")),

@@ -186,9 +186,9 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		}
 		v.NeedsYou = append(v.NeedsYou, it)
 	}
-	foldNotes(&v, s.Notes)
-	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	v.Done = append(v.Done, retired...)
+	foldNotes(&v, s.Notes) // once every row is in, retired ones too
+	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
 	if len(v.Done) > doneMax {
 		v.Done = v.Done[:doneMax]
@@ -267,6 +267,10 @@ func repoName(key string) string {
 // moveOverWorking: the moves a working worker's row shows; on any other, the row says `working`.
 var moveOverWorking = map[string]bool{"approved": true, "queued": true, "changes": true}
 
+// moveMerges: the moves that make a PR the human's to merge. A live worker's PR is that only once the worker
+// reported DONE; until then its row shows the worker's own state (athena_lib/watch.py `_reported` agrees).
+var moveMerges = map[string]bool{"approved": true, "mergeable": true}
+
 // placeMove puts a PR's row where whose move it is says: Needs you when it is the human's, else In progress.
 func placeMove(v *View, it Item, m *Move) {
 	it.Label, it.Badge = m.Label, m.Needs
@@ -277,6 +281,8 @@ func placeMove(v *View, it Item, m *Move) {
 		it.Icon = "ok"
 	case "failing":
 		it.Icon = "fail"
+	case "pending":
+		it.Icon = "working"
 	case "unrequested":
 		it.Icon = "done"
 	case "changes":
@@ -318,7 +324,8 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	case pr != nil && pr.State == "MERGED":
 		it.Icon, it.Label = "merged", "merged, not retired yet"
 		v.Done = append(v.Done, it)
-	case pr != nil && pr.State == "OPEN" && !pr.Draft && pr.Move != nil && (state != "working" || moveOverWorking[pr.Move.Kind]):
+	case pr != nil && pr.State == "OPEN" && !pr.Draft && pr.Move != nil && (state != "working" || moveOverWorking[pr.Move.Kind]) &&
+		(!moveMerges[pr.Move.Kind] || reported(state, hook)):
 		it.Detail = summary
 		placeMove(v, it, pr.Move)
 	default:
@@ -331,6 +338,18 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 		}
 		v.InProgress = append(v.InProgress, it)
 	}
+}
+
+// reported: the worker finished its goal. A Claude that went idle or exited after a DONE report still counts.
+func reported(state string, h Hook) bool {
+	if state == "done" {
+		return true
+	}
+	r := h.Report
+	if r == nil {
+		r = h.LastReport
+	}
+	return (state == "idle" || state == "exited") && r != nil && (r.Status == "DONE" || r.Status == "DONE_WITH_CONCERNS")
 }
 
 func stateIcon(state string, pr *PR) string {

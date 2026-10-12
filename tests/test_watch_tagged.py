@@ -110,7 +110,8 @@ class SummaryTest(unittest.TestCase):
                  "reviews": {}, "auto_merge": False, "queued": False, "url": f"https://github.com/o/r/pull/{n}", **kw}
             p["move"] = watch.pr.move(p, live=True, human_merge=False)
             return p
-        snap = {"workers": {"a": _w("working", pr(1, review="APPROVED")),  # approved: the human's go
+        done = {"status": "DONE"}
+        snap = {"workers": {"a": _w("idle", pr(1, review="APPROVED"), report=done),  # approved, worker done: the human's go
                             "b": _w("done", pr(2)),  # no reviewer requested
                             "c": _w("idle", pr(3, requested=["alex"])),  # a teammate's move
                             "d": _w("done", pr(4, draft=True)),
@@ -121,10 +122,21 @@ class SummaryTest(unittest.TestCase):
                             "i": _w("idle", pr(9, review="CHANGES_REQUESTED", reviews={"x": "CHANGES_REQUESTED"})),
                             "j": _w("idle", {"state": "OPEN", "draft": False, "review": "",
                                              "url": "https://github.com/o/r/pull/10"}),  # no review data yet
-                            "k": _w("idle", pr(11, review="")),  # no review rule: the human's go
-                            "l": _w("working", pr(12, review=""))}}  # ... once its worker is done
+                            "k": {**_w("idle", pr(11, review="")), "last_report": done},  # no review rule: the human's go
+                            "l": _w("working", pr(12, review="")),  # ... once its worker is done
+                            "m": _w("idle", pr(13, review="")),  # idle with no DONE report: not done
+                            "n": _w("exited", pr(14, review="APPROVED")),  # exited mid-task
+                            "o": _w("working", pr(15, review="APPROVED"))}}  # approved, still working
         self.assertEqual(watch.board(snap)["prs"], ["#1", "#2", "#11"])
-        self.assertEqual(watch.summary(snap), "g blocked · 3 PRs need you · a, e, l working · c, f, h, i, j, k idle · b, d done")
+        self.assertEqual(watch.summary(snap), "g blocked · n exited · 3 PRs need you · e, l, o working · "
+                                              "c, f, h, i, j, k, m idle · a, b, d done")
+
+    def test_one_pr_per_repo_and_number(self):
+        def followed(n, repo):
+            return {"state": "OPEN", "number": n, "move": {"label": "no reviewer requested", "needs": True}}
+        snap = {"workers": {}, "prs": {"o/web#7": followed(7, "o/web"), "o/api#7": followed(7, "o/api")},
+                "review_requests": [{"repo": "O/Web", "number": 7, "title": "t"}]}
+        self.assertEqual(watch.board(snap)["prs"], ["#7", "#7"])
 
     def test_followed_prs_and_review_requests_count_by_their_row(self):
         def followed(n, label, needs):
@@ -134,8 +146,8 @@ class SummaryTest(unittest.TestCase):
                                        "o/r#150": followed(150, "checks failing", True),
                                        "o/r#151": {"state": "MERGED", "move": None, "number": 151}},
                 "review_requests": [{"repo": "o/r", "number": 7, "title": "t"}, {"repo": "o/x", "number": 149, "title": "u"}]}
-        self.assertEqual(watch.board(snap)["prs"], ["#7", "#149", "#150"])
-        self.assertEqual(watch.summary(snap), "3 PRs need you · no live workers")
+        self.assertEqual(watch.board(snap)["prs"], ["#7", "#149", "#149", "#150"])  # o/r#149 and o/x#149
+        self.assertEqual(watch.summary(snap), "4 PRs need you · no live workers")
 
     def test_needs_you_notes_never_add_prs(self):
         # needs-you.md is for decisions: a PR it links counts only when its own row is in Needs you.

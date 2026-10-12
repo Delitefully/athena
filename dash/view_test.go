@@ -162,10 +162,16 @@ func TestBuildCases(t *testing.T) {
 		{"idle with no report", live("n"), Hook{State: "idle"}, &WatchWorker{PR: awaiting()}, "progress", "awaiting review · alex"},
 		{"no review data yet", live("n2"), Hook{State: "idle"}, &WatchWorker{PR: open(false, "", "success")}, "progress", "idle"},
 		{"done, draft", live("e"), Hook{State: "done"}, &WatchWorker{PR: open(true, "", "success")}, "progress", "done, athena reviewing"},
-		{"approved while working", live("f"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "needs", "approved · yours to merge"},
+		{"approved while working", live("f"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "working"},
+		{"approved, worker done", live("f1"), Hook{State: "done"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "needs", "approved · yours to merge"},
 		{"no review rule, done", live("f7"), Hook{State: "done"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "needs", "your go to merge"},
+		{"no review rule, idle after DONE", live("f9"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "needs", "your go to merge"},
+		{"no review rule, idle with no report", live("f10"), Hook{State: "idle"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "progress", "idle"},
+		{"approved, exited mid-task", live("f11"), Hook{State: "exited"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "its Claude exited"},
+		{"approved, idle with no report", live("f12"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "idle"},
+		{"checks running", live("f13"), Hook{State: "done"}, &WatchWorker{PR: moved("checks running", "pending", false)}, "progress", "checks running"},
 		{"no review rule, still working", live("f8"), Hook{State: "working"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "progress", "working"},
-		{"approved, not the human's repo", live("f2"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · your go to merge", "approved", true)}, "needs", "approved · your go to merge"},
+		{"approved, not the human's repo", live("f2"), Hook{State: "idle", LastReport: &Report{Status: "DONE_WITH_CONCERNS"}}, &WatchWorker{PR: moved("approved · your go to merge", "approved", true)}, "needs", "approved · your go to merge"},
 		{"approved, in the merge queue", live("f3"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · in merge queue", "queued", false)}, "progress", "approved · in merge queue"},
 		{"approved, auto-merge on", live("f4"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · auto-merge on", "queued", false)}, "progress", "approved · auto-merge on"},
 		{"changes requested, worker on it", live("f5"), Hook{State: "working"}, &WatchWorker{PR: moved("changes requested · worker fixing", "changes", false)}, "progress", "changes requested · worker fixing"},
@@ -426,5 +432,17 @@ func TestReviewRequestsAreCappedAndSkipFollowedPRs(t *testing.T) {
 	}
 	if it := v.NeedsYou[0]; it.PR.URL != "https://github.com/acme/web/pull/1" || it.Title != "<b>t</b>" || it.Detail != "" {
 		t.Fatalf("%+v", it)
+	}
+}
+
+func TestANoteFoldsUnderARetiredWorkersMergedPR(t *testing.T) {
+	s := Snapshot{Hooks: map[string]Hook{}, Workers: []Worker{{Name: "abc-2", Linear: "ABC-2", State: "retired", Updated: fixtureNow - 3600}}}
+	merged := followed(2, "", "", "", false)
+	merged.State = "MERGED"
+	s.History = []HistoryEntry{{TS: fixtureNow - 3600, Name: "abc-2", PR: merged}}
+	s.Notes = []string{"Announce https://github.com/acme/web/pull/2 in the release notes?"}
+	v := Build(s, fixtureNow, "acme")
+	if len(v.NeedsYou) != 0 || len(v.Done) != 1 || len(v.Done[0].Folds) != 1 || string(v.Done[0].Folds[0]) != "Announce in the release notes?" {
+		t.Fatalf("needs %+v done %+v", v.NeedsYou, v.Done)
 	}
 }

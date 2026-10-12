@@ -183,8 +183,8 @@ def follow(cur, prev=None) -> None:
     slugs += [repo_slug(w["repo"]) for w in ledger.workers().values() if w.get("repo")]
     slugs += [chain["repo"] for chain in stacks()]
     known = owned | set(prs) | stacked
-    cur["review_requests"] = [r for r in pr.review_requested([s for s in dict.fromkeys(slugs) if is_slug(s)])
-                              if f"{r['repo']}#{r['number']}" not in known]
+    found = pr.review_requested([s for s in dict.fromkeys(slugs) if is_slug(s)], last=prev.get("review_requests"))
+    cur["review_requests"] = [r for r in found if f"{r['repo']}#{r['number']}" not in known]
 
 
 _WAKE_REVIEWS = ("CHANGES_REQUESTED", "APPROVED")
@@ -256,6 +256,14 @@ def _pr_key(url):
 
 
 _OVER_WORKING = ("approved", "queued", "changes")  # moves a working worker's row shows; others show `working`
+_MERGES = ("approved", "mergeable")  # the human's to merge: a live worker's PR only once the worker reported DONE
+
+
+def _reported(w) -> bool:
+    """The worker finished its goal: done, or idle or exited after a DONE report (dash/view.go `reported`)."""
+    state = w.get("state")
+    report = w.get("report") or w.get("last_report") or {}
+    return state == "done" or state in ("idle", "exited") and (report.get("status") or "").upper().startswith("DONE")
 
 
 def _prs_awaiting(snap) -> list:
@@ -270,11 +278,13 @@ def _prs_awaiting(snap) -> list:
             continue
         if w.get("state") == "working" and m.get("kind") not in _OVER_WORKING:
             continue
+        if m.get("kind") in _MERGES and not _reported(w):
+            continue
         keys.append(_pr_key(p.get("url")) or f"#{p.get('number')}")
     keys += [k for k, p in (snap.get("prs") or {}).items() if (p.get("move") or {}).get("needs")]
     keys += [f"{r.get('repo')}#{r.get('number')}" for r in snap.get("review_requests") or []]
-    numbers = [k.rsplit("#", 1)[1] for k in dict.fromkeys(keys)]
-    return ["#" + n for n in sorted(dict.fromkeys(numbers), key=lambda n: int(n) if n.isdigit() else 0)]
+    numbers = [k.rsplit("#", 1)[1] for k in dict.fromkeys(k.lower() for k in keys)]  # one per owner/repo#n
+    return ["#" + n for n in sorted(numbers, key=lambda n: int(n) if n.isdigit() else 0)]
 
 
 _NEEDS_ORDER = ("needs context", "blocked", "exited")
@@ -402,7 +412,7 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
         if pr_state and "requested" in pr_state:
             pr_state = {**pr_state, "move": pr.move(pr_state, live=True, human_merge=_human_merge(repo or ""))}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
-                              "slug": repo_slug(repo) if repo else None}
+                              "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None}
         if repo and repo not in mains:
             if fetch:
                 gitops.git(repo, "fetch", "--quiet", "origin", check=False)

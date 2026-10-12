@@ -70,6 +70,22 @@ class MoveTest(unittest.TestCase):
         # Its worker still at work keeps the row (`working`): not a move that wins over working.
         self.assertEqual(pr.move(_pr(review=""), live=True, human_merge=False)["kind"], "mergeable")
 
+    def test_a_merge_waits_for_green_checks(self):
+        # Nothing is the human's to merge while CI still runs: "checks running", In progress.
+        self.check(_pr(review="", checks="pending"), True, False, "checks running", False)
+        self.check(_pr(review="", checks="pending"), False, True, "checks running", False)
+        self.check(_pr(review="APPROVED", checks="pending"), True, True, "checks running", False)
+        self.check(_pr(review="APPROVED", checks="pending"), False, False, "checks running", False)
+        # Auto-merge or the queue merges once checks pass: still nobody's move.
+        self.check(_pr(review="APPROVED", checks="pending", auto_merge=True), True, False, "approved · auto-merge on", False)
+        self.check(_pr(review="", checks="pending", queued=True), True, False, "in merge queue", False)
+        # A repo with no CI at all has nothing to wait for.
+        self.check(_pr(review="", checks="none"), True, False, "your go to merge", True)
+        self.check(_pr(review="APPROVED", checks="none"), True, True, "approved · yours to merge", True)
+        # A review still to come waits on the reviewer whatever CI does.
+        self.check(_pr(checks="pending", requested=["alex"]), True, False, "awaiting review · alex", False)
+        self.assertEqual(pr.move(_pr(review="", checks="pending"), live=True, human_merge=False)["kind"], "pending")
+
     def test_approved(self):
         self.check(_pr(review="APPROVED"), True, True, "approved · yours to merge", True)
         self.check(_pr(review="APPROVED", queued=True), True, True, "approved · in merge queue", False)
@@ -167,6 +183,17 @@ class BatchTest(unittest.TestCase):
 
 
 class ReviewRequestedTest(unittest.TestCase):
+    def test_a_failed_search_keeps_that_repos_last_list(self):
+        last = [{"repo": "acme/web", "number": 4, "title": "t", "author": "kim", "url": "https://github.com/acme/web/pull/4"},
+                {"repo": "acme/api", "number": 5, "title": "u", "author": "kim", "url": "https://github.com/acme/api/pull/5"}]
+
+        def run(argv, **kw):
+            if argv[argv.index("--repo") + 1] == "acme/web":
+                return mock.Mock(returncode=1, stdout="", stderr="rate limited")
+            return mock.Mock(returncode=0, stdout="[]", stderr="")
+        with mock.patch.object(pr.subprocess, "run", side_effect=run):
+            self.assertEqual(pr.review_requested(["acme/web", "acme/api"], last=last), last[:1])
+
     def test_one_search_per_repo_capped_and_linked_by_the_searched_repo(self):
         def run(argv, **kw):
             repo = argv[argv.index("--repo") + 1]
