@@ -79,9 +79,17 @@ class MoveTest(unittest.TestCase):
         # Auto-merge or the queue merges once checks pass: still nobody's move.
         self.check(_pr(review="APPROVED", checks="pending", auto_merge=True), True, False, "approved · auto-merge on", False)
         self.check(_pr(review="", checks="pending", queued=True), True, False, "in merge queue", False)
-        # A repo with no CI at all has nothing to wait for.
-        self.check(_pr(review="", checks="none"), True, False, "your go to merge", True)
-        self.check(_pr(review="APPROVED", checks="none"), True, True, "approved · yours to merge", True)
+        # No checks yet: a repo with no CI has nothing to wait for; in one with CI (or not known to have none),
+        # the workflows have not registered yet after a push.
+        for ci in (True, None):
+            self.assertEqual(pr.move(_pr(review="", checks="none"), live=False, human_merge=False, ci=ci)["label"],
+                             "checks starting")
+        self.assertEqual(pr.move(_pr(review="APPROVED", checks="none"), live=False, human_merge=True)["label"],
+                         "checks starting")
+        m = pr.move(_pr(review="", checks="none"), live=True, human_merge=False, ci=False)
+        self.assertEqual((m["label"], m["needs"]), ("your go to merge", True))
+        m = pr.move(_pr(review="APPROVED", checks="none"), live=False, human_merge=True, ci=False)
+        self.assertEqual((m["label"], m["needs"]), ("approved · yours to merge", True))
         # A review still to come waits on the reviewer whatever CI does.
         self.check(_pr(checks="pending", requested=["alex"]), True, False, "awaiting review · alex", False)
         self.assertEqual(pr.move(_pr(review="", checks="pending"), live=True, human_merge=False)["kind"], "pending")
@@ -180,6 +188,22 @@ class BatchTest(unittest.TestCase):
         self.assertNotIn("{x}", query)
         self.assertIn("pullRequest(number: 2)", query)
         self.assertNotIn("1 }", query)
+
+
+class HasCITest(unittest.TestCase):
+    def test_a_workflows_directory_means_ci(self):
+        def answer(code, stderr=""):
+            return mock.patch.object(pr.subprocess, "run", return_value=mock.Mock(returncode=code, stdout="[]", stderr=stderr))
+        with answer(0) as run:
+            self.assertTrue(pr.has_ci("acme/web"))
+        self.assertEqual(run.call_args.args[0][:3], ["gh", "api", "repos/acme/web/contents/.github/workflows"])
+        with answer(1, "gh: Not Found (HTTP 404)"):
+            self.assertFalse(pr.has_ci("acme/web"))
+        with answer(1, "gh: API rate limit exceeded (HTTP 403)"):
+            self.assertIsNone(pr.has_ci("acme/web"))
+        with mock.patch.object(pr.subprocess, "run") as run:
+            self.assertIsNone(pr.has_ci("not a slug"))
+            self.assertEqual(run.call_count, 0)
 
 
 class ReviewRequestedTest(unittest.TestCase):

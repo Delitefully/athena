@@ -313,6 +313,41 @@ def _reviewed(n, **kw):
             "requested": [], "reviews": {}, "auto_merge": False, "queued": False, **kw}
 
 
+class CITest(unittest.TestCase):
+    """Whether a repo runs CI: asked once a day, and only for a PR with no checks yet."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        watch._CI.clear()
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_cached_for_a_day_and_kept_when_gh_fails(self):
+        with mock.patch.object(watch.pr, "has_ci", return_value=False) as ask, \
+                mock.patch.object(watch.time, "time", return_value=1000.0):
+            self.assertFalse(watch.has_ci("o/web"))
+            self.assertFalse(watch.has_ci("o/web"))
+            self.assertEqual(ask.call_count, 1)
+        with mock.patch.object(watch.pr, "has_ci", return_value=None) as ask, \
+                mock.patch.object(watch.time, "time", return_value=1000.0 + 86400 + 1):
+            self.assertFalse(watch.has_ci("o/web"))  # gh failed: the last answer stands
+            self.assertEqual(ask.call_count, 1)
+        with mock.patch.object(watch.pr, "has_ci", return_value=None):
+            self.assertIsNone(watch.has_ci("o/new"))  # never known: treated as a repo with CI
+
+    def test_none_is_green_only_where_the_repo_has_no_ci(self):
+        p = _reviewed(5, review="", checks="none")
+        with mock.patch.object(watch.pr, "has_ci", side_effect=lambda slug: slug == "o/ci"):
+            self.assertEqual(watch._move(p, False, "o/ci", "o/ci")["label"], "checks starting")
+            self.assertEqual(watch._move(p, False, "o/web", "o/web")["label"], "your go to merge")
+        with mock.patch.object(watch.pr, "has_ci") as ask:
+            self.assertEqual(watch._move(_reviewed(6, review=""), False, "o/x", "o/x")["label"], "your go to merge")
+            self.assertEqual(ask.call_count, 0)  # checks reported: no need to ask
+
+
 class FollowedTest(unittest.TestCase):
     """Every PR athena follows gets one row: a live worker's, a stacked one, and a retired worker's while open."""
 

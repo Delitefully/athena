@@ -62,15 +62,16 @@ def _names(names, most=3) -> str:
     return shown + (f" +{len(names) - most}" if len(names) > most else "")
 
 
-def move(p, live: bool, human_merge: bool):
+def move(p, live: bool, human_merge: bool, ci=True):
     """Whose move an open PR waits on: {"label", "kind", "needs"}; `needs` puts its row in the human's Needs you.
 
     `no reviewer requested` only where a review is required (REVIEW_REQUIRED); a repo whose branch has no review
     rule (reviewDecision empty) waits on the merge alone. A merge is the human's only once checks are green (or the
-    repo runs none); before that it is `checks running`. A live worker's PR is the human's to merge only once the
+    repo runs no CI); before that it is `checks running`, or `checks starting` while none have registered. A live worker's PR is the human's to merge only once the
     worker reported DONE: the dashboard and the band check that, from the worker's state.
 
-    `live`: a live worker owns the PR. `human_merge`: its repo is in `human_merge_repos`. None for a PR that is not
+    `live`: a live worker owns the PR. `human_merge`: its repo is in `human_merge_repos`. `ci`: False when its repo
+    runs no CI (`has_ci`), so a PR with no checks is green there; True or None (not known) waits for checks. None for a PR that is not
     open, or one with no review data (fetched before athena read reviewers): no guess at whose move it is.
     """
     if not p or p.get("state") != "OPEN" or "requested" not in p:
@@ -79,8 +80,13 @@ def move(p, live: bool, human_merge: bool):
     def out(label, kind, needs):
         return {"label": label, "kind": kind, "needs": needs}
 
+    def starting():
+        return out("checks starting" if p.get("checks") == "none" else "checks running", "pending", False)
+
     requested = list(p.get("requested") or [])
-    green = p.get("checks") in ("success", "none")  # nothing is the human's to merge while CI still runs
+    # Nothing is the human's to merge while CI still runs. No checks at all is green only in a repo known to run no CI
+    # (`ci` False); elsewhere the workflows have not registered yet after a push.
+    green = p.get("checks") == "success" or p.get("checks") == "none" and ci is False
     if p.get("draft"):
         return out("draft", "draft", False)
     if p.get("checks") == "failure":
@@ -96,7 +102,7 @@ def move(p, live: bool, human_merge: bool):
         if p.get("auto_merge"):
             return out("approved · auto-merge on", "queued", False)
         if not green:
-            return out("checks running", "pending", False)
+            return starting()
         return out("approved · yours to merge" if human_merge else "approved · your go to merge", "approved", True)
     if requested:
         return out("awaiting review · " + _names(requested), "awaiting", False)
@@ -108,7 +114,7 @@ def move(p, live: bool, human_merge: bool):
     if p.get("auto_merge"):
         return out("auto-merge on", "queued", False)
     if not green:
-        return out("checks running", "pending", False)
+        return starting()
     return out("yours to merge" if human_merge else "your go to merge", "mergeable", True)
 
 
@@ -192,6 +198,21 @@ def batch(keys):
             if isinstance(node, dict):
                 out[f"{slug}#{n}"] = reduce(_flatten(node))
     return out
+
+
+def has_ci(slug):
+    """Whether a repo runs GitHub Actions: a `.github/workflows` directory on its default branch. True, False (404),
+    or None when gh cannot say (rate limit, network)."""
+    if not is_slug(slug):
+        return None
+    try:
+        proc = subprocess.run(["gh", "api", f"repos/{slug}/contents/.github/workflows", "--silent"],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode == 0:
+        return True
+    return False if "404" in proc.stderr or "Not Found" in proc.stderr else None
 
 
 _TITLE_MAX = 120

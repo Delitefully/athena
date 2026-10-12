@@ -125,6 +125,32 @@ def _human_merge(repo) -> bool:
         return False
 
 
+_CI = {}  # owner/name -> (runs CI, when asked)
+_CI_TTL = 24 * 3600
+
+
+def has_ci(slug):
+    """Whether `slug` runs CI, asked of GitHub at most once a day. A failed ask keeps the last answer; never known
+    is None, which waits for checks like a repo with CI."""
+    known, asked = _CI.get(slug, (None, None))
+    if asked is not None and time.time() - asked < _CI_TTL:
+        return known
+    found = pr.has_ci(slug)
+    if found is None:
+        if slug in _CI:
+            _CI[slug] = (known, time.time())  # keep it; ask again tomorrow
+        return known
+    _CI[slug] = (found, time.time())
+    return found
+
+
+def _move(p, live, repo, slug):
+    """pr.move for a PR of `repo` (a path or owner/name, for human_merge_repos); whether `slug` runs CI is asked only
+    for a PR with no checks yet."""
+    ci = has_ci(slug) if p.get("checks") == "none" and is_slug(slug) else None
+    return pr.move(p, live=live, human_merge=_human_merge(repo or ""), ci=ci)
+
+
 def _retired_open() -> dict:
     """`owner/name#n` -> (worker, its repo) for each recently retired worker whose PR was open when it retired."""
     try:
@@ -176,7 +202,7 @@ def follow(cur, prev=None) -> None:
         slug = repo if key in stacked else (repo_slug(worker_repo) if worker_repo else None)
         entry = dict(data)
         entry.update({"owner": owner, "slug": slug if slug and slug.lower() == repo.lower() else None,
-                      "move": pr.move(data, live=False, human_merge=_human_merge(worker_repo or repo))})
+                      "move": _move(data, False, worker_repo or repo, repo)})
         prs[key] = entry
     cur["prs"] = prs
     slugs = [w.get("slug") for w in cur.get("workers", {}).values()]
@@ -410,7 +436,8 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
         repo = w.get("repo")
         if pr_state and "requested" in pr_state:
-            pr_state = {**pr_state, "move": pr.move(pr_state, live=True, human_merge=_human_merge(repo or ""))}
+            key = _pr_key(pr_state.get("url"))
+            pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None)}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
                               "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None}
         if repo and repo not in mains:
