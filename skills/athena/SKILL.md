@@ -96,7 +96,7 @@ Ready means: rebased on current main, checks green, review threads resolved, the
 
 - Tell the human: `▲ abc-112 ready @ <sha> · checks green · <n> approvals · <PR url>`.
 - Draft to ready (`gh pr ready`) only when the human agrees, since it notifies reviewers.
-- Repos the human merges: the human merges. Others: merge only after the human says go for that PR: `gh pr merge <url> --squash --match-head-commit <sha>` (use the repo's usual merge style). Never `--admin`. A rebase after approval needs re-approval in repos that dismiss stale approvals.
+- Repos the repo map marks as human-merged: the human merges. Others: merge only after the human says go for that PR: `gh pr merge <url> --squash --match-head-commit <sha>` (use the repo's usual merge style). Never `--admin`. A rebase after approval needs re-approval in repos that dismiss stale approvals.
 - After the merge: move Linear to Done, `athena retire <w>`, and broadcast "main moved" to the repo's other workers.
 
 ## 6. Reporting to the human
