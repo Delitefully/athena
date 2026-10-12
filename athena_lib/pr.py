@@ -225,8 +225,10 @@ def _title(text) -> str:
 
 
 def review_requested(slugs, cap=10, last=None) -> list:
-    """Open PRs that ask the human (`@me`) for a review, one `gh search prs` per repo, at most `cap` in all.
+    """Open, non-draft PRs that ask the human (`@me`) by name for a review, one `gh search prs` per repo, at most `cap`
+    in all. A PR that requests only one of the human's teams is not theirs to review, so it is left out.
 
+    The qualifiers go to gh as separate words: one quoted string becomes `user-review-requested:"@me draft:false"`.
     Each links by the repo searched and its number, never by the URL GitHub returns. A repo whose search fails keeps
     its rows from `last`, the previous list.
     """
@@ -235,8 +237,8 @@ def review_requested(slugs, cap=10, last=None) -> list:
         if len(out) >= cap or not is_slug(slug):
             continue
         try:
-            proc = subprocess.run(["gh", "search", "prs", "--review-requested=@me", "--state=open", "--repo", slug,
-                                   "--json", "number,title,author", "--limit", str(cap)],
+            proc = subprocess.run(["gh", "search", "prs", "user-review-requested:@me", "draft:false", "--state=open",
+                                   "--repo", slug, "--json", "number,title,author,isDraft", "--limit", str(cap)],
                                   capture_output=True, text=True, timeout=30)
             items = json.loads(proc.stdout) if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired, ValueError):
@@ -246,7 +248,7 @@ def review_requested(slugs, cap=10, last=None) -> list:
             continue
         for item in items:
             n = item.get("number") if isinstance(item, dict) else None
-            if isinstance(n, int) and n > 0 and len(out) < cap:
+            if isinstance(n, int) and n > 0 and not item.get("isDraft") and len(out) < cap:
                 out.append({"repo": slug, "number": n, "title": _title(item.get("title")),
                             "author": ((item.get("author") or {}).get("login") or ""),
                             "url": f"https://github.com/{slug}/pull/{n}"})

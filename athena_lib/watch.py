@@ -182,7 +182,7 @@ def _key_number(key):
 def follow(cur, prev=None) -> None:
     """On a fetch tick: one `pr.batch` for the stacked PRs and the retired workers' open ones, then one review
     search per repo athena knows. Sets cur's `stacks`, `prs` (each followed PR no live worker owns, with whose move
-    it waits on) and `review_requests` (a teammate's PR asking the human, one row each)."""
+    it waits on) and `review_requests` (a teammate's non-draft PR asking the human by name, one row each)."""
     prev = prev or {}
     retired = _retired_open()
     stacked = {f"{r}#{n}" for r, n in _stack_keys()}
