@@ -49,16 +49,16 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 	// auto-merge on, and each linked from a note that folds into its row.
 	own := find(v.InProgress, "abc-452")
 	if own.Label != "awaiting review · alex" || own.Badge || own.PR.Text != "#6452" || own.PR.Review != "" || len(own.Folds) != 1 ||
-		!strings.Contains(string(own.Folds[0]), `href="https://github.com/acme/web/pull/6452"`) {
+		string(own.Folds[0]) != "Approve and merge ABC-452" {
 		t.Fatalf("abc-452 %+v %+v", own, own.PR)
 	}
 	stack := v.InProgress[len(v.InProgress)-1]
 	if stack.Label != "awaiting review · alex" || stack.Title != "Billing export, step 2: CSV writer" || stack.PR.Text != "#6148" ||
-		stack.Ticket != "" || len(stack.Folds) != 1 || !strings.Contains(string(stack.Folds[0]), "next to land") {
+		stack.Ticket != "" || len(stack.Folds) != 1 || string(stack.Folds[0]) != "Billing export step 2 is next to land" {
 		t.Fatalf("stack row %+v %+v", stack, stack.PR)
 	}
 	notes := v.NeedsYou[len(v.NeedsYou)-3:]
-	for i, want := range []string{"note", "note", "athena asks"} {
+	for i, want := range []string{"athena asks", "athena asks", "athena asks"} {
 		if notes[i].Label != want {
 			t.Errorf("note %d %q: label %q, want %q", i, notes[i].Note, notes[i].Label, want)
 		}
@@ -163,6 +163,8 @@ func TestBuildCases(t *testing.T) {
 		{"no review data yet", live("n2"), Hook{State: "idle"}, &WatchWorker{PR: open(false, "", "success")}, "progress", "idle"},
 		{"done, draft", live("e"), Hook{State: "done"}, &WatchWorker{PR: open(true, "", "success")}, "progress", "done, athena reviewing"},
 		{"approved while working", live("f"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "needs", "approved · yours to merge"},
+		{"no review rule, done", live("f7"), Hook{State: "done"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "needs", "your go to merge"},
+		{"no review rule, still working", live("f8"), Hook{State: "working"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "progress", "working"},
 		{"approved, not the human's repo", live("f2"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · your go to merge", "approved", true)}, "needs", "approved · your go to merge"},
 		{"approved, in the merge queue", live("f3"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · in merge queue", "queued", false)}, "progress", "approved · in merge queue"},
 		{"approved, auto-merge on", live("f4"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · auto-merge on", "queued", false)}, "progress", "approved · auto-merge on"},
@@ -370,28 +372,40 @@ func TestNotesFoldIntoTheRowOfThePRTheyLink(t *testing.T) {
 	s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"abc-1": {PR: followed(1, "", "awaiting review · alex", "awaiting", false)}},
 		PRs: map[string]*PR{"acme/web#9": followed(9, "", "awaiting review · sam", "awaiting", false)}}
 	s.Notes = []string{
-		"Merge **ABC-1**? https://github.com/Acme/Web/pull/1",
+		"Merge **ABC-1**: https://github.com/Acme/Web/pull/1",
 		"Then [the next one](https://github.com/acme/web/pull/9).",
-		"Is https://github.com/acme/web/pull/99 still needed?",
-		"FYI: the quota resets at 14:00",
-		"Which first: ABC-5 or ABC-6 ?  ",
+		"After https://github.com/acme/web/pull/9 lands, rebase https://github.com/acme/api/pull/3",
+		"Is https://github.com/acme/web/pull/99 still needed? It has been idle a week.",
+		"FYI: the quota resets at 14:00, see https://x.test/q?when=now",
+		"Which first: ABC-5 or [ABC-6?](https://x.test/6)",
+		"Draft notes: [the plan](https://x.test/p?v=2)",
 	}
 	v := Build(s, fixtureNow, "acme")
-	if got := ids(v.NeedsYou); got != "note note note" {
+	if got := ids(v.NeedsYou); got != "note note note note" {
 		t.Fatalf("needs you: %s", got)
 	}
-	for i, want := range []string{"athena asks", "note", "athena asks"} {
+	// A question mark anywhere outside a URL makes a question.
+	for i, want := range []string{"athena asks", "note", "athena asks", "note"} {
 		if v.NeedsYou[i].Label != want {
 			t.Errorf("%q: %q, want %q", v.NeedsYou[i].Note, v.NeedsYou[i].Label, want)
 		}
 	}
-	if f := v.InProgress[0].Folds; len(f) != 1 || !strings.Contains(string(f[0]), "<strong>ABC-1</strong>") {
+	if got := string(v.NeedsYou[0].Note); !strings.Contains(got, `<a href="https://github.com/acme/web/pull/99">acme/web#99</a> still needed?`) {
+		t.Errorf("a PR URL in a note shows as owner/repo#n: %s", got)
+	}
+	if got := string(v.NeedsYou[1].Note); !strings.Contains(got, `<a href="https://x.test/q?when=now">https://x.test/q?when=now</a>`) {
+		t.Errorf("any other URL stays as it is: %s", got)
+	}
+	// A folded note drops the URL of its own row's PR (the row links #n) and shortens any other.
+	if f := v.InProgress[0].Folds; len(f) != 1 || string(f[0]) != "Merge <strong>ABC-1</strong>" {
 		t.Fatalf("abc-1 folds %q", f)
 	}
-	if f := v.InProgress[1].Folds; len(f) != 1 || !strings.Contains(string(f[0]), ">the next one</a>") {
+	f := v.InProgress[1].Folds
+	if len(f) != 2 || !strings.Contains(string(f[0]), ">the next one</a>") ||
+		string(f[1]) != `After lands, rebase <a href="https://github.com/acme/api/pull/3">acme/api#3</a>` {
 		t.Fatalf("#9 folds %q", f)
 	}
-	if v.Title != "(3) athena" {
+	if v.Title != "(4) athena" {
 		t.Fatalf("title %q", v.Title)
 	}
 }

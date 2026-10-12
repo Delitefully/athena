@@ -120,9 +120,11 @@ class SummaryTest(unittest.TestCase):
                             "h": _w("idle", pr(8, review="APPROVED", auto_merge=True)),
                             "i": _w("idle", pr(9, review="CHANGES_REQUESTED", reviews={"x": "CHANGES_REQUESTED"})),
                             "j": _w("idle", {"state": "OPEN", "draft": False, "review": "",
-                                             "url": "https://github.com/o/r/pull/10"})}}  # no review data yet
-        self.assertEqual(watch.board(snap)["prs"], ["#1", "#2"])
-        self.assertEqual(watch.summary(snap), "g blocked · 2 PRs need you · a, e working · c, f, h, i, j idle · b, d done")
+                                             "url": "https://github.com/o/r/pull/10"}),  # no review data yet
+                            "k": _w("idle", pr(11, review="")),  # no review rule: the human's go
+                            "l": _w("working", pr(12, review=""))}}  # ... once its worker is done
+        self.assertEqual(watch.board(snap)["prs"], ["#1", "#2", "#11"])
+        self.assertEqual(watch.summary(snap), "g blocked · 3 PRs need you · a, e, l working · c, f, h, i, j, k idle · b, d done")
 
     def test_followed_prs_and_review_requests_count_by_their_row(self):
         def followed(n, label, needs):

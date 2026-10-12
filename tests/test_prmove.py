@@ -58,7 +58,17 @@ class MoveTest(unittest.TestCase):
 
     def test_nobody_yet(self):
         self.check(_pr(), True, False, "no reviewer requested", True)
-        self.check(_pr(review="", auto_merge=True), False, False, "no reviewer requested", True)
+        self.check(_pr(auto_merge=True), False, False, "no reviewer requested", True)
+
+    def test_a_repo_that_requires_no_review(self):
+        # reviewDecision empty: branch protection has no review rule, so a green PR is the human's to merge.
+        self.check(_pr(review=""), True, False, "your go to merge", True)
+        self.check(_pr(review=""), False, True, "yours to merge", True)
+        self.check(_pr(review="", auto_merge=True), True, False, "auto-merge on", False)
+        self.check(_pr(review="", queued=True), True, True, "in merge queue", False)
+        self.check(_pr(review="", checks="failure"), True, False, "checks failing", False)
+        # Its worker still at work keeps the row (`working`): not a move that wins over working.
+        self.assertEqual(pr.move(_pr(review=""), live=True, human_merge=False)["kind"], "mergeable")
 
     def test_approved(self):
         self.check(_pr(review="APPROVED"), True, True, "approved · yours to merge", True)

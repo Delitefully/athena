@@ -109,7 +109,7 @@ abc-112 working · 3 commits · PR draft, checks pending
 abc-147 review round 2/3 · 1 finding sent
 ```
 
-Keep `~/.local/state/athena/needs-you.md` current for the dashboard: one `- ` line per decision that belongs to no worker (an open question, ending in `?`), added when you ask it and removed once answered. PR status is derived, not written: every PR athena follows (live, stacked, a retired worker's while open) gets its own dashboard row saying whose move it is (awaiting a teammate's review, no reviewer requested, approved and yours to merge, in a merge queue, changes requested, checks failing, your review requested), so do not write PR approval or merge asks there. A line that links a PR with a row folds into that row; the human never reviews their own PRs.
+Keep `~/.local/state/athena/needs-you.md` current for the dashboard: one `- ` line per decision that belongs to no worker (an open question, with its `?`), added when you ask it and removed once answered. PR status is derived, not written: every PR athena follows (live, stacked, a retired worker's while open) gets its own dashboard row saying whose move it is (awaiting a teammate's review, no reviewer requested, approved and yours to merge, your go to merge where no review is required, in a merge queue, changes requested, checks failing, your review requested), so do not write PR approval or merge asks there. A line that links a PR with a row folds into that row; the human never reviews their own PRs.
 
 When the human repeats an instruction, propose adding it to `~/.local/state/athena/standing-orders.md` (every brief's NOTES references it).
 

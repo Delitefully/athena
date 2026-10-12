@@ -69,15 +69,14 @@ func TestPageRendersTheThreeGroups(t *testing.T) {
 		`<h2 id="h-needs">Needs you <span class="count">8</span></h2>`,
 		`<h2 id="h-progress">In progress <span class="count">6</span></h2>`,
 		`<span class="label">awaiting review · alex</span>`,
-		`<p class="fold">Approve and merge ABC-452: <a href="https://github.com/acme/web/pull/6452">`,
+		`<p class="fold">Approve and merge ABC-452</p>`,
 		`<p class="meta">athena asks</p>`,
-		`<p class="meta">note</p>`,
 		`<h2 id="h-done">Done <span class="count">4</span></h2>`,
 		`<a class="ticket" href="https://linear.app/acme/issue/ABC-108">ABC-108</a>`,
 		`<a href="https://github.com/acme/web/pull/48">#48</a>`,
 		`<span class="checks failure">checks failing</span>`,
 		"Start <strong>ABC-111</strong> now",
-		`<a href="https://github.com/acme/web/pull/50">https://github.com/acme/web/pull/50</a>`,
+		`<a href="https://github.com/acme/web/pull/50">acme/web#50</a>`,
 		`<li id="w-abc-102" class="item act">`,
 	} {
 		if !strings.Contains(body, want) {

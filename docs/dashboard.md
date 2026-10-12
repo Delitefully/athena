@@ -43,8 +43,8 @@ The server folds the files into one view, every second when something changed:
 - **Needs you**
   - a live worker whose hook state is `blocked` (a permission prompt, or a `BLOCKED` or `NEEDS_CONTEXT` report; the label says which, and the report's first concern is the detail);
   - a live worker with `goal_pending` (a startup prompt only the human may answer);
-  - a PR whose move is the human's: no reviewer requested, approved and yours to merge (or your go), changes requested or checks failing with no live worker, or a teammate's PR asking for your review;
-  - each bullet of `needs-you.md` that links no PR with a row, in athena's voice: `athena asks` when it ends in `?`, else `note`. A bullet that links a PR with a row shows under that row instead.
+  - a PR whose move is the human's: no reviewer requested where a review is required, approved and yours to merge (or your go), green with no review rule on its branch and its worker done (`your go to merge`), changes requested or checks failing with no live worker, or a teammate's PR asking for your review;
+  - each bullet of `needs-you.md` that links no PR with a row, in athena's voice: `athena asks` when it has a `?` outside a URL, else `note`; a bare PR URL shows as `owner/repo#n`. A bullet that links a PR with a row shows under that row instead, muted, without that PR's URL.
 - **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review; and every PR whose move is a teammate's, a merge queue's, auto-merge's, a worker's or CI's, labelled `who · what` (`awaiting review · alex`). Each PR athena follows has one row: a live worker's, a stacked one with no live owner, a retired worker's while still open.
 - **Done**: retired workers with a PR or a Linear ticket from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
 

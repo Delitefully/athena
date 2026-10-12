@@ -211,7 +211,7 @@ func needRank(it Item) int {
 }
 
 // foldNotes: a needs-you.md line that links a PR with a row shows under that row; any other is a row of its own,
-// "athena asks" when it ends in a question mark and "note" otherwise.
+// "athena asks" when it asks something (a question mark in its text) and "note" otherwise.
 func foldNotes(v *View, notes []string) {
 	rows := map[string]*Item{}
 	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
@@ -231,11 +231,11 @@ func foldNotes(v *View, notes []string) {
 			}
 		}
 		if row != nil {
-			row.Folds = append(row.Folds, inline(n))
+			row.Folds = append(row.Folds, inlineNote(n, prKey(row.PR.URL)))
 			continue
 		}
 		label := "note"
-		if strings.HasSuffix(strings.TrimSpace(n), "?") {
+		if asks(n) {
 			label = "athena asks"
 		}
 		own = append(own, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Label: label})
@@ -271,7 +271,7 @@ var moveOverWorking = map[string]bool{"approved": true, "queued": true, "changes
 func placeMove(v *View, it Item, m *Move) {
 	it.Label, it.Badge = m.Label, m.Needs
 	switch m.Kind {
-	case "approved":
+	case "approved", "mergeable":
 		it.Icon = "ready"
 	case "queued":
 		it.Icon = "ok"
@@ -468,20 +468,43 @@ var (
 
 // inline renders the little markdown a needs-you line uses: links, bare URLs, **bold** and `code`.
 // Text is escaped first, so nothing in the file can inject markup, and bold and code apply only outside links.
-func inline(s string) template.HTML {
+func inline(s string) template.HTML { return inlineNote(s, "") }
+
+// inlineNote is inline for a note shown under the row of PR `own` (an owner/name#n key, or empty): a bare URL of
+// that PR is dropped, since the row links it, and any other bare PR URL shows as its short `owner/name#n`.
+func inlineNote(s, own string) template.HTML {
 	var b strings.Builder
 	last := 0
 	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
 		b.WriteString(prose(s[last:m[0]]))
+		last = m[1]
 		text, url := s[m[0]:m[1]], s[m[0]:m[1]]
 		if m[2] >= 0 {
 			text, url = s[m[2]:m[3]], s[m[4]:m[5]]
+		} else if key := prKey(url); key != "" {
+			if key == own {
+				if strings.HasSuffix(b.String(), " ") && strings.HasPrefix(s[last:], " ") {
+					last++ // one space where the URL was
+				}
+				continue
+			}
+			sm := prKeyURL.FindStringSubmatch(url)
+			text, url = sm[1]+"#"+sm[2], sm[0]
 		}
 		fmt.Fprintf(&b, `<a href="%s">%s</a>`, template.HTMLEscapeString(url), template.HTMLEscapeString(text))
-		last = m[1]
 	}
 	b.WriteString(prose(s[last:]))
-	return template.HTML(b.String())
+	return template.HTML(strings.TrimRight(b.String(), " :;,-–—"))
+}
+
+// asks: a note that asks something, a question mark anywhere in its text (a URL's query does not count).
+func asks(s string) bool {
+	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
+		if m[2] >= 0 && strings.Contains(s[m[2]:m[3]], "?") {
+			return true
+		}
+	}
+	return strings.Contains(links.ReplaceAllString(s, " "), "?")
 }
 
 func prose(s string) string {

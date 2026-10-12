@@ -65,6 +65,9 @@ def _names(names, most=3) -> str:
 def move(p, live: bool, human_merge: bool):
     """Whose move an open PR waits on: {"label", "kind", "needs"}; `needs` puts its row in the human's Needs you.
 
+    `no reviewer requested` only where a review is required (REVIEW_REQUIRED); a repo whose branch has no review
+    rule (reviewDecision empty) waits on the merge alone.
+
     `live`: a live worker owns the PR. `human_merge`: its repo is in `human_merge_repos`. None for a PR that is not
     open, or one with no review data (fetched before athena read reviewers): no guess at whose move it is.
     """
@@ -92,7 +95,14 @@ def move(p, live: bool, human_merge: bool):
         return out("approved · yours to merge" if human_merge else "approved · your go to merge", "approved", True)
     if requested:
         return out("awaiting review · " + _names(requested), "awaiting", False)
-    return out("no reviewer requested", "unrequested", True)
+    if p.get("review") == "REVIEW_REQUIRED":
+        return out("no reviewer requested", "unrequested", True)
+    # No review rule on its branch (reviewDecision empty): nothing to wait for but the merge.
+    if p.get("queued"):
+        return out("in merge queue", "queued", False)
+    if p.get("auto_merge"):
+        return out("auto-merge on", "queued", False)
+    return out("yours to merge" if human_merge else "your go to merge", "mergeable", True)
 
 
 def summary(repo, branch):

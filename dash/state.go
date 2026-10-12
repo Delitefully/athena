@@ -53,7 +53,7 @@ type PR struct {
 // Move is whose move an open PR waits on (athena_lib/pr.py `move`): its row's label, and whether the row is in Needs you.
 type Move struct {
 	Label string
-	Kind  string // awaiting, unrequested, approved, queued, changes, failing, draft
+	Kind  string // awaiting, unrequested, approved, mergeable, queued, changes, failing, draft
 	Needs bool
 }
 
