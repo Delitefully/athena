@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const fixtureNow = 1791500000
@@ -216,6 +217,30 @@ func TestDoneWorkerShowsItsFirstConcern(t *testing.T) {
 	v := Build(Snapshot{Workers: []Worker{{Name: "a", State: "live"}}, Hooks: map[string]Hook{"a": h}}, fixtureNow, "acme")
 	if d := v.InProgress[0].Detail; d != "CI not checked on the new head" {
 		t.Fatalf("detail %q", d)
+	}
+}
+
+func TestAVerboseConcernShowsAsOneCappedLine(t *testing.T) {
+	verbose := "CI not checked on the new head,\nbecause the runner queue was backed up for an hour and the job never started on this push"
+	for name, h := range map[string]Hook{
+		"done":    {State: "done", Report: &Report{Status: "DONE_WITH_CONCERNS", Concerns: []string{verbose}}},
+		"blocked": {State: "blocked", Report: &Report{Status: "BLOCKED", Concerns: []string{verbose}}},
+	} {
+		v := Build(Snapshot{Workers: []Worker{{Name: "a", State: "live"}}, Hooks: map[string]Hook{"a": h}}, fixtureNow, "acme")
+		items := append(v.InProgress, v.NeedsYou...)
+		d := items[0].Detail
+		if strings.Contains(d, "\n") || utf8.RuneCountInString(d) > reportItemMax || !strings.HasSuffix(d, "…") {
+			t.Errorf("%s: detail %q", name, d)
+		}
+		if !strings.HasPrefix(d, "CI not checked on the new head, because") {
+			t.Errorf("%s: detail %q", name, d)
+		}
+	}
+	if got := oneLine("  short\n  one "); got != "short one" {
+		t.Errorf("short: %q", got)
+	}
+	if got := oneLine(strings.Repeat("x", reportItemMax)); got != strings.Repeat("x", reportItemMax) {
+		t.Errorf("at the cap: %q", got)
 	}
 }
 

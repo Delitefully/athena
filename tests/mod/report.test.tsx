@@ -52,6 +52,17 @@ describe('a worker draws its ATHENA-REPORT as a completion block', () => {
     })
   }
 
+  test('a verbose decision or concern draws as one truncated line', async ($, on) => {
+    mock.env(on, { ATHENA_WORKER: 'lab-w' })
+    engine(on)
+    const verbose = 'Kept the frame for the model,\nbecause the engine redraws it on every turn and a second frame would flicker on resize'
+    const ui = await mount($, report({ status: 'DONE_WITH_CONCERNS', ...FULL, decisions: [verbose], concerns: [verbose] }))
+    const drawn = await ui.find({ type: 'Text', text: /^• Kept the frame for the model, because [^\n]*…$/ })
+    expect(drawn?.props.wrap).toBe('truncate-end')
+    expect(await ui.find({ type: 'Text', text: /flicker on resize/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
   test('malformed JSON keeps the engine drawing', async ($, on) => {
     mock.env(on, { ATHENA_WORKER: 'lab-w' })
     engine(on)
