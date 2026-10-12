@@ -58,15 +58,15 @@ class HookStatusTest(unittest.TestCase):
     def test_worker_found_under_the_configs_worktree_root(self):
         os.environ.pop("ATHENA_WORKTREE_ROOT")
         root = Path(self.tmp.name) / "projects" / ".wt"
-        wt = root / "proj" / "plt-2-y"
+        wt = root / "proj" / "abc-2-y"
         wt.mkdir(parents=True)
         config.write({**config.DEFAULTS, "projects_dir": str(root.parent), "worktree_root": str(root)})
-        ledger.append("spawn", "plt-2", path=os.path.realpath(wt))
+        ledger.append("spawn", "abc-2", path=os.path.realpath(wt))
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(wt)}, cwd=wt)
-        self.assertEqual(self.status("plt-2")["state"], "working")
-        other = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1-x"
+        self.assertEqual(self.status("abc-2")["state"], "working")
+        other = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1-x"
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, cwd=other)
-        self.assertIsNone(self.status("plt-1"))
+        self.assertIsNone(self.status("abc-1"))
 
     def python_stub(self):
         """An interpreter that fails loudly and leaves a mark, to prove the hook never started Python."""
