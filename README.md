@@ -38,6 +38,45 @@ In the HQ session, `athena watch` is run by a Claude Code mod that ships in this
 
 To try the mod without real workers, start a throwaway session with `ATHENA_ROLE=hq` and `ATHENA_WATCH_CMD=tests/lab/fake-watch` in its `--settings` env, and append watch lines to its `FAKE_WATCH_LINES` file.
 
+## Requirements
+
+- macOS or Linux, with Python 3.9 or later as `/usr/bin/python3` (athena is standard-library Python).
+- [herdr](https://herdr.dev) 0.9.1 or later. `athena init` offers to install it if it is missing.
+- [Claude Code](https://claude.com/claude-code) as `claude`, with this plugin installed (below). The watch mod needs Claude Code 2.1.286 or later; older versions fall back to Monitor.
+- [gh](https://cli.github.com), signed in (`gh auth login`), and a git identity (`git config --global user.name` and `user.email`): workers push branches and open PRs.
+- Go, only for the dashboard (built on first use).
+- Optional: the herdr-agent-quota herdr plugin, for the 5-hour quota gate. Without it the gate is skipped.
+
+## Install
+
+```sh
+git clone https://github.com/Delitefully/athena.git
+mkdir -p ~/.local/bin && ln -sf "$PWD/athena/bin/athena" ~/.local/bin/athena   # ~/.local/bin on your PATH
+claude plugin marketplace add "$PWD/athena"
+claude plugin install athena@athena
+athena init
+```
+
+`athena init` checks what athena needs and prints each check as ✓ or ✗ with its fix: herdr (and its version), `claude` and the athena plugin, `gh` signed in, a git identity, and the optional herdr plugins. If herdr is missing it shows the install command from herdr.dev (`curl -fsSL https://herdr.dev/install.sh | sh`, or `brew install herdr`) and runs it only if you say yes. Then it asks for:
+
+- your **projects folder**, where your repos live and HQ starts (default: the folder holding the repo you run it from, else `~/code`);
+- the **worktree root**, one git worktree per worker (default `<projects>/.worktrees`);
+- the **repos you merge yourself** (athena prepares them and stops), and the repos where **a push after approval needs a new approval**;
+- the workers' default **model and effort** (opus/high);
+- the herdr-agent-quota **state file**, if you have that plugin.
+
+and writes them to `config.json` in athena's state dir. For scripts: `athena init --yes --projects ~/code [--worktrees DIR] [--human-merge a,b] [--reapproval a] [--model M] [--effort E] [--quota-file F] [--install-herdr]` asks nothing (a flag, else the current config, else the default) and installs herdr only with `--install-herdr`. Run it again any time to change a value.
+
+## Quickstart
+
+```sh
+athena
+```
+
+From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs, creates or focuses the `athena` space with the chief of staff's Claude in it, then attaches your terminal to herdr with that space in front (it execs into `herdr`). Detach with `ctrl+b q`; HQ and the workers keep running, and `athena` brings you back. Inside herdr, `athena hq` opens or focuses the space as before. The first `athena` with no config runs `athena init` first.
+
+Then tell HQ what to start: "start abc-101 and abc-102".
+
 ## Use
 
 - `prefix+shift+c` (or `athena hq`): open or focus the hq space. The chief of staff starts with its brief (`hq.md`) and the `athena` skill.
@@ -70,7 +109,10 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 | `athena nudge <name> <text>` | Type a slash command into a worker |
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
 | `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space |
-| `athena hq` | Create or focus hq |
+| `athena` | Outside herdr, from a terminal: start herdr if needed, open HQ, attach. Inside herdr: same as `athena hq` |
+| `athena init [--yes ...]` | Check herdr, claude and the plugin, gh, git; ask for folders, merge rules, model; write `config.json` |
+| `athena config [show\|path]` | The effective config and where each value comes from |
+| `athena hq [--no-attach]` | Create or focus hq; from a terminal outside herdr, also start herdr and attach |
 | `athena hq restart [--no-update]` | Detached: `claude update`, the marketplaces and the user-scope plugin updates (concurrently), `/exit` HQ's Claude (confirming the background-work dialog), `--resume` its conversation in the same pane, prompt its start routine. A failed resume starts a fresh HQ and says so; log in `logs/hq-restart.log` |
 
 ## Pieces
@@ -79,26 +121,48 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 - `dash/`: the dashboard server, Go standard library only, with the Instrument fonts (OFL) embedded.
 - `hooks/`: Claude Code plugin hooks that write `workers/<name>.json` (a no-op outside athena workers), and `hooks/watch-mod/`, the watch mod (a no-op outside HQ).
 - `hq.md`, `worker.md`, `skills/athena/SKILL.md`: the prompts.
-- `repos/<repo>.setup`: optional per-repo worktree setup (for example env files, certs, `pnpm install`).
+- `repos/example.setup`: an example per-repo worktree setup. Your own go in `repos/<repo>.setup` next to `config.json` (looked up there first); `athena spawn` runs the one named after the repo's folder in each new worktree.
 - The herdr auto-claude plugin skips spaces that `athena` claims (`~/.local/state/athena/claims/`).
-
-## Install
-
-`<clone>` is where you cloned this repository.
-
-```sh
-ln -sf <clone>/bin/athena ~/.local/bin/athena
-claude plugin marketplace add <clone>
-claude plugin install athena@athena
-```
 
 ## Test
 
 `make test` (unit tests with a fake herdr, `go test` for the dashboard, and `claude plugin validate` and `claude plugin test` for the watch mod when `claude` is installed). `tests/lab/` runs real workers against an isolated herdr server.
 
+## Configuration
+
+`athena init` writes `config.json` in the state dir (`~/.local/state/athena/` unless `ATHENA_STATE_DIR` moves it); `athena config show` prints each value and where it came from, `athena config path` the file. Edit it by hand or rerun `athena init`.
+
+```json
+{
+  "version": 1,
+  "projects_dir": "~/code",
+  "worktree_root": "~/code/.worktrees",
+  "human_merge_repos": ["web"],
+  "reapproval_repos": [],
+  "model": "opus",
+  "effort": "high",
+  "quota_file": null
+}
+```
+
+- `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
+- `quota_file`: the herdr-agent-quota plugin's `claude-statusline.json`. With none, `athena spawn` does not gate on the 5-hour quota.
+- An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`, `ATHENA_QUOTA_FILE`. `ATHENA_CONFIG` points at another file.
+- Upgrading from a version without `config.json`: athena keeps using that version's values until the file exists, and the first `athena`, `athena hq` or `athena init` writes them down, with any `repos/*.setup` the plugin used to carry (from the plugin folder or its git history) moved next to it. Nothing changes.
+
 ## Environment
 
-`ATHENA_STATE_DIR`, `ATHENA_WORKTREE_ROOT` (default `~/Developer/.worktrees`), `ATHENA_HERDR`, `ATHENA_HQ` (default `athena`), `ATHENA_MIN_COL` (70), `ATHENA_MAX_WORKERS` (4, hard cap 6), `ATHENA_PLUGIN_DIR` (load the plugin from a directory in workers), `ATHENA_HQ_PANE`, `ATHENA_DASH_PORT` (2843), `ATHENA_LINEAR_WORKSPACE` (the Linear workspace in ticket links; or `linear_workspace` in `~/.local/state/athena/dash.json`; neither leaves ticket ids unlinked).
+`ATHENA_STATE_DIR`, `ATHENA_WORKTREE_ROOT` (overrides config `worktree_root`), `ATHENA_HERDR`, `ATHENA_HQ` (default `athena`), `ATHENA_MIN_COL` (70), `ATHENA_MAX_WORKERS` (4, hard cap 6), `ATHENA_PLUGIN_DIR` (load the plugin from a directory in workers), `ATHENA_HQ_PANE`, `ATHENA_DASH_PORT` (2843), `ATHENA_LINEAR_WORKSPACE` (the Linear workspace in ticket links; or `linear_workspace` in `~/.local/state/athena/dash.json`; neither leaves ticket ids unlinked).
+
+## Troubleshooting
+
+- **`athena: no config yet: run athena init first`**: `athena hq` ran without a terminal (a key binding, a script) before any config existed. Run `athena init` once in a terminal.
+- **`✗ herdr: not found` after installing it**: the installer put it in a folder your shell does not search yet. Open a new terminal, or add that folder (often `~/.local/bin`) to `PATH`.
+- **`herdr server did not start`**: read `logs/herdr-server.log` in the state dir; `herdr status server` shows which socket athena expects. A server from an older herdr: `herdr server stop`, then `athena`.
+- **`athena` prints JSON instead of attaching**: it attaches only from a terminal outside herdr (no `HERDR_ENV`, stdin and stdout a tty). Inside herdr, `athena hq` focuses the space instead.
+- **Workers in the wrong folder, or the hooks not seeing a worker**: `athena config show` lists the worktree root they use; an `ATHENA_WORKTREE_ROOT` in your shell wins over the file. Keep herdr's `[worktrees] directory` the same.
+- **`athena spawn` never gates on quota**: there is no `quota_file`, or it is older than 30 minutes. Install herdr-agent-quota and rerun `athena init`.
+- **`config.json is not valid JSON`**: fix the file, or move it away and rerun `athena init`.
 
 ## Update after editing
 
