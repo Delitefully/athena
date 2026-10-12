@@ -158,7 +158,34 @@ def write(values) -> Path:
     tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     os.replace(tmp, target)
+    _write_root_hint()
     return target
+
+
+def root_hint_file() -> Path:
+    return paths.state_dir() / "worktree-root"
+
+
+def _write_root_hint():
+    """The file's worktree root (not an env override) on one line: hooks/worker-status reads it without Python."""
+    data = _read()
+    root = data.get("worktree_root") or os.path.join(os.path.expanduser(data.get("projects_dir") or "~"), ".worktrees")
+    hint = root_hint_file()
+    hint.parent.mkdir(parents=True, exist_ok=True)
+    tmp = hint.with_name(hint.name + ".tmp%d" % os.getpid())
+    tmp.write_text(os.path.expanduser(root) + "\n")
+    os.replace(tmp, hint)
+
+
+def sync_root_hint():
+    """Rewrite the worktree-root file when config.json is newer (edited by hand) or the file is missing."""
+    hint = root_hint_file()
+    try:
+        if not exists() or (hint.exists() and hint.stat().st_mtime >= config_file().stat().st_mtime):
+            return
+        _write_root_hint()
+    except (OSError, ConfigError):
+        pass
 
 
 def show() -> dict:

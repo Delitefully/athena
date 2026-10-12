@@ -350,6 +350,7 @@ def main(argv=None):
         _migrate()  # before any command, so every command reads the same written-down values
     except (config.ConfigError, OSError) as exc:
         print(f"athena: could not write the config ({exc}); running on the current values", file=sys.stderr)
+    config.sync_root_hint()
     if args.cmd == "spawn" and args.workflow_size and not args.ultracode:
         p.error("--workflow-size needs --ultracode")
     try:

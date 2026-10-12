@@ -68,6 +68,36 @@ class HookStatusTest(unittest.TestCase):
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, cwd=other)
         self.assertIsNone(self.status("plt-1"))
 
+    def python_stub(self):
+        """An interpreter that fails loudly and leaves a mark, to prove the hook never started Python."""
+        mark = Path(self.tmp.name) / "python-ran"
+        stub = Path(self.tmp.name) / "python3"
+        stub.write_text(f"#!/bin/sh\ntouch {mark}\necho 'python3 must not run here' >&2\nexit 99\n")
+        stub.chmod(0o755)
+        return stub, mark
+
+    def test_a_non_worker_session_outside_the_root_never_starts_python(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)},
+                        {"ATHENA_PYTHON": str(stub), "PATH": f"{stub.parent}:/usr/bin:/bin"}, cwd=other)
+        self.assertEqual(proc.returncode, 0)
+        self.assertFalse(mark.exists())
+
+    def test_a_config_newer_than_the_root_file_falls_back_to_python(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})
+        hint = paths.state_dir() / "worktree-root"
+        os.utime(hint, (1, 1))  # config.json edited by hand after the last write
+        stub, mark = self.python_stub()
+        other = Path(self.tmp.name) / "elsewhere"
+        other.mkdir()
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, {"ATHENA_PYTHON": str(stub)}, cwd=other)
+        self.assertTrue(mark.exists())
+
     def test_stop_with_report_sets_done(self):
         msg = 'All green.\nATHENA-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'
         hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "abc-1")

@@ -95,6 +95,43 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(data["version"], 1)
 
 
+class RootHintTest(unittest.TestCase):
+    """The worktree root in a one-line file, so the worker-status hook can read it without Python."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        os.environ.pop("ATHENA_WORKTREE_ROOT", None)
+        self.home = Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        self.env.set("HOME", str(self.home))
+        self.hint = paths.state_dir() / "worktree-root"
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_write_records_the_resolved_root(self):
+        config.write({**config.DEFAULTS, "projects_dir": "~/code"})
+        self.assertEqual(self.hint.read_text(), str(self.home / "code" / ".worktrees") + "\n")
+
+    def test_an_environment_override_is_not_recorded(self):
+        self.env.set("ATHENA_WORKTREE_ROOT", "/elsewhere")
+        config.write({**config.DEFAULTS, "worktree_root": "~/wt"})
+        self.assertEqual(self.hint.read_text(), str(self.home / "wt") + "\n")
+
+    def test_sync_rewrites_a_root_file_older_than_the_config(self):
+        config.write({**config.DEFAULTS, "worktree_root": "~/wt"})
+        config.config_file().write_text(json.dumps({"worktree_root": "~/other"}))
+        os.utime(self.hint, (1, 1))
+        config.sync_root_hint()
+        self.assertEqual(self.hint.read_text(), str(self.home / "other") + "\n")
+
+    def test_sync_without_a_config_writes_nothing(self):
+        config.sync_root_hint()
+        self.assertFalse(self.hint.exists())
+
+
 class LegacyTest(unittest.TestCase):
     """A state dir from before config.json: today's effective values, unchanged, until `athena init` writes them."""
 
