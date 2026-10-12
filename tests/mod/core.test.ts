@@ -8,8 +8,10 @@ import {
   hyperlinks,
   isMonitorNotice,
   linkParts,
+  oneLine,
   MAX_LINES,
   ORANGE,
+  REPORT_ITEM_MAX,
   parseWake,
   promptText,
   prUrl,
@@ -316,6 +318,30 @@ describe('splitReport', () => {
   })
 })
 
+describe('oneLine', () => {
+  test('a short entry is drawn as it is', () => {
+    expect(oneLine('kept the frame for the model')).toBe('kept the frame for the model')
+  })
+
+  test('line breaks and runs of spaces fold to one space', () => {
+    expect(oneLine('  kept the frame\n\n  for the model\t ')).toBe('kept the frame for the model')
+  })
+
+  test('past REPORT_ITEM_MAX it is cut to at most that many characters, the last an ellipsis', () => {
+    const long = 'Chose the stdlib parser over a dependency because the plugin must stay stdlib-only and the format is tiny'
+    const capped = oneLine(long)
+    expect([...capped].length <= REPORT_ITEM_MAX).toBe(true)
+    expect(capped.endsWith('…')).toBe(true)
+    expect(long.startsWith(capped.slice(0, -1))).toBe(true)
+    expect(oneLine('x'.repeat(REPORT_ITEM_MAX))).toBe('x'.repeat(REPORT_ITEM_MAX))
+    expect(oneLine('x'.repeat(REPORT_ITEM_MAX + 1))).toBe('x'.repeat(REPORT_ITEM_MAX - 1) + '…')
+  })
+
+  test('the cut never splits a surrogate pair', () => {
+    expect(oneLine('😀'.repeat(REPORT_ITEM_MAX + 5))).toBe('😀'.repeat(REPORT_ITEM_MAX - 1) + '…')
+  })
+})
+
 describe('reportView', () => {
   const base = { pr: 'https://github.com/o/r/pull/46', head: '797b67975c13', verify: 'make test -> pass', decisions: ['d1'], concerns: ['c1'] }
 
@@ -337,6 +363,15 @@ describe('reportView', () => {
       decisions: ['d1'],
       concerns: ['c1'],
     })
+  })
+
+  test('an old verbose report still draws each decision and concern as one capped line', () => {
+    const verbose = 'Kept the frame for the model,\nbecause the engine redraws it on every turn and a second frame would flicker on resize'
+    const v = reportView({ ...base, status: 'DONE', decisions: [verbose, 'd2'], concerns: [verbose] })
+    expect(v.decisions).toEqual([oneLine(verbose), 'd2'])
+    expect(v.concerns).toEqual([oneLine(verbose)])
+    expect(v.decisions[0]).not.toContain('\n')
+    expect(v.decisions[0]!.endsWith('…')).toBe(true)
   })
 
   test('what is empty is left out', () => {

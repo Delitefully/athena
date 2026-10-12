@@ -348,7 +348,7 @@ export const register: Register = on => {
   })
 
   // In a worker, the ATHENA-REPORT line its final message ends with draws as a completion block: the status in
-  // its colour, the PR and head, the verify line, the decisions and the concerns. Drawing only: the stored message,
+  // its colour, the PR and head, the verify line, the decisions and the concerns, each one line. Drawing only: the stored message,
   // what the hooks parse and what athena reads are unchanged. A line that does not parse keeps the engine's drawing.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary || !e.props.text.includes('ATHENA-REPORT')) return next(e)
@@ -373,7 +373,7 @@ export const register: Register = on => {
     const bullets = (items: string[], color?: string) => (
       <Box flexDirection="column">
         {items.map(item => (
-          <Text color={color}>{`• ${item}`}</Text>
+          <Text color={color} wrap="truncate-end">{`• ${item}`}</Text>
         ))}
       </Box>
     )
