@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+RESERVED_NAMES = {"dash-queue"}  # the first word of athena watch's dashboard doorbell, which names no worker
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 

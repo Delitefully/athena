@@ -256,6 +256,9 @@ class SpawnTest(unittest.TestCase):
         self.scenario()
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn(name="ABC-1")
+        with self.assertRaises(spawn.SpawnError) as ctx:
+            self.run_spawn(name="dash-queue")  # athena watch's doorbell line starts with it
+        self.assertIn("reserved", str(ctx.exception))
         ledger.append("spawn", "abc-1", pane="w1:p1")
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn()
