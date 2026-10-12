@@ -20,9 +20,9 @@ All under `ATHENA_STATE_DIR` (`~/.local/state/athena/`):
 |---|---|---|
 | `ledger.jsonl` | athena commands | every worker: name, repo, branch, ticket, title, spawned, retired, `goal_pending` |
 | `workers/<name>.json` | the worker's hooks | state (working, idle, blocked, done, exited), summary, `report` and `last_report` (status, pr, head, concerns) |
-| `watch.json` (new) | `athena watch` | the last snapshot: each live worker's merged state and PR (url, number, state, draft, checks, review) |
+| `watch.json` (new) | `athena watch` | the last snapshot: each live worker's merged state and PR (url, number, state, draft, checks, review, requested reviewers, latest reviews, auto-merge, merge queue, and whose move it is), every other PR athena follows (`prs`: stacked, or a retired worker's still open), and the teammates' PRs asking the human for a review (`review_requests`) |
 | `history.jsonl` (new) | `athena retire` | one line per retired worker with its PR as last known, so a merge is still known after retire |
-| `needs-you.md` (new) | athena HQ | decisions that belong to no worker: merge asks, open questions |
+| `needs-you.md` (new) | athena HQ | decisions that belong to no worker: open questions. PR status is derived, never written here |
 | `dash.json` (optional) | the human | local settings: `{"linear_workspace": "..."}` for ticket links |
 
 The ledger and the worker files alone give all three groups: the ledger keeps retired workers with their ticket, title and retire time, and a worker's file outlives it with its last report, which carries the PR url. The new files only enrich: `watch.json` adds checks, review and draft for live PRs, and `history.jsonl` adds whether a retired worker's PR merged. Today's state has none of them, and the page still works on it.
@@ -31,10 +31,10 @@ The ledger and the worker files alone give all three groups: the ledger keeps re
 
 ### Python additions
 
-- `watch.py`: after each tick, write the snapshot to `watch.json` (temp file, then rename), with a `ts`. It holds what `athena watch` already computes; nothing new is fetched.
+- `watch.py`: after each tick, write the snapshot to `watch.json` (temp file, then rename), with a `ts`. Each live worker's `gh pr view` also reads its review requests, latest reviews, auto-merge and merge-state; every two minutes one GraphQL call reads the stacked PRs and the retired workers' open ones together, and one `gh search prs --review-requested=@me` per repo finds the PRs asking the human for a review. `pr.move` turns each PR into whose move it waits on.
 - `retire.py`: before the `retire` ledger event, append to `history.jsonl` the worker's ticket, title, repo, branch, report status and PR. The PR comes from one `gh pr view` (`pr.summary`), else from `watch.json`, else from the report's `pr` url. HQ retires right after it merges, while `athena watch` polls every 20 s, so the snapshot alone would usually still say open.
 - `dash.py` and `athena dash on|off|show|open`, below.
-- `skills/athena/SKILL.md` section 6: HQ keeps `needs-you.md` current, one bullet per open ask, and removes a bullet once answered.
+- `skills/athena/SKILL.md` section 6: HQ keeps `needs-you.md` current, one bullet per open decision, and removes a bullet once answered. PR approval asks are not written there.
 
 ### Data model
 
@@ -43,9 +43,9 @@ The server folds the files into one view, every second when something changed:
 - **Needs you**
   - a live worker whose hook state is `blocked` (a permission prompt, or a `BLOCKED` or `NEEDS_CONTEXT` report; the label says which, and the report's first concern is the detail);
   - a live worker with `goal_pending` (a startup prompt only the human may answer);
-  - an open PR that is approved, or that is out of draft with its worker done and checks not failing (waiting for your review or merge);
-  - each bullet of `needs-you.md`, in athena's voice.
-- **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review.
+  - a PR whose move is the human's: no reviewer requested, approved and yours to merge (or your go), changes requested or checks failing with no live worker, or a teammate's PR asking for your review;
+  - each bullet of `needs-you.md` that links no PR with a row, in athena's voice: `athena asks` when it ends in `?`, else `note`. A bullet that links a PR with a row shows under that row instead.
+- **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review; and every PR whose move is a teammate's, a merge queue's, auto-merge's, a worker's or CI's, labelled `who · what` (`awaiting review · alex`). Each PR athena follows has one row: a live worker's, a stacked one with no live owner, a retired worker's while still open.
 - **Done**: retired workers with a PR or a Linear ticket from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
 
 Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<workspace>/issue/ABC-101`, where the workspace comes from `ATHENA_LINEAR_WORKSPACE`, else from `dash.json` in the state dir (`{"linear_workspace": "..."}`, read live like the other files and kept out of this public repository), else the id shows unlinked. A PR links to the url already in state.
