@@ -10,47 +10,47 @@ from tests import helpers
 from athena_lib import ledger, paths, watch
 
 WAKE = [
-    "abc-102 report DONE",
-    "abc-102 report DONE_WITH_CONCERNS",
-    "abc-102 report BLOCKED",
-    "abc-102 report NEEDS_CONTEXT",
-    "abc-102 state working->blocked",
-    "abc-102 state idle->blocked (startup prompt)",
-    "abc-102 state working->exited",
-    "abc-102 pr opened https://github.com/o/r/pull/7",
-    "abc-102 pr merged",
-    "abc-102 pr closed",
-    "abc-102 checks pending->failure",
-    "abc-102 review CHANGES_REQUESTED",
-    "abc-102 review APPROVED",
-    "abc-102 review comments +2",
+    "abc-1 report DONE",
+    "abc-1 report DONE_WITH_CONCERNS",
+    "abc-1 report BLOCKED",
+    "abc-1 report NEEDS_CONTEXT",
+    "abc-1 state working->blocked",
+    "abc-1 state idle->blocked (startup prompt)",
+    "abc-1 state working->exited",
+    "abc-1 pr opened https://github.com/o/r/pull/7",
+    "abc-1 pr merged",
+    "abc-1 pr closed",
+    "abc-1 checks pending->failure",
+    "abc-1 review CHANGES_REQUESTED",
+    "abc-1 review APPROVED",
+    "abc-1 review comments +2",
     "web main moved 1a2b3c4..4d5e6f7",
-    "stack o/web#901: OPEN base=a MERGEABLE -> MERGED base=a UNKNOWN",
-    "stack o/web#902: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING",
-    "abc-102 gone from the ledger",
-    "abc-102 new worker (blocked, startup prompt)",
-    "abc-102 new worker (exited)",
-    "abc-102 goal not sent: herdr has no pane w9:p1",
-    "abc-102 goal unconfirmed (timeout): check its pane, do not resend blindly",
+    "stack o/web#41: OPEN base=a MERGEABLE -> MERGED base=a UNKNOWN",
+    "stack o/web#42: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING",
+    "abc-1 gone from the ledger",
+    "abc-1 new worker (blocked, startup prompt)",
+    "abc-1 new worker (exited)",
+    "abc-1 goal not sent: herdr has no pane w9:p1",
+    "abc-1 goal unconfirmed (timeout): check its pane, do not resend blindly",
     "watch error: gh: rate limited",
 ]
 
 ROUTINE = [
-    "watching: abc-102=working, abc-103=idle",
+    "watching: abc-1=working, abc-2=idle",
     "watching: no live workers",
-    "abc-102 state working->idle",
-    "abc-102 state idle->working",
-    "abc-102 state done->idle",
-    "abc-102 state working->done",
-    "abc-102 state starting->working",
-    "abc-102 checks none->pending",
-    "abc-102 checks pending->success",
-    "abc-102 review REVIEW_REQUIRED",
-    "abc-102 new worker (working)",
-    "abc-102 new worker (starting)",
-    "abc-102 goal sent",
-    "stack o/web#901: OPEN base=a MERGEABLE -> OPEN base=b MERGEABLE",
-    "stack o/web#901: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE",
+    "abc-1 state working->idle",
+    "abc-1 state idle->working",
+    "abc-1 state done->idle",
+    "abc-1 state working->done",
+    "abc-1 state starting->working",
+    "abc-1 checks none->pending",
+    "abc-1 checks pending->success",
+    "abc-1 review REVIEW_REQUIRED",
+    "abc-1 new worker (working)",
+    "abc-1 new worker (starting)",
+    "abc-1 goal sent",
+    "stack o/web#41: OPEN base=a MERGEABLE -> OPEN base=b MERGEABLE",
+    "stack o/web#41: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE",
 ]
 
 
@@ -66,12 +66,12 @@ class ClassifyTest(unittest.TestCase):
                 self.assertEqual(watch.classify(line), "status")
 
     def test_gone_after_retire_is_routine(self):
-        self.assertEqual(watch.classify("abc-102 gone from the ledger", retired={"abc-102"}), "status")
-        self.assertEqual(watch.classify("abc-102 gone from the ledger", retired={"abc-103"}), "wake")
+        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-1"}), "status")
+        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-2"}), "wake")
 
     def test_unknown_lines_wake(self):
         # Something athena watch learns to say later should reach HQ, not vanish into the status line.
-        self.assertEqual(watch.classify("abc-102 something new happened"), "wake")
+        self.assertEqual(watch.classify("abc-1 something new happened"), "wake")
 
 
 def _w(state, pr=None, report=None):
@@ -88,16 +88,16 @@ class SummaryTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_grouped_needs_you_then_working_then_done(self):
-        snap = {"workers": {"pr908": _w("working"), "abc-113": _w("done"), "abc-104": _w("blocked"),
-                            "abc-114": _w("idle", report={"status": "DONE"}), "abc-115": _w("idle"),
-                            "abc-116": _w("working", report=None), "abc-117": _w("idle", report={"status": "NEEDS_CONTEXT"}),
-                            "abc-112": _w("exited")}}
+        snap = {"workers": {"pr47": _w("working"), "abc-101": _w("done"), "abc-9": _w("blocked"),
+                            "abc-102": _w("idle", report={"status": "DONE"}), "abc-7": _w("idle"),
+                            "abc-8": _w("working", report=None), "abc-6": _w("idle", report={"status": "NEEDS_CONTEXT"}),
+                            "abc-5": _w("exited")}}
         b = watch.board(snap)
-        self.assertEqual(b["needs"], ["abc-117 needs context", "abc-104 blocked", "abc-112 exited"])
-        self.assertEqual(b["active"], [["working", ["abc-116", "pr908"]], ["idle", ["abc-115"]]])
-        self.assertEqual(b["done"], ["abc-113", "abc-114"])
-        self.assertEqual(watch.summary(snap), "abc-117 needs context · abc-104 blocked · abc-112 exited · "
-                                              "abc-116, pr908 working · abc-115 idle · abc-113, abc-114 done")
+        self.assertEqual(b["needs"], ["abc-6 needs context", "abc-9 blocked", "abc-5 exited"])
+        self.assertEqual(b["active"], [["working", ["abc-8", "pr47"]], ["idle", ["abc-7"]]])
+        self.assertEqual(b["done"], ["abc-101", "abc-102"])
+        self.assertEqual(watch.summary(snap), "abc-6 needs context · abc-9 blocked · abc-5 exited · "
+                                              "abc-8, pr47 working · abc-7 idle · abc-101, abc-102 done")
 
     def test_a_blocked_report_is_blocked_whatever_the_hook_state(self):
         b = watch.board({"workers": {"a": _w("idle", report={"status": "BLOCKED"})}})
@@ -125,15 +125,15 @@ class SummaryTest(unittest.TestCase):
     def test_prs_named_in_needs_you_and_one_pr_counted_once(self):
         paths.ensure()
         (paths.state_dir() / "needs-you.md").write_text(
-            "- Approve and merge web #909: https://github.com/o/web/pull/909\n"
-            "- Approve and merge #910: https://github.com/o/web/pull/910.\n"
+            "- Approve and merge web #43: https://github.com/o/web/pull/43\n"
+            "- Approve and merge #45: https://github.com/o/web/pull/45.\n"
             "- File a ticket? nothing to merge\n")
-        snap = {"workers": {"abc-113": _w("idle", {"state": "OPEN", "draft": False, "review": "",
-                                                    "url": "https://github.com/o/web/pull/910"},
+        snap = {"workers": {"abc-101": _w("idle", {"state": "OPEN", "draft": False, "review": "",
+                                                    "url": "https://github.com/o/web/pull/45"},
                                            report={"status": "DONE"})},
-                "stacks": {"o/web#902": "OPEN base=main MERGEABLE", "o/web#910": "OPEN base=main MERGEABLE"}}
-        self.assertEqual(watch.board(snap)["prs"], ["#902", "#909", "#910"])
-        self.assertEqual(watch.summary(snap), "3 PRs need you · abc-113 done")
+                "stacks": {"o/web#42": "OPEN base=main MERGEABLE", "o/web#45": "OPEN base=main MERGEABLE"}}
+        self.assertEqual(watch.board(snap)["prs"], ["#42", "#43", "#45"])
+        self.assertEqual(watch.summary(snap), "3 PRs need you · abc-101 done")
 
 
 class BoardLinksTest(unittest.TestCase):
@@ -154,10 +154,10 @@ class BoardLinksTest(unittest.TestCase):
         snap = {"workers": {"a": {**_w("idle", pr(12)), "slug": "Delitefully/athena"},
                             "b": {**_w("idle", pr(13)), "slug": None},
                             "c": _w("working")},
-                "stacks": {"o/stack#902": "OPEN base=main MERGEABLE"}}
+                "stacks": {"o/stack#42": "OPEN base=main MERGEABLE"}}
         b = watch.board(snap, notes="")
-        self.assertEqual(b["prs"], ["#12", "#13", "#902"])
-        self.assertEqual(b["links"], {"12": "Delitefully/athena", "902": "o/stack"})
+        self.assertEqual(b["prs"], ["#12", "#13", "#42"])
+        self.assertEqual(b["links"], {"12": "Delitefully/athena", "42": "o/stack"})
         self.assertEqual(b["repos"], {"a": "Delitefully/athena"})
         self.assertNotIn("dash", b)
 
@@ -226,10 +226,10 @@ class StackTest(unittest.TestCase):
 
     def test_stack_file_round_trip(self):
         self.assertEqual(watch.stacks(), [])
-        watch.set_stack("o/web", [901, 902])
+        watch.set_stack("o/web", [41, 42])
         watch.set_stack("o/other", [12])
-        watch.set_stack("o/web", [902, 903])
-        self.assertEqual(watch.stacks(), [{"repo": "o/web", "prs": [902, 903]}, {"repo": "o/other", "prs": [12]}])
+        watch.set_stack("o/web", [42, 44])
+        self.assertEqual(watch.stacks(), [{"repo": "o/web", "prs": [42, 44]}, {"repo": "o/other", "prs": [12]}])
         self.assertEqual(json.loads((paths.state_dir() / "stack.json").read_text())["stacks"][1]["repo"], "o/other")
         watch.set_stack("o/web", [])
         self.assertEqual(watch.stacks(), [{"repo": "o/other", "prs": [12]}])
@@ -357,11 +357,11 @@ class StackCliTest(unittest.TestCase):
     def test_set_show_clear(self):
         from athena_lib import cli
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(cli.main(["stack", "set", "o/web", "901", "902"]), 0)
+            self.assertEqual(cli.main(["stack", "set", "o/web", "41", "42"]), 0)
         out = io.StringIO()
         with redirect_stdout(out):
             cli.main(["stack"])
-        self.assertEqual(json.loads(out.getvalue()), [{"repo": "o/web", "prs": [901, 902]}])
+        self.assertEqual(json.loads(out.getvalue()), [{"repo": "o/web", "prs": [41, 42]}])
         with redirect_stdout(io.StringIO()):
             cli.main(["stack", "clear", "o/web"])
         self.assertEqual(watch.stacks(), [])

@@ -15,14 +15,14 @@ class LedgerTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_fold_spawn_update_retire(self):
-        ledger.append("spawn", "abc-102", branch="you/abc-102-x", pane="w1:p1")
-        ledger.append("update", "abc-102", pr="https://example/1")
+        ledger.append("spawn", "abc-1", branch="you/abc-1-x", pane="w1:p1")
+        ledger.append("update", "abc-1", pr="https://example/1")
         workers = ledger.workers()
-        self.assertEqual(workers["abc-102"]["state"], "live")
-        self.assertEqual(workers["abc-102"]["pane"], "w1:p1")
-        self.assertEqual(workers["abc-102"]["pr"], "https://example/1")
-        ledger.append("retire", "abc-102")
-        self.assertEqual(ledger.workers()["abc-102"]["state"], "retired")
+        self.assertEqual(workers["abc-1"]["state"], "live")
+        self.assertEqual(workers["abc-1"]["pane"], "w1:p1")
+        self.assertEqual(workers["abc-1"]["pr"], "https://example/1")
+        ledger.append("retire", "abc-1")
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "retired")
 
     def test_live_excludes_failed_and_retired(self):
         ledger.append("spawn", "a", pane="w1:p1")

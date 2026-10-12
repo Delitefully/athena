@@ -17,7 +17,7 @@ function engine(on: On, remote = 'git@github.com:o/r.git') {
 
 const report = (o: object) => `Pushed and opened the PR.\n\nATHENA-REPORT ${JSON.stringify(o)}`
 const FULL = {
-  pr: 'https://github.com/o/r/pull/911',
+  pr: 'https://github.com/o/r/pull/46',
   head: '797b67975c13',
   verify: 'make test -> pass',
   decisions: ['kept the frame for the model'],
@@ -41,8 +41,8 @@ describe('a worker draws its ATHENA-REPORT as a completion block', () => {
       expect(await ui.find({ type: 'Text', text: 'Pushed and opened the PR.' })).toBeDefined()
       expect((await ui.find({ type: 'Text', text: word }))?.props.color).toBe(color)
       expect(await ui.find({ type: 'Text', text: '∞ athena report' })).toBeDefined()
-      expect((await ui.find({ type: 'Link' }))?.props).toEqual({ href: 'https://github.com/o/r/pull/911' })
-      expect(await ui.find({ type: 'Text', text: '#911' })).toBeDefined()
+      expect((await ui.find({ type: 'Link' }))?.props).toEqual({ href: 'https://github.com/o/r/pull/46' })
+      expect(await ui.find({ type: 'Text', text: '#46' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: '797b679' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: 'make test -> pass' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: '• kept the frame for the model' })).toBeDefined()

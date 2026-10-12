@@ -14,7 +14,7 @@ from athena_lib import ledger, paths, spawn
 CREATED = {"result": {"type": "worktree_created",
                       "workspace": {"workspace_id": "w9"},
                       "root_pane": {"pane_id": "w9:p1", "terminal_id": "term_abc", "cwd": "/x"},
-                      "worktree": {"branch": "you/abc-102-fix"}}}
+                      "worktree": {"branch": "you/abc-1-fix"}}}
 
 
 class SpawnTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class SpawnTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name, "proj")
         self.brief = Path(self.tmp.name) / "brief.md"
-        self.brief.write_text("# ABC-102\nGOAL: fix it\n")
+        self.brief.write_text("# ABC-1\nGOAL: fix it\n")
 
     def tearDown(self):
         self.env.restore()
@@ -33,8 +33,8 @@ class SpawnTest(unittest.TestCase):
         write_scenario(self.tmp.name, (extra or []) + [{"match": ["worktree", "create"], "stdout": CREATED}])
 
     def run_spawn(self, **kw):
-        args = dict(repo=self.repo, branch="you/abc-102-fix", name="abc-102", brief_path=self.brief,
-                    goal="ABC-102 is done when the test passes.", linear="ABC-102", title="fix it")
+        args = dict(repo=self.repo, branch="you/abc-1-fix", name="abc-1", brief_path=self.brief,
+                    goal="ABC-1 is done when the test passes.", linear="ABC-1", title="fix it")
         args.update(kw)
         return spawn.spawn(**args)
 
@@ -46,27 +46,27 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(verbs, [["worktree", "create"], ["agent", "start"], ["agent", "prompt"],
                                  ["agent", "wait"], ["workspace", "report-metadata"]])
         create = calls[0]
-        wt = paths.worktree_path(self.repo, "you/abc-102-fix")
+        wt = paths.worktree_path(self.repo, "you/abc-1-fix")
         self.assertIn(str(wt), create)
         self.assertEqual(create[create.index("--base") + 1], "origin/main")
         self.assertEqual(create[create.index("--label") + 1], "fix it")
         start = calls[1]
-        self.assertEqual(start[:3], ["agent", "start", "abc-102"])
+        self.assertEqual(start[:3], ["agent", "start", "abc-1"])
         claude = start[start.index("--") + 1:]
-        self.assertEqual(claude[claude.index("--name") + 1], "abc-102")
+        self.assertEqual(claude[claude.index("--name") + 1], "abc-1")
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("worker.md"))
         settings = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())
-        self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-102")
+        self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-1")
         self.assertEqual(settings["crossSessionInbound"], "accept")
         self.assertFalse(settings["enabledPlugins"]["keepwarm@keepwarm"])
         prompt = calls[2]
-        self.assertTrue(prompt[3].startswith("/goal ABC-102 is done when the test passes."))
-        self.assertIn(str(paths.state_dir() / "briefs" / "abc-102.md"), prompt[3])
+        self.assertTrue(prompt[3].startswith("/goal ABC-1 is done when the test passes."))
+        self.assertIn(str(paths.state_dir() / "briefs" / "abc-1.md"), prompt[3])
         self.assertNotIn("\n", prompt[3])
-        w = ledger.workers()["abc-102"]
+        w = ledger.workers()["abc-1"]
         self.assertEqual((w["state"], w["pane"], w["terminal"], w["workspace"]), ("live", "w9:p1", "term_abc", "w9"))
         self.assertFalse(paths.claim_file(str(wt)).exists())
-        self.assertEqual(result["name"], "abc-102")
+        self.assertEqual(result["name"], "abc-1")
 
     def test_spawn_refuses_over_cap(self):
         self.scenario()
@@ -92,7 +92,7 @@ class SpawnTest(unittest.TestCase):
             ledger.append("spawn", f"w{i}", pane=f"w{i}:p1")
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn()
-        self.assertEqual(self.run_spawn(force=True)["name"], "abc-102")
+        self.assertEqual(self.run_spawn(force=True)["name"], "abc-1")
 
     def test_spawn_refuses_when_quota_high(self):
         self.scenario()
@@ -103,15 +103,15 @@ class SpawnTest(unittest.TestCase):
         self.assertIn("quota", str(ctx.exception))
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn(force=True)
-        self.assertEqual(self.run_spawn(ignore_quota=True)["name"], "abc-102")
+        self.assertEqual(self.run_spawn(ignore_quota=True)["name"], "abc-1")
 
     def test_prompt_failure_leaves_worker_tracked(self):
         err = {"error": {"code": "agent_not_found", "message": "gone"}}
         self.scenario([{"match": ["agent", "prompt"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
-        self.assertIn("athena nudge abc-102", str(ctx.exception))
-        w = ledger.workers()["abc-102"]
+        self.assertIn("athena nudge abc-1", str(ctx.exception))
+        w = ledger.workers()["abc-1"]
         self.assertEqual((w["state"], w["prompt"]), ("live", "failed: agent_not_found"))
 
     def test_spawn_refuses_dirty_main(self):
@@ -127,9 +127,9 @@ class SpawnTest(unittest.TestCase):
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
         self.assertIn("pane_not_found", str(ctx.exception))
-        wt = paths.worktree_path(self.repo, "you/abc-102-fix")
+        wt = paths.worktree_path(self.repo, "you/abc-1-fix")
         self.assertFalse(paths.claim_file(str(wt)).exists())
-        w = ledger.workers()["abc-102"]
+        w = ledger.workers()["abc-1"]
         self.assertEqual(w["state"], "failed")
         self.assertEqual(w["pane"], "w9:p1")
         self.assertEqual(ledger.live(), [])
@@ -139,12 +139,12 @@ class SpawnTest(unittest.TestCase):
         self.scenario([{"match": ["agent", "start"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         result = self.run_spawn()
         self.assertTrue(result["pending"])
-        wt = paths.worktree_path(self.repo, "you/abc-102-fix")
+        wt = paths.worktree_path(self.repo, "you/abc-1-fix")
         self.assertFalse(paths.claim_file(str(wt)).exists())
-        self.assertEqual([w["name"] for w in ledger.live()], ["abc-102"])
+        self.assertEqual([w["name"] for w in ledger.live()], ["abc-1"])
 
     def test_claim_written_before_worktree_create(self):
-        wt = paths.worktree_path(self.repo, "you/abc-102-fix")
+        wt = paths.worktree_path(self.repo, "you/abc-1-fix")
         wt.parent.mkdir(parents=True, exist_ok=True)
         claim = paths.claim_file(str(wt))
         seen = Path(self.tmp.name) / "seen"
@@ -167,10 +167,10 @@ class SpawnTest(unittest.TestCase):
         self.assertFalse(claim.exists())
 
     def test_settings_without_ultracode_are_unchanged(self):
-        brief = paths.ensure("briefs") / "abc-102.md"
-        text = spawn._write_settings("abc-102", brief).read_text()
+        brief = paths.ensure("briefs") / "abc-1.md"
+        text = spawn._write_settings("abc-1", brief).read_text()
         expected = {
-            "env": {"ATHENA_WORKER": "abc-102", "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
+            "env": {"ATHENA_WORKER": "abc-1", "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
                     "ATHENA_BRIEF": str(brief)},
             "crossSessionInbound": "accept",
             "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
@@ -190,8 +190,8 @@ class SpawnTest(unittest.TestCase):
         settings = self.settings_passed()
         self.assertIs(settings["ultracode"], True)
         self.assertEqual(settings["workflowSizeGuideline"], "large")
-        self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-102")
-        w = ledger.workers()["abc-102"]
+        self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-1")
+        w = ledger.workers()["abc-1"]
         self.assertEqual((w["ultracode"], w["workflow_size"]), (True, "large"))
         self.assertEqual((result["ultracode"], result["workflow_size"]), (True, "large"))
         prompt = [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]][0]
@@ -203,7 +203,7 @@ class SpawnTest(unittest.TestCase):
         settings = self.settings_passed()
         self.assertIs(settings["ultracode"], True)
         self.assertNotIn("workflowSizeGuideline", settings)
-        w = ledger.workers()["abc-102"]
+        w = ledger.workers()["abc-1"]
         self.assertTrue(w["ultracode"])
         self.assertNotIn("workflow_size", w)
 
@@ -211,7 +211,7 @@ class SpawnTest(unittest.TestCase):
         self.scenario()
         result = self.run_spawn()
         self.assertNotIn("ultracode", self.settings_passed())
-        self.assertNotIn("ultracode", ledger.workers()["abc-102"])
+        self.assertNotIn("ultracode", ledger.workers()["abc-1"])
         self.assertNotIn("ultracode", result)
 
     def test_workflow_size_needs_ultracode(self):
@@ -224,8 +224,8 @@ class SpawnTest(unittest.TestCase):
     def test_rejects_bad_name_and_live_duplicate(self):
         self.scenario()
         with self.assertRaises(spawn.SpawnError):
-            self.run_spawn(name="ABC-102")
-        ledger.append("spawn", "abc-102", pane="w1:p1")
+            self.run_spawn(name="ABC-1")
+        ledger.append("spawn", "abc-1", pane="w1:p1")
         with self.assertRaises(spawn.SpawnError):
             self.run_spawn()
 
@@ -236,7 +236,7 @@ class UltracodeCliTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name, "proj")
         self.brief = Path(self.tmp.name) / "brief.md"
-        self.brief.write_text("# ABC-102\nGOAL: fix it\n")
+        self.brief.write_text("# ABC-1\nGOAL: fix it\n")
 
     def tearDown(self):
         self.env.restore()
@@ -247,8 +247,8 @@ class UltracodeCliTest(unittest.TestCase):
                               env=dict(os.environ))
 
     def spawn_args(self, *extra):
-        return ("spawn", "--repo", str(self.repo), "--branch", "you/abc-102-fix", "--name", "abc-102",
-                "--brief", str(self.brief), "--goal", "ABC-102 is done when x.", *extra)
+        return ("spawn", "--repo", str(self.repo), "--branch", "you/abc-1-fix", "--name", "abc-1",
+                "--brief", str(self.brief), "--goal", "ABC-1 is done when x.", *extra)
 
     def test_workflow_size_without_ultracode_is_rejected(self):
         out = self.cli(*self.spawn_args("--workflow-size", "large"))
@@ -268,16 +268,16 @@ class UltracodeCliTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         result = json.loads(out.stdout)
         self.assertEqual((result["ultracode"], result["workflow_size"]), (True, "medium"))
-        ledger.append("spawn", "abc-103", pane="w2:p1")
-        ledger.append("spawn", "abc-110", pane="w3:p1", ultracode=True)
+        ledger.append("spawn", "abc-2", pane="w2:p1")
+        ledger.append("spawn", "abc-3", pane="w3:p1", ultracode=True)
         lines = {line.split()[0]: line for line in self.cli("status").stdout.splitlines() if line[:1].strip()}
-        self.assertIn("  UC:medium", lines["abc-102"])
-        self.assertIn("  UC", lines["abc-110"])
-        self.assertNotIn("UC:", lines["abc-110"])
-        self.assertNotIn("UC", lines["abc-103"])
+        self.assertIn("  UC:medium", lines["abc-1"])
+        self.assertIn("  UC", lines["abc-3"])
+        self.assertNotIn("UC:", lines["abc-3"])
+        self.assertNotIn("UC", lines["abc-2"])
         rows = {r["name"]: r for r in json.loads(self.cli("status", "--json").stdout)}
-        self.assertEqual((rows["abc-102"]["ultracode"], rows["abc-102"]["workflow_size"]), (True, "medium"))
-        self.assertFalse(rows["abc-103"]["ultracode"])
+        self.assertEqual((rows["abc-1"]["ultracode"], rows["abc-1"]["workflow_size"]), (True, "medium"))
+        self.assertFalse(rows["abc-2"]["ultracode"])
 
 
 if __name__ == "__main__":
@@ -286,27 +286,27 @@ if __name__ == "__main__":
 
 class SpaceLabelTest(unittest.TestCase):
     def test_title_alone(self):
-        self.assertEqual(spawn.space_label("abc-108", "Settings page keeps the filter", "ABC-108"),
-                         "Settings page keeps the filter")
+        self.assertEqual(spawn.space_label("abc-103", "Settings dialog keeps its scroll position", "ABC-103"),
+                         "Settings dialog keeps its scroll position")
 
     def test_ticket_id_stripped_from_title(self):
-        for title in ("ABC-108: Fix the dialog", "abc-108 Fix the dialog", "[ABC-108] Fix the dialog",
-                      "Fix the dialog (ABC-108)", "Fix the dialog · abc-108"):
-            self.assertEqual(spawn.space_label("abc-108", title, "ABC-108"), "Fix the dialog", title)
+        for title in ("ABC-103: Fix the dialog", "abc-103 Fix the dialog", "[ABC-103] Fix the dialog",
+                      "Fix the dialog (ABC-103)", "Fix the dialog · abc-103"):
+            self.assertEqual(spawn.space_label("abc-103", title, "ABC-103"), "Fix the dialog", title)
 
     def test_other_hyphenated_words_kept(self):
-        self.assertEqual(spawn.space_label("abc-109", "Export keeps column order", "ABC-109"),
-                         "Export keeps column order")
+        self.assertEqual(spawn.space_label("abc-104", "Sign-in page re-renders twice", "ABC-104"),
+                         "Sign-in page re-renders twice")
 
     def test_branch_slug_without_title(self):
-        self.assertEqual(spawn.space_label("abc-108", None, "ABC-108",
-                                           "you/abc-108-settings-filter"), "endpoints tab editing")
+        self.assertEqual(spawn.space_label("abc-103", None, "ABC-103",
+                                           "you/abc-103-settings-scroll-reset"), "settings scroll reset")
 
     def test_name_is_last_resort(self):
-        self.assertEqual(spawn.space_label("abc-102", "ABC-102", "ABC-102", "abc-102"), "abc-102")
+        self.assertEqual(spawn.space_label("abc-1", "ABC-1", "ABC-1", "abc-1"), "abc-1")
 
     def test_truncated(self):
-        self.assertEqual(len(spawn.space_label("abc-102", "x" * 80)), 48)
+        self.assertEqual(len(spawn.space_label("abc-1", "x" * 80)), 48)
 
 
 class SetupEnvTest(unittest.TestCase):

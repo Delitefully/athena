@@ -65,7 +65,7 @@ def _stack_file():
 
 
 def stacks() -> list:
-    """The stacked-PR chains HQ watches: [{"repo": "owner/name", "prs": [901, 902]}], from stack.json."""
+    """The stacked-PR chains HQ watches: [{"repo": "owner/name", "prs": [41, 42]}], from stack.json."""
     try:
         data = json.loads(_stack_file().read_text())
     except (OSError, ValueError):

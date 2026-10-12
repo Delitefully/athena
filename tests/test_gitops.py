@@ -26,10 +26,10 @@ class GitopsTest(unittest.TestCase):
         self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 
     def test_preflight_refuses_feature_branch(self):
-        git(self.repo, "checkout", "-q", "-b", "you/abc-102-x")
+        git(self.repo, "checkout", "-q", "-b", "you/abc-1-x")
         result = gitops.preflight(self.repo)
         self.assertFalse(result["ok"])
-        self.assertIn("on branch you/abc-102-x, not main", " ".join(result["problems"]))
+        self.assertIn("on branch you/abc-1-x, not main", " ".join(result["problems"]))
 
     def test_preflight_refuses_dirty_tracked(self):
         (self.repo / "README.md").write_text("changed\n")
@@ -60,23 +60,23 @@ class GitopsTest(unittest.TestCase):
 
     def test_unpushed_counts(self):
         wt = Path(self.tmp.name) / "wt"
-        git(self.repo, "worktree", "add", "-q", "-b", "you/abc-103", str(wt), "main")
+        git(self.repo, "worktree", "add", "-q", "-b", "you/abc-2", str(wt), "main")
         state = gitops.unpushed(wt)
-        self.assertEqual(state, {"dirty": [], "ahead": 0, "has_upstream": False, "branch": "you/abc-103"})
+        self.assertEqual(state, {"dirty": [], "ahead": 0, "has_upstream": False, "branch": "you/abc-2"})
         (wt / "a.txt").write_text("a\n")
         self.assertEqual(gitops.unpushed(wt)["dirty"], ["a.txt"])
         git(wt, "add", "a.txt")
         git(wt, "commit", "-q", "-m", "a")
         state = gitops.unpushed(wt)
         self.assertEqual(state["ahead"], 1)
-        git(wt, "push", "-q", "-u", "origin", "you/abc-103")
+        git(wt, "push", "-q", "-u", "origin", "you/abc-2")
         state = gitops.unpushed(wt)
         self.assertEqual((state["ahead"], state["has_upstream"]), (0, True))
 
     def test_backup_ref(self):
         sha = git(self.repo, "rev-parse", "HEAD")
-        ref = gitops.backup_ref(self.repo, "abc-104", sha)
-        self.assertTrue(ref.startswith("refs/athena-backup/abc-104/"))
+        ref = gitops.backup_ref(self.repo, "abc-9", sha)
+        self.assertTrue(ref.startswith("refs/athena-backup/abc-9/"))
         self.assertEqual(git(self.repo, "rev-parse", ref), sha)
 
 

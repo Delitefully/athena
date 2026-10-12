@@ -38,8 +38,8 @@ const MAX_LINE = 200
  * draws it as athena's own row (parseWake reads it back).
  *
  *     athena watch 22:19:
- *     abc-113 report DONE
- *     pr908 checks pending->failure
+ *     abc-101 report DONE
+ *     pr47 checks pending->failure
  */
 export function promptText(lines: readonly string[], at?: string): string {
   const shown = lines.slice(0, MAX_LINES).map(l => (l.length > MAX_LINE ? l.slice(0, MAX_LINE - 1) + '…' : l))

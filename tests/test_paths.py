@@ -18,14 +18,14 @@ class PathsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_slug_strips_user_prefix(self):
-        self.assertEqual(paths.slug("you/abc-101-SSO Fix"), "abc-101-sso-fix")
-        self.assertEqual(paths.slug("abc-102--x__y"), "abc-102-x-y")
+        self.assertEqual(paths.slug("you/abc-112-SSO Fix"), "abc-112-sso-fix")
+        self.assertEqual(paths.slug("abc-1--x__y"), "abc-1-x-y")
         self.assertEqual(paths.slug("a/b/c-d"), "b-c-d")
 
     def test_worktree_path(self):
-        repo = Path("/Users/someone/Developer/web")
-        expected = Path(self.tmp.name) / "worktrees" / "web" / "abc-101-sso-fix"
-        self.assertEqual(paths.worktree_path(repo, "you/abc-101-sso-fix"), expected)
+        repo = Path("/home/someone/src/web")
+        expected = Path(self.tmp.name) / "worktrees" / "web" / "abc-112-sso-fix"
+        self.assertEqual(paths.worktree_path(repo, "you/abc-112-sso-fix"), expected)
 
     def test_claim_file_matches_shasum(self):
         target = Path(self.tmp.name)
@@ -37,9 +37,9 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(paths.claim_file(str(target)).parent, Path(self.tmp.name) / "state" / "claims")
 
     def test_valid_name(self):
-        self.assertTrue(paths.valid_name("abc-101"))
+        self.assertTrue(paths.valid_name("abc-112"))
         self.assertTrue(paths.valid_name("athena"))
-        self.assertFalse(paths.valid_name("ABC-101"))
+        self.assertFalse(paths.valid_name("ABC-112"))
         self.assertFalse(paths.valid_name("4512"))
         self.assertFalse(paths.valid_name("a" * 33))
         self.assertFalse(paths.valid_name("a b"))
