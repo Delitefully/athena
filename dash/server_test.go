@@ -262,3 +262,52 @@ func TestUnlinkedTicketIsStillShown(t *testing.T) {
 		t.Fatal("without a workspace the ticket id shows, unlinked")
 	}
 }
+
+// rowGlyphs: every icon a row can show, as the view sets Item.Icon.
+var rowGlyphs = []string{"blocked", "fail", "done", "review", "ready", "working", "idle", "exited", "pr", "merged", "retired", "ok", "note", "ask"}
+
+func TestEveryRowGlyphIsInTheSpriteAtOneWeight(t *testing.T) {
+	sprite := pageHTML[strings.Index(pageHTML, "<defs>"):strings.Index(pageHTML, "</defs>")]
+	for _, id := range rowGlyphs {
+		if !strings.Contains(sprite, `<g id="i-`+id+`">`) {
+			t.Errorf("the sprite lacks i-%s", id)
+		}
+	}
+	// The stroke comes from .icon alone, so every glyph has the same weight.
+	if strings.Contains(sprite, "stroke-width") {
+		t.Error("a glyph sets its own stroke-width")
+	}
+}
+
+func TestNotesShowTheQuestionMarkOrTheDash(t *testing.T) {
+	dir := copyFixture(t)
+	f, err := os.OpenFile(filepath.Join(dir, "needs-you.md"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("- The quota resets at 14:00.\n")
+	f.Close()
+	_, base := start(t, dir)
+	_, body := get(t, base+"/", "")
+	ask := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-ask"/></svg>\s*<div class="body"><p class="note-text">Close ABC-4550`)
+	note := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-note"/></svg>\s*<div class="body"><p class="note-text">The quota resets`)
+	if !ask.MatchString(body) {
+		t.Error("a question lacks the question mark")
+	}
+	if !note.MatchString(body) {
+		t.Error("a plain note lacks the dash")
+	}
+}
+
+func TestGlyphSheetShowsEveryRowGlyphBesideALine(t *testing.T) {
+	_, base := start(t, copyFixture(t))
+	resp, body := get(t, base+"/glyphs?scheme=dark", "")
+	if resp.StatusCode != 200 || !strings.Contains(body, `<html lang="en" data-scheme="dark">`) {
+		t.Fatalf("%d, scheme not pinned", resp.StatusCode)
+	}
+	for _, id := range rowGlyphs {
+		if !strings.Contains(body, `<use href="#i-`+id+`"/></svg>`) {
+			t.Errorf("the sheet lacks %s", id)
+		}
+	}
+}

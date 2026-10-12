@@ -184,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.page)
 	mux.HandleFunc("/events", s.events)
+	mux.HandleFunc("/glyphs", s.glyphs)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()
 		w.Header().Set("Content-Type", "application/json")
@@ -223,13 +224,46 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, view, _ := s.snapshot()
-	scheme := r.URL.Query().Get("scheme")
-	if scheme != "light" && scheme != "dark" {
-		scheme = ""
+	s.render(w, "page", map[string]any{"Title": view.Title, "Scheme": scheme(r), "View": view})
+}
+
+// glyphSheet: every row glyph with what it stands for, in the dash's order of urgency.
+var glyphSheet = []struct {
+	Icon, Text string
+	Note       bool
+}{
+	{"blocked", "blocked, a worker waits on you", false},
+	{"fail", "CI failed", false},
+	{"ask", "athena asks: merge now or after the release?", true},
+	{"note", "a note from athena", true},
+	{"done", "done, or your review requested", false},
+	{"ready", "ready to merge", false},
+	{"review", "review comments", false},
+	{"ok", "checks green", false},
+	{"working", "working", false},
+	{"pr", "PR open", false},
+	{"idle", "idle", false},
+	{"exited", "exited", false},
+	{"merged", "merged", false},
+	{"retired", "retired", false},
+}
+
+// glyphs shows every row glyph beside a first line, as the dash lays out a row, for checking them by eye.
+func (s *Server) glyphs(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "glyphs", map[string]any{"Scheme": scheme(r), "Glyphs": glyphSheet})
+}
+
+// scheme is the ?scheme= that pins light or dark, for screenshots; empty for any other value.
+func scheme(r *http.Request) string {
+	if s := r.URL.Query().Get("scheme"); s == "light" || s == "dark" {
+		return s
 	}
+	return ""
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	var buf bytes.Buffer
-	err := s.tmpl.ExecuteTemplate(&buf, "page", map[string]any{"Title": view.Title, "Scheme": scheme, "View": view})
-	if err != nil {
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 		return
 	}

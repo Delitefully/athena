@@ -396,6 +396,12 @@ func TestNotesFoldIntoTheRowOfThePRTheyLink(t *testing.T) {
 			t.Errorf("%q: %q, want %q", v.NeedsYou[i].Note, v.NeedsYou[i].Label, want)
 		}
 	}
+	// A question shows the question mark; any other note, the thread's dash.
+	for i, want := range []string{"ask", "note", "ask", "note"} {
+		if v.NeedsYou[i].Icon != want {
+			t.Errorf("%q: icon %q, want %q", v.NeedsYou[i].Note, v.NeedsYou[i].Icon, want)
+		}
+	}
 	if got := string(v.NeedsYou[0].Note); !strings.Contains(got, `<a href="https://github.com/acme/web/pull/99">acme/web#99</a> still needed?`) {
 		t.Errorf("a PR URL in a note shows as owner/repo#n: %s", got)
 	}
