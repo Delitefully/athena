@@ -1,9 +1,9 @@
 #!/bin/sh
 # athena worker status hook. Does nothing unless this session is an athena worker.
 [ -f "${ATHENA_STATE_DIR:-$HOME/.local/state/athena}/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
-if [ -z "${ATHENA_WORKER:-}" ]; then
-	root="${ATHENA_WORKTREE_ROOT:-$HOME/Developer/.worktrees}"
-	real_root=$(cd "$root" 2>/dev/null && pwd -P) || { cat >/dev/null; exit 0; }
+if [ -z "${ATHENA_WORKER:-}" ] && [ -n "${ATHENA_WORKTREE_ROOT:-}" ]; then
+	# A fast exit outside the worktree root. Without the variable, hookstatus reads the root from config.json.
+	real_root=$(cd "$ATHENA_WORKTREE_ROOT" 2>/dev/null && pwd -P) || { cat >/dev/null; exit 0; }
 	case "$(pwd -P)/" in
 	"$real_root"/*) ;;
 	*) cat >/dev/null; exit 0 ;;

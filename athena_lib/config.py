@@ -119,11 +119,11 @@ def _tilde(value):
     if not value:
         return value
     full = os.path.expanduser(str(value))
-    home = os.path.expanduser("~")
-    if full == home:
-        return "~"
-    if full.startswith(home.rstrip("/") + "/"):
-        return "~/" + full[len(home.rstrip("/")) + 1:]
+    for path, home in ((full, os.path.expanduser("~")), (os.path.realpath(full), os.path.realpath(os.path.expanduser("~")))):
+        if path == home:
+            return "~"
+        if path.startswith(home.rstrip("/") + "/"):
+            return "~/" + path[len(home.rstrip("/")) + 1:]
     return full
 
 

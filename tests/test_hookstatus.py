@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers
-from athena_lib import hookstatus, ledger, paths
+from athena_lib import config, hookstatus, ledger, paths
 
 HOOK = helpers.ROOT / "hooks" / "worker-status"
 
@@ -54,6 +54,19 @@ class HookStatusTest(unittest.TestCase):
         ledger.append("spawn", "abc-1", path=os.path.realpath(self.wt))
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, cwd=self.wt)
         self.assertEqual(self.status("abc-1")["state"], "working")
+
+    def test_worker_found_under_the_configs_worktree_root(self):
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        root = Path(self.tmp.name) / "projects" / ".wt"
+        wt = root / "proj" / "plt-2-y"
+        wt.mkdir(parents=True)
+        config.write({**config.DEFAULTS, "projects_dir": str(root.parent), "worktree_root": str(root)})
+        ledger.append("spawn", "plt-2", path=os.path.realpath(wt))
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(wt)}, cwd=wt)
+        self.assertEqual(self.status("plt-2")["state"], "working")
+        other = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1-x"
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(other)}, cwd=other)
+        self.assertIsNone(self.status("plt-1"))
 
     def test_stop_with_report_sets_done(self):
         msg = 'All green.\nATHENA-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'

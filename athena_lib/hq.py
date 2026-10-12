@@ -137,7 +137,7 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None) -> dict:
             herdr.call("workspace", "focus", current["workspace"])
         _helpers(start_board, start_dash)
         return {**current, "created": False, "restarted": True}
-    cwd = os.path.realpath(os.path.expanduser(cwd or os.environ.get("ATHENA_HQ_CWD") or "~/Developer"))
+    cwd = os.path.realpath(os.path.expanduser(cwd or paths.projects_dir()))
     claim = paths.claim_file(cwd)
     claim.parent.mkdir(parents=True, exist_ok=True)
     claim.write_text("hq\n")
