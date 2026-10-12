@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// icons.txt names the icons of static/icons.svg that an ask's option may show; an unknown name shows no icon.
+// icons.txt names the icons of the page's sprite (page.html) that an ask's option may show; an unknown name shows no icon.
 //
 //go:embed icons.txt
 var iconList string
