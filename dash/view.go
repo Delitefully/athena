@@ -162,7 +162,7 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 		if report != nil && (report.Status == "BLOCKED" || report.Status == "NEEDS_CONTEXT") {
 			it.Label = map[string]string{"BLOCKED": "blocked", "NEEDS_CONTEXT": "needs context"}[report.Status]
 			if len(report.Concerns) > 0 {
-				it.Detail = report.Concerns[0]
+				it.Detail = oneLine(report.Concerns[0])
 			}
 		}
 		v.NeedsYou = append(v.NeedsYou, it)
@@ -178,7 +178,7 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	default:
 		it.Icon, it.Label, it.Detail = stateIcon(state, pr), stateLabel(state, report), summary
 		if it.Detail == "" && report != nil && len(report.Concerns) > 0 {
-			it.Detail = report.Concerns[0]
+			it.Detail = oneLine(report.Concerns[0])
 		}
 		if pr != nil && pr.Checks == "failure" {
 			it.Icon = "fail"
@@ -284,6 +284,18 @@ func summary(h Hook) string {
 		return ""
 	}
 	return lastLine(s)
+}
+
+// reportItemMax: the most a report's decision or concern shows, as worker.md asks of each entry.
+const reportItemMax = 80
+
+// oneLine: a report entry as one line. Whitespace runs fold to a space; past reportItemMax runes it is cut, the last an ellipsis.
+func oneLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > reportItemMax {
+		return strings.TrimRight(string(r[:reportItemMax-1]), " ") + "…"
+	}
+	return s
 }
 
 func lastLine(s string) string {

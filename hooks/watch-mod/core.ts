@@ -531,6 +531,19 @@ export function clean(text: string): string {
   return text.replace(UNSAFE, '')
 }
 
+/** The most a report's decision or concern draws, as worker.md asks of each entry. */
+export const REPORT_ITEM_MAX = 80
+
+/**
+ * A decision or concern as one line, so an old verbose report still draws compactly: line breaks and runs of
+ * spaces fold to one space, and past REPORT_ITEM_MAX characters it is cut, the last an ellipsis.
+ */
+export function oneLine(text: string, max = REPORT_ITEM_MAX): string {
+  const s = clean(text.replace(/[\t\n\v\f\r ]+/g, ' ')).trim()
+  const chars = [...s]
+  return chars.length <= max ? s : chars.slice(0, max - 1).join('').trimEnd() + '…'
+}
+
 /**
  * What the completion block shows: the status in its word and colour, the PR as `#n` with its head, the rest. The
  * PR links to its page in `repo`, the worker's own repo from its origin remote: the report's URL gives only the
@@ -542,8 +555,8 @@ export function reportView(raw: Report, repo?: string): ReportView {
     pr: raw.pr === undefined ? undefined : clean(raw.pr),
     head: raw.head === undefined ? undefined : clean(raw.head),
     verify: raw.verify === undefined ? undefined : clean(raw.verify),
-    decisions: raw.decisions.map(clean),
-    concerns: raw.concerns.map(clean),
+    decisions: raw.decisions.map(s => oneLine(s)),
+    concerns: raw.concerns.map(s => oneLine(s)),
   }
   const look = LOOKS[r.status.toUpperCase()] ?? { text: r.status, color: undefined }
   return {
