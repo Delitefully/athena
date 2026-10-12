@@ -1,6 +1,7 @@
 """Whose move a PR waits on: the review data `athena watch` fetches, and the one label and section per PR."""
 import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from athena_lib import pr
@@ -97,6 +98,18 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(pr.move(_pr(requested=["a"]), live=True, human_merge=False)["kind"], "awaiting")
         self.assertEqual(pr.move(_pr(review="APPROVED"), live=True, human_merge=True)["kind"], "approved")
         self.assertEqual(pr.move(_pr(review="CHANGES_REQUESTED"), live=True, human_merge=False)["kind"], "changes")
+
+
+class DashFixtureTest(unittest.TestCase):
+    def test_the_dash_fixture_moves_are_what_pr_move_says(self):
+        # The dash renders the move athena watch stored: its fixture must hold what pr.move gives (web is human-merged).
+        fixture = json.loads((Path(__file__).resolve().parent.parent / "dash/testdata/state/watch.json").read_text())
+        stored = [(p, True) for p in (w.get("pr") for w in fixture["workers"].values()) if p and "move" in p]
+        stored += [(p, False) for p in fixture["prs"].values()]
+        self.assertGreaterEqual(len(stored), 4)
+        for p, live in stored:
+            human = "/web/" in p["url"]
+            self.assertEqual(p["move"], pr.move(p, live=live, human_merge=human), p["url"])
 
 
 def _graphql(nodes):

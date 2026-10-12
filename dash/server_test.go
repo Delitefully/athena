@@ -65,9 +65,13 @@ func TestPageRendersTheThreeGroups(t *testing.T) {
 		t.Fatalf("%d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 	for _, want := range []string{
-		"<title>(5) athena</title>",
-		`<h2 id="h-needs">Needs you <span class="count">5</span></h2>`,
-		`<h2 id="h-progress">In progress <span class="count">4</span></h2>`,
+		"<title>(8) athena</title>",
+		`<h2 id="h-needs">Needs you <span class="count">8</span></h2>`,
+		`<h2 id="h-progress">In progress <span class="count">6</span></h2>`,
+		`<span class="label">awaiting review · alex</span>`,
+		`<p class="fold">Approve and merge ABC-452: <a href="https://github.com/acme/web/pull/6452">`,
+		`<p class="meta">athena asks</p>`,
+		`<p class="meta">note</p>`,
 		`<h2 id="h-done">Done <span class="count">4</span></h2>`,
 		`<a class="ticket" href="https://linear.app/acme/issue/ABC-108">ABC-108</a>`,
 		`<a href="https://github.com/acme/web/pull/48">#48</a>`,
