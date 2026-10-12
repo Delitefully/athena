@@ -261,3 +261,33 @@ func TestWhatEachRowOffers(t *testing.T) {
 		}
 	}
 }
+
+func TestPillsTakeThePlaceOfTheLabelLine(t *testing.T) {
+	_, base := start(t, copyFixture(t))
+	_, page := get(t, base+"/", "")
+	// An ask: the pills share a cell with its label line, so no space is reserved for them.
+	if !regexp.MustCompile(`<div class="swap has-acts"><p class="meta">athena asks</p><div class="acts options" data-item="a5" data-hides>`).MatchString(page) {
+		t.Error("an ask's pills are not in its label line's cell")
+	}
+	// A worker's row: they take the place of its whole state line.
+	if !regexp.MustCompile(`(?s)<li id="w-abc-101" .*?<div class="swap has-acts"><p class="meta">.*?</p><div class="acts" data-item="w-abc-101">`).MatchString(page) {
+		t.Error("a worker's pills are not in its state line's cell")
+	}
+	// A folded ask gets a label line of its own to swap with.
+	if !strings.Contains(page, `<div class="fold" id="ask-a3"><p>Approve and merge ABC-452</p><div class="swap has-acts"><p class="fold-label">note</p><div class="acts" data-item="a3" data-hides>`) {
+		t.Error("a folded ask's pills have no line to swap with")
+	}
+	// A row with no pills has no pill-height line.
+	if !regexp.MustCompile(`(?s)<li id="w-abc-098" .*?<div class="swap"><p class="meta">`).MatchString(page) {
+		t.Error("a retired row's line is not left as it is")
+	}
+	// Icon-only pills are named by aria-label (the tooltip's text), never a native title.
+	for _, want := range []string{`data-discuss aria-label="Discuss in Athena"`, `data-reply aria-label="Reply…"`, `data-option="dismiss" aria-label="Dismiss"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if regexp.MustCompile(`class="pill[^"]*"[^>]* title=`).MatchString(page) {
+		t.Error("a pill has a native title as well as its tooltip")
+	}
+}

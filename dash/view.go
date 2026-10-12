@@ -44,6 +44,7 @@ type Item struct {
 type Fold struct {
 	ID      string
 	Text    template.HTML
+	Label   string // "athena asks" or "note": the line its pills take the place of
 	Why     string
 	Actions *Actions
 }
@@ -314,13 +315,13 @@ func foldAsks(v *View, asks []Ask, queued map[string]float64, now float64) {
 			}
 			row = rows[prKey(m)]
 		}
-		if row != nil {
-			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(a.Text, prKey(row.PR.URL)), Why: why, Actions: acts})
-			continue
-		}
 		icon, label := "note", "note"
 		if a.Kind == "question" {
 			icon, label = "ask", "athena asks"
+		}
+		if row != nil {
+			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(a.Text, prKey(row.PR.URL)), Label: label, Why: why, Actions: acts})
+			continue
 		}
 		own = append(own, Item{ID: "ask-" + a.ID, Note: inline(a.Text), Icon: icon, Label: label, Detail: why, Actions: acts})
 	}
