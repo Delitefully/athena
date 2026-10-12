@@ -430,9 +430,9 @@ def step(prev, fetch=False, with_pr=True):
     if fetch:
         follow(cur, prev)
     else:
-        prev = prev or {}
-        cur["stacks"], cur["prs"] = dict(prev.get("stacks") or {}), dict(prev.get("prs") or {})
-        cur["review_requests"] = list(prev.get("review_requests") or [])
+        last = prev or {}
+        cur["stacks"], cur["prs"] = dict(last.get("stacks") or {}), dict(last.get("prs") or {})
+        cur["review_requests"] = list(last.get("review_requests") or [])
     return cur, lines + ([] if prev is None else diff(prev, cur))
 
 
