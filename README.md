@@ -102,7 +102,7 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 | the human, merge | `approved · yours to merge` (`human_merge_repos`), `approved · your go to merge` (athena merges once you say go) | Needs you |
 | nobody | `approved · in merge queue`, `approved · auto-merge on` | In progress |
 | the worker | `changes requested · worker fixing`; with no live worker, `changes requested` in Needs you | In progress |
-| the human, review | `your review requested` (a teammate's PR naming you, from one `gh search prs --review-requested=@me` per repo athena knows, every two minutes, at most 10) | Needs you |
+| the human, review | `your review requested` (a teammate's non-draft PR naming you, not just your team, from one `gh search prs user-review-requested:@me draft:false` per repo athena knows, every two minutes, at most 10) | Needs you |
 | CI | `checks failing`; in Needs you when no worker is live | In progress |
 | CI, before a merge | `checks running` while checks run, `checks starting` while none have registered yet: approved (or needing no review) | In progress |
 

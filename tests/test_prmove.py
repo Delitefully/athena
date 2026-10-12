@@ -228,11 +228,35 @@ class ReviewRequestedTest(unittest.TestCase):
             got = pr.review_requested(["acme/web", "acme/api", "not a slug"], cap=10)
         self.assertEqual(called.call_count, 2)
         argv = called.call_args_list[0].args[0]
-        self.assertEqual(argv[:5], ["gh", "search", "prs", "--review-requested=@me", "--state=open"])
+        self.assertEqual(argv[:6], ["gh", "search", "prs", "user-review-requested:@me", "draft:false", "--state=open"])
         self.assertEqual(len(got), 10)
         self.assertEqual(got[0], {"repo": "acme/web", "number": 1, "title": "acme/web change 1", "author": "kim",
                                   "url": "https://github.com/acme/web/pull/1"})
         self.assertEqual(got[-1]["repo"], "acme/api")
+
+    def test_only_a_non_draft_pr_requesting_the_human_by_name_becomes_a_row(self):
+        prs = [{"number": 1, "title": "team only", "draft": False, "users": [], "teams": ["devs"]},
+               {"number": 2, "title": "a draft", "draft": True, "users": ["me"], "teams": []},
+               {"number": 3, "title": "direct", "draft": False, "users": ["me"], "teams": ["devs"]}]
+
+        def search(argv, **kw):
+            # GitHub's search: review-requested matches the human or one of their teams (devs),
+            # user-review-requested only the human by name, and draft:false drops drafts.
+            hits = [p for p in prs if ("user-review-requested:@me" in argv and "me" in p["users"])
+                    or ("--review-requested=@me" in argv and ("me" in p["users"] or "devs" in p["teams"]))]
+            hits = [p for p in hits if not ("draft:false" in argv and p["draft"])]
+            items = [{"number": p["number"], "title": p["title"], "author": {"login": "kim"}, "isDraft": p["draft"]}
+                     for p in hits]
+            return mock.Mock(returncode=0, stdout=json.dumps(items), stderr="")
+        with mock.patch.object(pr.subprocess, "run", side_effect=search):
+            got = pr.review_requested(["acme/web"])
+        self.assertEqual([r["number"] for r in got], [3])
+
+    def test_a_draft_the_search_returns_anyway_is_dropped(self):
+        items = [{"number": 2, "title": "a draft", "author": {"login": "kim"}, "isDraft": True},
+                 {"number": 3, "title": "direct", "author": {"login": "kim"}}]
+        with mock.patch.object(pr.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=json.dumps(items), stderr="")):
+            self.assertEqual([r["number"] for r in pr.review_requested(["acme/web"])], [3])
 
     def test_a_failed_search_is_skipped(self):
         with mock.patch.object(pr.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="", stderr="x")):

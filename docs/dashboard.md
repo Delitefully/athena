@@ -31,7 +31,7 @@ The ledger and the worker files alone give all three groups: the ledger keeps re
 
 ### Python additions
 
-- `watch.py`: after each tick, write the snapshot to `watch.json` (temp file, then rename), with a `ts`. Each live worker's `gh pr view` also reads its review requests, latest reviews, auto-merge and merge-state; every two minutes one GraphQL call reads the stacked PRs and the retired workers' open ones together, and one `gh search prs --review-requested=@me` per repo finds the PRs asking the human for a review. `pr.move` turns each PR into whose move it waits on.
+- `watch.py`: after each tick, write the snapshot to `watch.json` (temp file, then rename), with a `ts`. Each live worker's `gh pr view` also reads its review requests, latest reviews, auto-merge and merge-state; every two minutes one GraphQL call reads the stacked PRs and the retired workers' open ones together, and one `gh search prs user-review-requested:@me draft:false` per repo finds the open, non-draft PRs asking the human by name for a review (a request to one of the human's teams does not count). `pr.move` turns each PR into whose move it waits on.
 - `retire.py`: before the `retire` ledger event, append to `history.jsonl` the worker's ticket, title, repo, branch, report status and PR. The PR comes from one `gh pr view` (`pr.summary`), else from `watch.json`, else from the report's `pr` url. HQ retires right after it merges, while `athena watch` polls every 20 s, so the snapshot alone would usually still say open.
 - `dash.py` and `athena dash on|off|show|open`, below.
 - `skills/athena/SKILL.md` section 6: HQ keeps `needs-you.md` current, one bullet per open decision, and removes a bullet once answered. PR approval asks are not written there.
