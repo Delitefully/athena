@@ -191,15 +191,19 @@ def cmd_retire(a):
     return 0
 
 
+def _migrate():
+    """An install from before config.json: write down the values it runs on and move its setup scripts, once."""
+    if not config.is_legacy():
+        return
+    target = config.write(init.starting_values())
+    moved = init.migrate_setups()
+    print(f"athena: wrote {target} from your current setup (athena config show)"
+          + "".join(f"; moved {m.name} to {m}" for m in moved), file=sys.stderr)
+
+
 def _first_run():
-    """No config.json yet. An older install gets today's values written as they are; a new user runs athena init."""
+    """No config.json yet: a new user runs athena init (an older install was migrated in main)."""
     if config.exists():
-        return None
-    if config.is_legacy():
-        target = config.write(init.starting_values())
-        moved = init.migrate_setups()
-        print(f"athena: wrote {target} from your current setup (athena config show)"
-              + "".join(f"; moved {m.name} to {m}" for m in moved), file=sys.stderr)
         return None
     if not sys.stdin.isatty():
         print("athena: no config yet: run `athena init` first", file=sys.stderr)
@@ -344,6 +348,10 @@ def main(argv=None):
             print(f"athena init: {exc}", file=sys.stderr)
             return 2
     args = p.parse_args(argv or ["hq"])  # a bare `athena` opens HQ
+    try:
+        _migrate()  # before any command, so a spawn finds the setup scripts the plugin no longer carries
+    except (config.ConfigError, OSError) as exc:
+        print(f"athena: could not write the config ({exc}); running on the current values", file=sys.stderr)
     if args.cmd == "spawn" and args.workflow_size and not args.ultracode:
         p.error("--workflow-size needs --ultracode")
     try:
