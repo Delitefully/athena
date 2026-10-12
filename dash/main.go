@@ -1,4 +1,5 @@
-// athena dash: a read-only page of athena's work on 127.0.0.1, built from the state files and updated live.
+// athena dash: a page of athena's work on 127.0.0.1, built from the state files and updated live. Its one write is
+// the human's answers to athena's asks, appended to actions.jsonl (actions.go).
 // `athena dash on|off|show|open` runs it; see docs/dashboard.md.
 package main
 

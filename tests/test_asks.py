@@ -61,7 +61,7 @@ class AsksTest(unittest.TestCase):
 
     def test_add_refuses_what_the_dashboard_cannot_show(self):
         for argv in (["add", "x?", "--option", "a", "--option", "b", "--option", "c"],
-                     ["add", "x?", "--option", "A label well past twenty"],
+                     ["add", "x?", "--option", "A label past sixteen"],
                      ["add", "x?", "--option", "Yes:check:merge"],
                      ["add", "x?", "--pr", "https://example.com/pull/1"],
                      ["add", "x?", "--why", "w" * 201],
@@ -76,10 +76,10 @@ class AsksTest(unittest.TestCase):
         self.assertIn("sparkles", err)
         self.assertNotIn("icon", asks.show("a1")["options"][0])
 
-    def test_icons_txt_matches_the_sprite_and_the_skill(self):
+    def test_icons_txt_matches_the_page_sprite_and_the_skill(self):
         names = asks.icons()
         self.assertEqual(len(names), 24)
-        sprite = (paths.PLUGIN_ROOT / "dash" / "static" / "icons.svg").read_text()
+        sprite = (paths.PLUGIN_ROOT / "dash" / "page.html").read_text()
         self.assertEqual(sprite.count("<symbol "), 24)
         skill = (paths.PLUGIN_ROOT / "skills" / "athena" / "SKILL.md").read_text()
         for n in names:

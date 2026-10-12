@@ -202,7 +202,7 @@ func TestParseAsksDropsWhatAthenaAskWouldRefuse(t *testing.T) {
 		{"id": "a1", "text": "Ship it?", "pr": "https://github.com/Acme/Web/pull/7", "options": [
 			{"id": "yes", "label": "Yes", "icon": "check"}, {"id": "no", "label": "No", "icon": "rm -rf", "do": "dismiss"},
 			{"id": "maybe", "label": "Maybe"}]},
-		{"id": "a2", "kind": "note", "text": "FYI", "options": [{"id": "x", "label": "A label far past twenty characters"}, {"id": "dismiss", "label": "Ok"}]},
+		{"id": "a2", "kind": "note", "text": "FYI", "options": [{"id": "x", "label": "A label past sixteen"}, {"id": "dismiss", "label": "Ok"}]},
 		{"id": "a1", "text": "a second a1"}, {"id": "Bad Id", "text": "t"}, {"id": "a3", "text": "  "}, "junk"]}`), &m)
 	got := parseAsks(m)
 	if len(got) != 2 {

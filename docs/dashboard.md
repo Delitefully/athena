@@ -22,7 +22,8 @@ All under `ATHENA_STATE_DIR` (`~/.local/state/athena/`):
 | `workers/<name>.json` | the worker's hooks | state (working, idle, blocked, done, exited), summary, `report` and `last_report` (status, pr, head, concerns) |
 | `watch.json` (new) | `athena watch` | the last snapshot: each live worker's merged state and PR (url, number, state, draft, checks, review, requested reviewers, latest reviews, auto-merge, merge queue, and whose move it is), every other PR athena follows (`prs`: stacked, or a retired worker's still open), and the teammates' PRs asking the human for a review (`review_requests`) |
 | `history.jsonl` (new) | `athena retire` | one line per retired worker with its PR as last known, so a merge is still known after retire |
-| `needs-you.md` (new) | athena HQ | decisions that belong to no worker: open questions. PR status is derived, never written here |
+| `needs-you.json` | `athena ask` | athena's asks that belong to no worker: `{next, items: [{id, kind, text, why, pr, options}]}`, at most 2 options each. PR status is derived, never asked here. An old `needs-you.md` is imported once and renamed `.migrated` |
+| `actions.jsonl` | this server, `athena ask done` | the human's answers from the page, append-only: `{seq, ts, item, option\|text\|discuss, status: queued}`, then `{seq, ts, status: done\|cancelled}` |
 | `dash.json` (optional) | the human | local settings: `{"linear_workspace": "..."}` for ticket links |
 
 The ledger and the worker files alone give all three groups: the ledger keeps retired workers with their ticket, title and retire time, and a worker's file outlives it with its last report, which carries the PR url. The new files only enrich: `watch.json` adds checks, review and draft for live PRs, and `history.jsonl` adds whether a retired worker's PR merged. Today's state has none of them, and the page still works on it.
@@ -34,7 +35,9 @@ The ledger and the worker files alone give all three groups: the ledger keeps re
 - `watch.py`: after each tick, write the snapshot to `watch.json` (temp file, then rename), with a `ts`. Each live worker's `gh pr view` also reads its review requests, latest reviews, auto-merge and merge-state; every two minutes one GraphQL call reads the stacked PRs and the retired workers' open ones together, and one `gh search prs user-review-requested:@me draft:false` per repo finds the open, non-draft PRs asking the human by name for a review (a request to one of the human's teams does not count). `pr.move` turns each PR into whose move it waits on.
 - `retire.py`: before the `retire` ledger event, append to `history.jsonl` the worker's ticket, title, repo, branch, report status and PR. The PR comes from one `gh pr view` (`pr.summary`), else from `watch.json`, else from the report's `pr` url. HQ retires right after it merges, while `athena watch` polls every 20 s, so the snapshot alone would usually still say open.
 - `dash.py` and `athena dash on|off|show|open`, below.
-- `skills/athena/SKILL.md` section 6: HQ keeps `needs-you.md` current, one bullet per open decision, and removes a bullet once answered. PR approval asks are not written there.
+- `asks.py` and `athena ask add|done|show|queue`: needs-you.json written atomically (temp file, then rename), and `actions.jsonl` read, marked done and compacted under `ask.lock`, which the server's appends hold too.
+- `watch.py`: between ticks it looks at `actions.jsonl` once a second (one stat while nothing changed) and prints `dash-queue <seq>` once answers settle: the doorbell HQ answers with `athena ask queue`.
+- `skills/athena/SKILL.md` section 6: HQ adds each open decision with `athena ask add` and acts on the queue. PR approval asks are not added.
 
 ### Data model
 
@@ -44,7 +47,7 @@ The server folds the files into one view, every second when something changed:
   - a live worker whose hook state is `blocked` (a permission prompt, or a `BLOCKED` or `NEEDS_CONTEXT` report; the label says which, and the report's first concern is the detail);
   - a live worker with `goal_pending` (a startup prompt only the human may answer);
   - a PR whose move is the human's: no reviewer requested where a review is required, approved and yours to merge (or your go), green with no review rule on its branch (`your go to merge`); a merge row only once checks are green, or the repo has no `.github/workflows` (asked once a day per repo); else `checks running` or `checks starting`, In progress, and a live worker reported DONE, changes requested or checks failing with no live worker, or a teammate's PR asking for your review;
-  - each bullet of `needs-you.md` that links no PR with a row, in athena's voice: `athena asks` when it has a `?` outside a URL, else `note`; a bare PR URL shows as `owner/repo#n`. A bullet that links a PR with a row shows under that row instead, muted, without that PR's URL.
+  - each ask of `needs-you.json` about no PR with a row, in athena's voice: `athena asks` for a question, else `note`, with its `why` in the detail line; a bare PR URL shows as `owner/repo#n`. An ask about a PR with a row (its `pr`, else a PR URL in its text) shows under that row instead, muted, without that PR's URL. An ask the human answered is hidden while the answer is queued, and shows again, saying so, after 10 minutes.
 - **In progress**: every other live worker, with its state, its last summary line, and its PR with checks and review; and every PR whose move is a teammate's, a merge queue's, auto-merge's, a worker's or CI's, labelled `who · what` (`awaiting review · alex`). Each PR athena follows has one row: a live worker's, a stacked one with no live owner, a retired worker's while still open.
 - **Done**: retired workers with a PR or a Linear ticket from the last 14 days, newest first, at most 12, and live workers whose PR is merged. Each shows when, the ticket link, the PR link and whether it merged.
 
@@ -77,13 +80,21 @@ Links are built from ids: a ticket `ABC-101` links to `https://linear.app/<works
 | The server crashes | `athena dash show` reports it off (the pid is gone or is not ours); `athena hq` or `athena dash on` starts it again. |
 | A panic or template error while rendering | The poll recovers and keeps the last good page on open tabs; the server keeps running. |
 
+### Quick actions
+
+An ask, and a live worker's row, offer pills on hover or focus (always on touch and narrow screens), in space the row reserves so nothing jumps: athena's options (at most 2, each label at most 16 characters so two fit beside the rest), **Discuss in Athena** and **Reply…** for a question (their icons alone beside options), × for a note with no options, and only Discuss and Reply for a worker. Each is a `POST /api/action` (`{item, option}`, `{item, text}` up to 2 KB, `{item, discuss: true}`, or `{seq, undo: true}`). The server answers only a request with the loopback Host, an `Origin` equal to the page's, `Content-Type: application/json` and the per-start token from the page's `<meta>`; it checks the page offers that answer, appends it to `actions.jsonl` (flock, fsync) and re-renders at once, so every open page hides the ask. The row collapses by height (160 ms, at once with reduced motion) under a 5-second Undo toast; an answer can be undone for 6 seconds, and only answers older than that reach the queue and the doorbell, so athena never acts on one the human took back. A push waits while the human presses, types a reply or watches a row collapse, so rapid triage never loses a click or a draft. Answers carry no URL or command, and the dash runs nothing: HQ reads them with `athena ask queue` when `athena watch` rings `dash-queue <seq>`, a line with no text of the human's, so a reply never enters a prompt. Pill icons are a sprite of 24 Lucide icons (ISC), named in `dash/icons.txt`; an unknown name shows none.
+
 ### Design
 
 The page follows `docs/brand.md`:
 
 - Linen ground and indigo ink in light; indigo night and lit linen in dark, from `prefers-color-scheme`. Muted labels in the muted pair.
+<<<<<<< HEAD
 - Only athena is red: the knot in the header, and the `needs-you.md` lines, which are athena speaking. Workers, states and PRs are ink. A state that needs you is a solid ink badge; routine states are muted outline marks, the same split as `watch.svg`.
 - Every row glyph fills the same 16 px square, at stroke 2, centred on its first line's cap height: an outline mark's stroke reaches the square's edge, a badge's disc is the square. A note that asks something has a question mark, any other note the thread's dash. `/glyphs` shows them all side by side, and `dash/testdata/glyph_audit.py` measures them.
+=======
+- Only athena is red: the knot in the header, and the asks, which are athena speaking. Workers, states and PRs are ink. A state that needs you is a solid ink badge; routine states are muted outline marks, the same split as `watch.svg`.
+>>>>>>> e9f833c (DASH-ACTIONS: the page's pills, Reply…, collapse with undo; docs; label cap 16 so two options fit)
 - Instrument Serif for the three group titles and their counts; Instrument Sans at 400 to 600 for everything else, with tabular figures. No monospace: a sha or branch is set in Sans.
 - Fonts are the official webfonts (woff2) from Instrument's repositories, embedded in the binary, with their OFL licences in `dash/static/`. Nothing loads from another host.
 - Three columns on a wide desk screen, one below the other on a narrow one. Rows are dense: ticket and title on one line, state, PR and time on the next, the summary muted and cut to one line.

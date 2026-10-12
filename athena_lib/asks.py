@@ -20,7 +20,7 @@ from athena_lib import paths
 
 SETTLE = 6  # seconds an answer can still be undone; the queue and the doorbell see only older ones (dash/actions.go)
 KEEP_DONE = 24 * 3600  # done and cancelled answers older than this are compacted away
-OPTIONS_MAX, LABEL_MAX, TEXT_MAX, WHY_MAX = 2, 20, 600, 200
+OPTIONS_MAX, LABEL_MAX, TEXT_MAX, WHY_MAX = 2, 16, 600, 200  # two 16-character labels fit the Needs column (dash/state.go)
 
 _ID = re.compile(r"^[a-z0-9-]{1,32}$")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")

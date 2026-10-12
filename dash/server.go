@@ -76,6 +76,7 @@ type Server struct {
 	hqPid           int
 	now             func() time.Time
 	token           string // what a POST to /api/action must carry: per start, in the page's <meta>
+	boot            string // per start, on the stylesheet's and script's URLs, so a new build is never served stale
 
 	refreshing sync.Mutex // one Refresh at a time: the poll and a POST both call it
 	mu         sync.Mutex
@@ -88,7 +89,7 @@ type Server struct {
 
 func NewServer(stateDir string, port int, linearWorkspace string) *Server {
 	s := &Server{store: NewStore(stateDir), port: port, linearWorkspace: linearWorkspace,
-		now: time.Now, token: newToken(), clients: map[chan []byte]struct{}{}, done: make(chan struct{})}
+		now: time.Now, token: newToken(), boot: strconv.FormatInt(time.Now().UnixNano(), 36), clients: map[chan []byte]struct{}{}, done: make(chan struct{})}
 	s.tmpl = templates(func() time.Time { return s.now() })
 	return s
 }
@@ -229,7 +230,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, view, _ := s.snapshot()
-	s.render(w, "page", map[string]any{"Title": view.Title, "Scheme": scheme(r), "View": view, "Token": s.token})
+	s.render(w, "page", map[string]any{"Title": view.Title, "Scheme": scheme(r), "View": view, "Token": s.token, "Boot": s.boot})
 }
 
 // glyphSheet: every row glyph with what it stands for, in the dash's order of urgency.

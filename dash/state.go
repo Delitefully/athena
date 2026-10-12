@@ -399,7 +399,7 @@ type Option struct {
 
 const (
 	optionsMax = 2
-	labelMax   = 20
+	labelMax   = 16 // two options this long, with Discuss and Reply, fit one line of the Needs column at 1480 px
 	askTextMax = 600
 	askWhyMax  = 200
 )

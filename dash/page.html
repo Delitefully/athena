@@ -9,7 +9,7 @@
 <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
 <link rel="preload" href="/static/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/static/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v={{.Boot}}">
 </head>
 <body>
 {{template "sprite"}}
@@ -19,7 +19,7 @@
 </header>
 <main>{{template "main" .View}}</main>
 <div class="toast" role="status" aria-live="polite" hidden><span class="toast-text"></span><button type="button" class="undo">Undo</button></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{.Boot}}"></script>
 </body>
 </html>{{end}}
 
@@ -122,9 +122,9 @@
 
 {{/* The pills: real buttons, shown on hover and focus (always on touch and narrow screens). app.js posts each to
      /api/action; data-hides marks an answer that hides its ask until athena takes it up. */}}
-{{define "actions"}}{{with .}}<div class="acts" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
+{{define "actions"}}{{with .}}<div class="acts{{if .Options}} options{{end}}" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
 {{- range .Options}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
 {{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" aria-label="Dismiss" title="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end}}
-{{- if .Discuss}}<button type="button" class="pill" data-discuss><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg>Discuss in Athena</button>{{end}}
-{{- if .Reply}}<button type="button" class="pill" data-reply><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg>Reply…</button>{{end -}}
+{{- if .Discuss}}<button type="button" class="pill" data-discuss title="Discuss in Athena"><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg><span class="lbl">Discuss in Athena</span></button>{{end}}
+{{- if .Reply}}<button type="button" class="pill" data-reply title="Reply…"><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg><span class="lbl">Reply…</span></button>{{end -}}
 </div>{{end}}{{end}}
