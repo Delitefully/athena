@@ -251,47 +251,6 @@ class MigrationTest(InitBase):
         self.assertIn("[platform, infrastructure]", asked[2])
         self.assertEqual(json.loads(config.config_file().read_text()), {"version": 1, **config.LEGACY})
 
-    def plugin_repo(self):
-        """A checkout of the plugin whose history had repos/web.setup, deleted since (as this upgrade deletes one)."""
-        root = Path(self.tmp.name) / "plugin"
-        (root / "repos").mkdir(parents=True)
-        git = ["/usr/bin/git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
-        subprocess.run(git[:3] + ["init", "-q"], check=True)
-        (root / "repos" / "web.setup").write_text("echo web setup\n")
-        (root / "repos" / "example.setup").write_text("echo example\n")
-        subprocess.run(git + ["add", "-A"], check=True)
-        subprocess.run(git + ["commit", "-qm", "setup"], check=True)
-        (root / "repos" / "web.setup").unlink()
-        subprocess.run(git + ["commit", "-qam", "move setup scripts to the config dir"], check=True)
-        return root
-
-    def test_setup_scripts_move_to_the_config_dir(self):
-        root = self.plugin_repo()
-        with mock.patch.object(paths, "PLUGIN_ROOT", root):
-            code, out, _ = self.init("--yes")
-        self.assertEqual(code, 0, out)
-        moved = config.config_dir() / "repos" / "web.setup"
-        self.assertEqual(moved.read_text(), "echo web setup\n")
-        self.assertFalse((config.config_dir() / "repos" / "example.setup").exists())
-        self.assertIn(f"moved setup script web.setup to {moved}", out)
-
-    def test_a_setup_script_still_in_the_plugin_is_copied(self):
-        root = Path(self.tmp.name) / "plugin"
-        (root / "repos").mkdir(parents=True)
-        (root / "repos" / "api.setup").write_text("echo api\n")
-        with mock.patch.object(paths, "PLUGIN_ROOT", root):
-            self.init("--yes")
-        self.assertEqual((config.config_dir() / "repos" / "api.setup").read_text(), "echo api\n")
-
-    def test_a_users_own_setup_script_is_never_overwritten(self):
-        root = self.plugin_repo()
-        mine = config.config_dir() / "repos" / "web.setup"
-        mine.parent.mkdir(parents=True)
-        mine.write_text("echo mine\n")
-        with mock.patch.object(paths, "PLUGIN_ROOT", root):
-            self.init("--yes")
-        self.assertEqual(mine.read_text(), "echo mine\n")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -192,13 +192,11 @@ def cmd_retire(a):
 
 
 def _migrate():
-    """An install from before config.json: write down the values it runs on and move its setup scripts, once."""
+    """An install from before config.json: write down the values it runs on, once."""
     if not config.is_legacy():
         return
     target = config.write(init.starting_values())
-    moved = init.migrate_setups()
-    print(f"athena: wrote {target} from your current setup (athena config show)"
-          + "".join(f"; moved {m.name} to {m}" for m in moved), file=sys.stderr)
+    print(f"athena: wrote {target} from your current setup (athena config show)", file=sys.stderr)
 
 
 def _first_run():
@@ -349,7 +347,7 @@ def main(argv=None):
             return 2
     args = p.parse_args(argv or ["hq"])  # a bare `athena` opens HQ
     try:
-        _migrate()  # before any command, so a spawn finds the setup scripts the plugin no longer carries
+        _migrate()  # before any command, so every command reads the same written-down values
     except (config.ConfigError, OSError) as exc:
         print(f"athena: could not write the config ({exc}); running on the current values", file=sys.stderr)
     if args.cmd == "spawn" and args.workflow_size and not args.ultracode:

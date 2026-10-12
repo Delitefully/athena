@@ -167,19 +167,14 @@ class FirstRunTest(unittest.TestCase):
         create = logged_calls(self.tmp.name)[0]
         self.assertEqual(create[create.index("--cwd") + 1], os.path.expanduser("~/Developer"))
 
-    def test_any_command_in_an_older_install_writes_the_config_and_moves_setup_scripts(self):
-        # A spawn may come before any `athena hq`: it must still find the setup script the plugin no longer carries.
+    def test_any_command_in_an_older_install_writes_the_config(self):
         (paths.ensure() / "ledger.jsonl").write_text("")
-        root = Path(self.tmp.name) / "plugin"
-        (root / "repos").mkdir(parents=True)
-        (root / "repos" / "web.setup").write_text("echo web\n")
         err = io.StringIO()
-        with mock.patch.object(paths, "PLUGIN_ROOT", root), redirect_stderr(err), redirect_stdout(io.StringIO()):
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(["status"]), 0)
         self.assertEqual(json.loads(config.config_file().read_text()), {"version": 1, **config.LEGACY})
-        self.assertEqual((config.config_dir() / "repos" / "web.setup").read_text(), "echo web\n")
-        self.assertIn("moved web.setup", err.getvalue())
-
+        self.assertIn("from your current setup", err.getvalue())
+        self.assertFalse((config.config_dir() / "repos").exists())  # the migration writes config values only
 
 if __name__ == "__main__":
     unittest.main()

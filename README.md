@@ -148,7 +148,7 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 - `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
 - `quota_file`: the herdr-agent-quota plugin's `claude-statusline.json`. With none, `athena spawn` does not gate on the 5-hour quota.
 - An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`, `ATHENA_QUOTA_FILE`. `ATHENA_CONFIG` points at another file.
-- Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt), with any `repos/*.setup` the plugin used to carry (from the plugin folder or its git history) moved next to it. Nothing changes.
+- Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
 
 ## Environment
 

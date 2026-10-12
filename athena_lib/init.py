@@ -220,37 +220,6 @@ def collect(values, flags, interactive, ask):
     return values
 
 
-def _deleted_setups(root):
-    """repos/<name>.setup files the plugin's git history deleted, newest first: {name: content}."""
-    code, out = _run(["git", "-C", str(root), "log", "--no-renames", "--diff-filter=D", "--name-only",
-                      "--format=@%H", "--", "repos"])
-    found, commit = {}, None
-    for line in (out.splitlines() if code == 0 else []):
-        if line.startswith("@"):
-            commit = line[1:]
-        elif line.endswith(".setup") and commit and Path(line).name not in found:
-            got = _run(["git", "-C", str(root), "show", f"{commit}^:{line}"])
-            if got[0] == 0:
-                found[Path(line).name] = got[1] + "\n"
-    return found
-
-
-def migrate_setups():
-    """Move the per-repo setup scripts an older install kept in the plugin into the user's config dir."""
-    dest = config.config_dir() / "repos"
-    scripts = {p.name: p.read_text() for p in sorted((paths.PLUGIN_ROOT / "repos").glob("*.setup"))}
-    for name, text in _deleted_setups(paths.PLUGIN_ROOT).items():
-        scripts.setdefault(name, text)
-    moved = []
-    for name, text in scripts.items():
-        if name == "example.setup" or (dest / name).exists():
-            continue
-        dest.mkdir(parents=True, exist_ok=True)
-        (dest / name).write_text(text)
-        moved.append(dest / name)
-    return moved
-
-
 def parser():
     p = argparse.ArgumentParser(prog="athena init", description="Check what athena needs and write its config.")
     p.add_argument("--yes", "-y", action="store_true", help="ask nothing: flags, else the current config, else defaults")
@@ -296,9 +265,6 @@ def main(argv=None, ask=input) -> int:
     if projects and not projects.exists():
         projects.mkdir(parents=True)
         print(f"created {projects}")
-    if legacy:
-        for moved in migrate_setups():
-            print(f"moved setup script {moved.name} to {moved}")
     failed = [c["name"] for c in found if c["mark"] == FAIL and c["name"] in REQUIRED]
     if failed:
         print(f"athena cannot start until these are fixed: {', '.join(failed)}")
