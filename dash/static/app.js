@@ -143,11 +143,10 @@ undo.addEventListener("click", () => {
   const { seq, item } = last;
   last = null;
   undo.disabled = true;
+  // Before the POST: the server pushes the restored row before it replies, and a page must not hide it again.
+  answered.delete(item);
   post({ seq, undo: true })
-    .then(() => {
-      answered.delete(item);
-      say("Undone", false);
-    })
+    .then(() => say("Undone", false))
     .catch((err) => say(err.message === "too late to undo" ? "Too late: athena has it" : "Not undone: " + err.message, false));
 });
 
