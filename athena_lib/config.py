@@ -1,11 +1,13 @@
 """The user's settings: config.json in athena's state dir, written by `athena init`.
 
 Each key resolves in this order: its environment variable, the file, then a default. A state dir from before
-config.json (it has a ledger or hq.json but no config) resolves to LEGACY, the values that install used, until
-`athena init` writes them down.
+config.json (it has a ledger or hq.json but no config) resolves to LEGACY, the values that install used (the merge
+lists from its repo map's merge policy, when it has one), until the first athena command writes them down. From then
+on config.json is the single source for the merge rules.
 """
 import json
 import os
+import re
 from pathlib import Path
 
 from athena_lib import paths
@@ -67,6 +69,25 @@ def is_legacy() -> bool:
     return not exists() and ((state / "ledger.jsonl").exists() or (state / "hq.json").exists())
 
 
+# repo-map.md's "# Merge policy" lines, where an install from before config.json kept its merge rules.
+MERGE_POLICY = {"human_merge_repos": "human-merged", "reapproval_repos": "re-approval after push"}
+
+
+def legacy_values() -> dict:
+    """LEGACY, with the merge lists from the repo map's merge policy where it has them."""
+    values = dict(LEGACY)
+    try:
+        text = (paths.state_dir() / "repo-map.md").read_text()
+    except OSError:
+        return values
+    for key, label in MERGE_POLICY.items():
+        found = re.search(rf"^\s*[-*]?\s*{re.escape(label)}\s*:(.*)$", text, re.I | re.M)
+        if found:
+            names = [Path(n.strip("`'\" ")).name for n in re.split(r"[,\s]+", found.group(1)) if n.strip("`'\" ")]
+            values[key] = [n for n in names if n.lower() != "none"]
+    return values
+
+
 def _read() -> dict:
     path = config_file()
     try:
@@ -83,7 +104,7 @@ def _read() -> dict:
 def load() -> dict:
     """The file's values over the defaults (LEGACY for an install from before config.json), without env overrides."""
     if is_legacy():
-        return dict(LEGACY)
+        return legacy_values()
     data = _read()
     return {k: data.get(k, v) for k, v in DEFAULTS.items()}
 

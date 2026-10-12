@@ -129,6 +129,18 @@ class LegacyTest(unittest.TestCase):
         self.assertFalse(config.listed("reapproval_repos", "/x/infrastructure"))
         self.assertEqual(config.source("projects_dir"), "migrated (no config.json yet)")
 
+    def test_the_repo_maps_merge_policy_is_migrated(self):
+        (paths.state_dir() / "repo-map.md").write_text(
+            "# Repos\n- ABC: ~/src/web\n\n# Merge policy\n- human-merged: `web`, api\n"
+            "- re-approval after push: web\n")
+        cfg = config.load()
+        self.assertEqual((cfg["human_merge_repos"], cfg["reapproval_repos"]), (["web", "api"], ["web"]))
+        self.assertEqual(cfg["projects_dir"], "~/Developer")
+
+    def test_a_repo_map_without_a_merge_policy_keeps_the_legacy_lists(self):
+        (paths.state_dir() / "repo-map.md").write_text("# Repos\n- ABC: ~/src/web\n")
+        self.assertEqual(config.load(), config.LEGACY)
+
     def test_a_written_config_wins_over_the_legacy_values(self):
         config.write({**config.DEFAULTS, "projects_dir": "~/code"})
         self.assertFalse(config.is_legacy())
