@@ -41,4 +41,9 @@ When the goal is met, or you are blocked, do both:
 ATHENA-REPORT {"status":"DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED","pr":"<url or empty>","head":"<commit sha>","verify":"<command> -> pass|fail","decisions":["..."],"concerns":["..."]}
 ```
 
+Each `decisions` and `concerns` entry is one short line, about 80 characters or fewer: name the decision or the concern, not its justification. The reasons go in the PR body or the SendMessage, never in the report line. Longer entries are cut with an ellipsis when drawn.
+
+- Good: `"decisions":["Stacked PR 2 on PR 1's branch"]`, `"concerns":["CI not run on the rebased head"]`
+- Bad: `"decisions":["I decided to stack PR 2 on PR 1's branch because PR 1 has not merged yet and the onboarding worker also touches README, so basing on main would conflict"]`
+
 Use `DONE_WITH_CONCERNS` when the goal is met but something deserves a human look. After review fixes, report again with the new head commit.
