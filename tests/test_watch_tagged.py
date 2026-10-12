@@ -10,47 +10,47 @@ from tests import helpers
 from athena_lib import ledger, paths, watch
 
 WAKE = [
-    "plt-1 report DONE",
-    "plt-1 report DONE_WITH_CONCERNS",
-    "plt-1 report BLOCKED",
-    "plt-1 report NEEDS_CONTEXT",
-    "plt-1 state working->blocked",
-    "plt-1 state idle->blocked (startup prompt)",
-    "plt-1 state working->exited",
-    "plt-1 pr opened https://github.com/o/r/pull/7",
-    "plt-1 pr merged",
-    "plt-1 pr closed",
-    "plt-1 checks pending->failure",
-    "plt-1 review CHANGES_REQUESTED",
-    "plt-1 review APPROVED",
-    "plt-1 review comments +2",
-    "platform main moved 1a2b3c4..4d5e6f7",
-    "stack o/platform#5844: OPEN base=a MERGEABLE -> MERGED base=a UNKNOWN",
-    "stack o/platform#5856: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING",
-    "plt-1 gone from the ledger",
-    "plt-1 new worker (blocked, startup prompt)",
-    "plt-1 new worker (exited)",
-    "plt-1 goal not sent: herdr has no pane w9:p1",
-    "plt-1 goal unconfirmed (timeout): check its pane, do not resend blindly",
+    "abc-1 report DONE",
+    "abc-1 report DONE_WITH_CONCERNS",
+    "abc-1 report BLOCKED",
+    "abc-1 report NEEDS_CONTEXT",
+    "abc-1 state working->blocked",
+    "abc-1 state idle->blocked (startup prompt)",
+    "abc-1 state working->exited",
+    "abc-1 pr opened https://github.com/o/r/pull/7",
+    "abc-1 pr merged",
+    "abc-1 pr closed",
+    "abc-1 checks pending->failure",
+    "abc-1 review CHANGES_REQUESTED",
+    "abc-1 review APPROVED",
+    "abc-1 review comments +2",
+    "web main moved 1a2b3c4..4d5e6f7",
+    "stack o/web#41: OPEN base=a MERGEABLE -> MERGED base=a UNKNOWN",
+    "stack o/web#42: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING",
+    "abc-1 gone from the ledger",
+    "abc-1 new worker (blocked, startup prompt)",
+    "abc-1 new worker (exited)",
+    "abc-1 goal not sent: herdr has no pane w9:p1",
+    "abc-1 goal unconfirmed (timeout): check its pane, do not resend blindly",
     "watch error: gh: rate limited",
 ]
 
 ROUTINE = [
-    "watching: plt-1=working, plt-2=idle",
+    "watching: abc-1=working, abc-2=idle",
     "watching: no live workers",
-    "plt-1 state working->idle",
-    "plt-1 state idle->working",
-    "plt-1 state done->idle",
-    "plt-1 state working->done",
-    "plt-1 state starting->working",
-    "plt-1 checks none->pending",
-    "plt-1 checks pending->success",
-    "plt-1 review REVIEW_REQUIRED",
-    "plt-1 new worker (working)",
-    "plt-1 new worker (starting)",
-    "plt-1 goal sent",
-    "stack o/platform#5844: OPEN base=a MERGEABLE -> OPEN base=b MERGEABLE",
-    "stack o/platform#5844: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE",
+    "abc-1 state working->idle",
+    "abc-1 state idle->working",
+    "abc-1 state done->idle",
+    "abc-1 state working->done",
+    "abc-1 state starting->working",
+    "abc-1 checks none->pending",
+    "abc-1 checks pending->success",
+    "abc-1 review REVIEW_REQUIRED",
+    "abc-1 new worker (working)",
+    "abc-1 new worker (starting)",
+    "abc-1 goal sent",
+    "stack o/web#41: OPEN base=a MERGEABLE -> OPEN base=b MERGEABLE",
+    "stack o/web#41: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE",
 ]
 
 
@@ -66,12 +66,12 @@ class ClassifyTest(unittest.TestCase):
                 self.assertEqual(watch.classify(line), "status")
 
     def test_gone_after_retire_is_routine(self):
-        self.assertEqual(watch.classify("plt-1 gone from the ledger", retired={"plt-1"}), "status")
-        self.assertEqual(watch.classify("plt-1 gone from the ledger", retired={"plt-2"}), "wake")
+        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-1"}), "status")
+        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-2"}), "wake")
 
     def test_unknown_lines_wake(self):
         # Something athena watch learns to say later should reach HQ, not vanish into the status line.
-        self.assertEqual(watch.classify("plt-1 something new happened"), "wake")
+        self.assertEqual(watch.classify("abc-1 something new happened"), "wake")
 
 
 def _w(state, pr=None, report=None):
@@ -88,16 +88,16 @@ class SummaryTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_grouped_needs_you_then_working_then_done(self):
-        snap = {"workers": {"pr6519": _w("working"), "plt-4041": _w("done"), "plt-9": _w("blocked"),
-                            "plt-4042": _w("idle", report={"status": "DONE"}), "plt-7": _w("idle"),
-                            "plt-8": _w("working", report=None), "plt-6": _w("idle", report={"status": "NEEDS_CONTEXT"}),
-                            "plt-5": _w("exited")}}
+        snap = {"workers": {"pr47": _w("working"), "abc-101": _w("done"), "abc-9": _w("blocked"),
+                            "abc-102": _w("idle", report={"status": "DONE"}), "abc-7": _w("idle"),
+                            "abc-8": _w("working", report=None), "abc-6": _w("idle", report={"status": "NEEDS_CONTEXT"}),
+                            "abc-5": _w("exited")}}
         b = watch.board(snap)
-        self.assertEqual(b["needs"], ["plt-6 needs context", "plt-9 blocked", "plt-5 exited"])
-        self.assertEqual(b["active"], [["working", ["plt-8", "pr6519"]], ["idle", ["plt-7"]]])
-        self.assertEqual(b["done"], ["plt-4041", "plt-4042"])
-        self.assertEqual(watch.summary(snap), "plt-6 needs context · plt-9 blocked · plt-5 exited · "
-                                              "plt-8, pr6519 working · plt-7 idle · plt-4041, plt-4042 done")
+        self.assertEqual(b["needs"], ["abc-6 needs context", "abc-9 blocked", "abc-5 exited"])
+        self.assertEqual(b["active"], [["working", ["abc-8", "pr47"]], ["idle", ["abc-7"]]])
+        self.assertEqual(b["done"], ["abc-101", "abc-102"])
+        self.assertEqual(watch.summary(snap), "abc-6 needs context · abc-9 blocked · abc-5 exited · "
+                                              "abc-8, pr47 working · abc-7 idle · abc-101, abc-102 done")
 
     def test_a_blocked_report_is_blocked_whatever_the_hook_state(self):
         b = watch.board({"workers": {"a": _w("idle", report={"status": "BLOCKED"})}})
@@ -125,15 +125,15 @@ class SummaryTest(unittest.TestCase):
     def test_prs_named_in_needs_you_and_one_pr_counted_once(self):
         paths.ensure()
         (paths.state_dir() / "needs-you.md").write_text(
-            "- Approve and merge platform #6547: https://github.com/o/platform/pull/6547\n"
-            "- Approve and merge #6552: https://github.com/o/platform/pull/6552.\n"
+            "- Approve and merge web #43: https://github.com/o/web/pull/43\n"
+            "- Approve and merge #45: https://github.com/o/web/pull/45.\n"
             "- File a ticket? nothing to merge\n")
-        snap = {"workers": {"plt-4041": _w("idle", {"state": "OPEN", "draft": False, "review": "",
-                                                    "url": "https://github.com/o/platform/pull/6552"},
+        snap = {"workers": {"abc-101": _w("idle", {"state": "OPEN", "draft": False, "review": "",
+                                                    "url": "https://github.com/o/web/pull/45"},
                                            report={"status": "DONE"})},
-                "stacks": {"o/platform#5856": "OPEN base=main MERGEABLE", "o/platform#6552": "OPEN base=main MERGEABLE"}}
-        self.assertEqual(watch.board(snap)["prs"], ["#5856", "#6547", "#6552"])
-        self.assertEqual(watch.summary(snap), "3 PRs need you · plt-4041 done")
+                "stacks": {"o/web#42": "OPEN base=main MERGEABLE", "o/web#45": "OPEN base=main MERGEABLE"}}
+        self.assertEqual(watch.board(snap)["prs"], ["#42", "#43", "#45"])
+        self.assertEqual(watch.summary(snap), "3 PRs need you · abc-101 done")
 
 
 class BoardLinksTest(unittest.TestCase):
@@ -154,10 +154,10 @@ class BoardLinksTest(unittest.TestCase):
         snap = {"workers": {"a": {**_w("idle", pr(12)), "slug": "Delitefully/athena"},
                             "b": {**_w("idle", pr(13)), "slug": None},
                             "c": _w("working")},
-                "stacks": {"o/stack#5856": "OPEN base=main MERGEABLE"}}
+                "stacks": {"o/stack#42": "OPEN base=main MERGEABLE"}}
         b = watch.board(snap, notes="")
-        self.assertEqual(b["prs"], ["#12", "#13", "#5856"])
-        self.assertEqual(b["links"], {"12": "Delitefully/athena", "5856": "o/stack"})
+        self.assertEqual(b["prs"], ["#12", "#13", "#42"])
+        self.assertEqual(b["links"], {"12": "Delitefully/athena", "42": "o/stack"})
         self.assertEqual(b["repos"], {"a": "Delitefully/athena"})
         self.assertNotIn("dash", b)
 
@@ -226,12 +226,12 @@ class StackTest(unittest.TestCase):
 
     def test_stack_file_round_trip(self):
         self.assertEqual(watch.stacks(), [])
-        watch.set_stack("o/platform", [5844, 5856])
+        watch.set_stack("o/web", [41, 42])
         watch.set_stack("o/other", [12])
-        watch.set_stack("o/platform", [5856, 5858])
-        self.assertEqual(watch.stacks(), [{"repo": "o/platform", "prs": [5856, 5858]}, {"repo": "o/other", "prs": [12]}])
+        watch.set_stack("o/web", [42, 44])
+        self.assertEqual(watch.stacks(), [{"repo": "o/web", "prs": [42, 44]}, {"repo": "o/other", "prs": [12]}])
         self.assertEqual(json.loads((paths.state_dir() / "stack.json").read_text())["stacks"][1]["repo"], "o/other")
-        watch.set_stack("o/platform", [])
+        watch.set_stack("o/web", [])
         self.assertEqual(watch.stacks(), [{"repo": "o/other", "prs": [12]}])
         self.assertEqual([p.name for p in paths.state_dir().iterdir() if p.name.startswith("stack")], ["stack.json"])
 
@@ -250,17 +250,17 @@ class StackTest(unittest.TestCase):
         return mock.patch.object(watch.subprocess, "run", side_effect=run)
 
     def test_stack_snapshot_reads_gh_and_skips_unknown(self):
-        watch.set_stack("o/platform", [1, 2, 3])
+        watch.set_stack("o/web", [1, 2, 3])
         answers = {"1": {"state": "OPEN", "baseRefName": "main", "mergeable": "MERGEABLE"},
                    "2": {"state": "OPEN", "baseRefName": "b1", "mergeable": "UNKNOWN"},
                    "3": {"state": "OPEN", "baseRefName": "main", "mergeable": "CONFLICTING", "isDraft": True}}
         with self._gh(answers) as run:
-            snap = watch.stack_snapshot({"o/platform#2": "OPEN base=b1 MERGEABLE"})
-        self.assertEqual(snap, {"o/platform#1": "OPEN base=main MERGEABLE", "o/platform#2": "OPEN base=b1 MERGEABLE",
-                                "o/platform#3": "OPEN base=main DRAFT CONFLICTING"})
-        self.assertEqual(watch.classify("stack o/platform#3: OPEN base=main DRAFT MERGEABLE -> OPEN base=main DRAFT CONFLICTING"),
+            snap = watch.stack_snapshot({"o/web#2": "OPEN base=b1 MERGEABLE"})
+        self.assertEqual(snap, {"o/web#1": "OPEN base=main MERGEABLE", "o/web#2": "OPEN base=b1 MERGEABLE",
+                                "o/web#3": "OPEN base=main DRAFT CONFLICTING"})
+        self.assertEqual(watch.classify("stack o/web#3: OPEN base=main DRAFT MERGEABLE -> OPEN base=main DRAFT CONFLICTING"),
                          "wake")
-        self.assertEqual(run.call_args_list[0].args[0][:6], ["gh", "pr", "view", "1", "--repo", "o/platform"])
+        self.assertEqual(run.call_args_list[0].args[0][:6], ["gh", "pr", "view", "1", "--repo", "o/web"])
 
     def test_stack_lines_in_diff(self):
         prev = {"workers": {}, "mains": {}, "stacks": {"o/p#1": "OPEN base=main MERGEABLE", "o/p#2": "OPEN base=b1 MERGEABLE"}}
@@ -357,13 +357,13 @@ class StackCliTest(unittest.TestCase):
     def test_set_show_clear(self):
         from athena_lib import cli
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(cli.main(["stack", "set", "o/platform", "5844", "5856"]), 0)
+            self.assertEqual(cli.main(["stack", "set", "o/web", "41", "42"]), 0)
         out = io.StringIO()
         with redirect_stdout(out):
             cli.main(["stack"])
-        self.assertEqual(json.loads(out.getvalue()), [{"repo": "o/platform", "prs": [5844, 5856]}])
+        self.assertEqual(json.loads(out.getvalue()), [{"repo": "o/web", "prs": [41, 42]}])
         with redirect_stdout(io.StringIO()):
-            cli.main(["stack", "clear", "o/platform"])
+            cli.main(["stack", "clear", "o/web"])
         self.assertEqual(watch.stacks(), [])
 
     def test_watch_takes_tagged(self):

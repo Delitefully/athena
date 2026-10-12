@@ -1,14 +1,14 @@
 # Decisions
 
-Taken on 2026-10-07 from the Chief of Staff Blueprint (https://claude.ai/artifact/TN2e6btFJV9uY4TGk1UZth). The user accepted every recommended option.
+Taken on 2026-10-07 from the Chief of Staff Blueprint (private). The user accepted every recommended option.
 
 | Id | Question | Decision |
 |---|---|---|
 | D1 | Board layout | The chief of staff's pane stays pinned left; worker attach columns are added beside it in the same tab with `pane split`, never with `layout.apply`. |
 | D2 | Who starts a worker's Claude | `athena spawn` starts it with `--name`, the worker brief and per-worker `--settings`. auto-claude skips any space whose cwd has a claim file. |
-| D3 | Worktree location | `~/Developer/.worktrees/<repo>/<slug>` everywhere; herdr's `[worktrees] directory` matches. Sunlite keeps its own scheme. |
+| D3 | Worktree location | `~/Developer/.worktrees/<repo>/<slug>` everywhere; herdr's `[worktrees] directory` matches. |
 | D4 | Worker git authority | Commit, push its own branch, open a draft PR. Never merge, never push to main. No force-push, except `--force-with-lease` on its own branch after a rebase the chief of staff asked for. |
-| D5 | Who merges | platform and infrastructure: the user. Other repos: the chief of staff after the user's explicit go, pinned with `--match-head-commit`. |
+| D5 | Who merges | Repos the repo map marks as human-merged: the user. Other repos: the chief of staff after the user's explicit go, pinned with `--match-head-commit`. |
 | D6 | Launch confirmation | Show a launch card and launch, unless the brief has gaps. |
 | D7 | Default models | Workers Opus at high effort; reviewers a fresh Opus; Fable for hard design consults. |
 | D8 | Concurrency | 4 live workers by default, 6 at most (`--force`); no new launch above 85% of the 5-hour quota (`--ignore-quota` overrides, only when the human says so). |

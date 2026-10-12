@@ -49,7 +49,7 @@ def ensure(sub: str = "") -> Path:
 
 
 def slug(branch: str) -> str:
-    """`gabriel/plt-4512-SSO Fix` -> `plt-4512-sso-fix`: drop the first path segment when there are several."""
+    """`you/abc-112-SSO Fix` -> `abc-112-sso-fix`: drop the first path segment when there are several."""
     parts = branch.split("/")
     tail = "-".join(parts[1:]) if len(parts) > 1 else parts[0]
     return re.sub(r"[^a-z0-9]+", "-", tail.lower()).strip("-")

@@ -38,8 +38,8 @@ PERMISSION = """❯ /exit
    2. No, and tell Claude what to do differently (esc)
 """
 EXITED = DIALOG + """Resume this session with:
-claude --resume 3e29d369-c9ad-4aad-b983-7c6e4ec01c63
-gabriel-mbp-dev:.athena-lab-sandbox gabriel$
+claude --resume 00000000-0000-4000-8000-000000000001
+host:sandbox user$
 """
 
 
@@ -48,12 +48,12 @@ class RetireTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name)
-        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1"
-        git(self.repo, "worktree", "add", "-q", "-b", "gabriel/plt-1", str(self.wt), "main")
-        ledger.append("spawn", "plt-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="gabriel/plt-1",
+        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1"
+        git(self.repo, "worktree", "add", "-q", "-b", "you/abc-1", str(self.wt), "main")
+        ledger.append("spawn", "abc-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="you/abc-1",
                       workspace="w5", pane="w5:p1", terminal="term_1")
         self.owned = [
-            {"match": ["agent", "get", "plt-1"], "stdout": {"result": {"agent": {"name": "plt-1"}}}},
+            {"match": ["agent", "get", "abc-1"], "stdout": {"result": {"agent": {"name": "abc-1"}}}},
             {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(self.wt)}}}}},
         ]
         write_scenario(self.tmp.name, self.owned)
@@ -68,15 +68,15 @@ class RetireTest(unittest.TestCase):
         git(self.wt, "add", "a.txt")
         git(self.wt, "commit", "-q", "-m", "a")
         with self.assertRaises(retire.RetireError) as ctx:
-            retire.retire("plt-1")
+            retire.retire("abc-1")
         self.assertIn("1 unpushed commit", str(ctx.exception))
-        self.assertEqual(ledger.workers()["plt-1"]["state"], "live")
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "live")
         self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["worktree", "remove"]], [])
 
     def test_retire_refuses_dirty(self):
         (self.wt / "b.txt").write_text("b\n")
         with self.assertRaises(retire.RetireError) as ctx:
-            retire.retire("plt-1")
+            retire.retire("abc-1")
         self.assertIn("uncommitted", str(ctx.exception))
 
     def test_retire_writes_backup_ref_first(self):
@@ -85,30 +85,30 @@ class RetireTest(unittest.TestCase):
         git(self.wt, "commit", "-q", "-m", "a")
         head = git(self.wt, "rev-parse", "HEAD")
         with self.assertRaises(retire.RetireError):
-            retire.retire("plt-1")
-        refs = git(self.repo, "for-each-ref", "--format=%(objectname)", "refs/athena-backup/plt-1/")
+            retire.retire("abc-1")
+        refs = git(self.repo, "for-each-ref", "--format=%(objectname)", "refs/athena-backup/abc-1/")
         self.assertEqual(refs.splitlines(), [head])
 
     def test_retire_clean_pushed(self):
         (self.wt / "a.txt").write_text("a\n")
         git(self.wt, "add", "a.txt")
         git(self.wt, "commit", "-q", "-m", "a")
-        git(self.wt, "push", "-q", "-u", "origin", "gabriel/plt-1")
-        result = retire.retire("plt-1")
+        git(self.wt, "push", "-q", "-u", "origin", "you/abc-1")
+        result = retire.retire("abc-1")
         calls = logged_calls(self.tmp.name)
-        self.assertIn(["agent", "prompt", "plt-1", "/exit"], calls)
+        self.assertIn(["agent", "prompt", "abc-1", "/exit"], calls)
         self.assertIn(["worktree", "remove", "--workspace", "w5"], calls)
-        self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
-        self.assertTrue(result["backup"].startswith("refs/athena-backup/plt-1/"))
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "retired")
+        self.assertTrue(result["backup"].startswith("refs/athena-backup/abc-1/"))
 
     def test_retire_force_passes_force(self):
         (self.wt / "b.txt").write_text("b\n")
-        retire.retire("plt-1", force=True)
+        retire.retire("abc-1", force=True)
         self.assertIn(["worktree", "remove", "--workspace", "w5", "--force"], logged_calls(self.tmp.name))
 
     def test_retire_force_backs_up_uncommitted(self):
         (self.wt / "README.md").write_text("changed\n")
-        result = retire.retire("plt-1", force=True)
+        result = retire.retire("abc-1", force=True)
         self.assertTrue(result["wip_backup"].endswith("-wip"))
         self.assertIn("changed", git(self.repo, "show", result["wip_backup"] + ":README.md"))
 
@@ -116,27 +116,27 @@ class RetireTest(unittest.TestCase):
         (self.wt / "a.txt").write_text("a\n")
         git(self.wt, "add", "a.txt")
         git(self.wt, "commit", "-q", "-m", "a")
-        git(self.wt, "push", "-q", "-u", "origin", "gabriel/plt-1")
-        # After a herdr restart, w5 is someone else's space and plt-1 is not a herdr agent.
+        git(self.wt, "push", "-q", "-u", "origin", "you/abc-1")
+        # After a herdr restart, w5 is someone else's space and abc-1 is not a herdr agent.
         write_scenario(self.tmp.name, [
             {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
-            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": "/Users/x/other"}}}}},
+            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": "/home/x/other"}}}}},
         ])
-        result = retire.retire("plt-1")
+        result = retire.retire("abc-1")
         calls = logged_calls(self.tmp.name)
         self.assertEqual([c for c in calls if c[:2] in (["agent", "prompt"], ["worktree", "remove"])], [])
         self.assertTrue(result["removed"])
         self.assertFalse(self.wt.exists())
 
     def gone_after(self, n):
-        """agent get finds plt-1 for the first n calls, then herdr reports no such agent."""
-        return [{"match": ["agent", "get", "plt-1"], "stdout": {"result": {"agent": {"name": "plt-1"}}}, "times": n},
-                {"match": ["agent", "get", "plt-1"], "stdout": "",
+        """agent get finds abc-1 for the first n calls, then herdr reports no such agent."""
+        return [{"match": ["agent", "get", "abc-1"], "stdout": {"result": {"agent": {"name": "abc-1"}}}, "times": n},
+                {"match": ["agent", "get", "abc-1"], "stdout": "",
                  "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1}] + self.owned[1:]
 
     def test_retire_exit_submitted_by_the_prompt_sends_nothing_more(self):
         write_scenario(self.tmp.name, self.gone_after(1))
-        retire.retire("plt-1")
+        retire.retire("abc-1")
         verbs = [c[:2] for c in logged_calls(self.tmp.name)]
         self.assertIn(["agent", "prompt"], verbs)
         self.assertNotIn(["agent", "send-keys"], verbs)
@@ -144,16 +144,16 @@ class RetireTest(unittest.TestCase):
 
     def test_retire_sends_enter_when_exit_sits_in_the_menu(self):
         # /exit typed but not submitted: the agent is still there after the prompt, gone after one more Enter.
-        write_scenario(self.tmp.name, [{"match": ["agent", "read", "plt-1"], "stdout": MENU}] + self.gone_after(2))
-        retire.retire("plt-1")
+        write_scenario(self.tmp.name, [{"match": ["agent", "read", "abc-1"], "stdout": MENU}] + self.gone_after(2))
+        retire.retire("abc-1")
         calls = logged_calls(self.tmp.name)
-        self.assertIn(["agent", "send-keys", "plt-1", "enter"], calls)
+        self.assertIn(["agent", "send-keys", "abc-1", "enter"], calls)
         self.assertNotIn(["pane", "close"], [c[:2] for c in calls])
         self.assertLess([c[:2] for c in calls].index(["agent", "send-keys"]),
                         [c[:2] for c in calls].index(["worktree", "remove"]))
 
     def test_retire_closes_its_pane_when_claude_will_not_exit(self):
-        retire.retire("plt-1")
+        retire.retire("abc-1")
         calls = logged_calls(self.tmp.name)
         verbs = [c[:2] for c in calls]
         self.assertIn(["pane", "close", "w5:p1"], calls)
@@ -162,8 +162,8 @@ class RetireTest(unittest.TestCase):
     def test_retire_refuses_when_claude_will_not_exit_and_pane_is_not_ours(self):
         write_scenario(self.tmp.name, [self.owned[0]])
         with self.assertRaises(retire.RetireError):
-            retire.retire("plt-1")
-        self.assertEqual(ledger.workers()["plt-1"]["state"], "live")
+            retire.retire("abc-1")
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "live")
         self.assertNotIn(["worktree", "remove"], [c[:2] for c in logged_calls(self.tmp.name)])
 
     def test_retire_orphaned_checkout_needs_force_then_deletes_it(self):
@@ -171,14 +171,14 @@ class RetireTest(unittest.TestCase):
         self.wt.mkdir(parents=True)
         (self.wt / "leftover.txt").write_text("x\n")
         with self.assertRaises(retire.RetireError) as ctx:
-            retire.retire("plt-1")
+            retire.retire("abc-1")
         self.assertIn("no longer a git worktree", str(ctx.exception))
         self.assertTrue(self.wt.exists())
-        result = retire.retire("plt-1", force=True)
+        result = retire.retire("abc-1", force=True)
         self.assertTrue(result["removed"])
         self.assertFalse(self.wt.exists())
         self.assertIn(["workspace", "close", "w5"], logged_calls(self.tmp.name))
-        self.assertEqual(ledger.workers()["plt-1"]["state"], "retired")
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "retired")
 
     def test_retire_unknown(self):
         with self.assertRaises(retire.RetireError):
@@ -249,7 +249,7 @@ class CliTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_cli_status_json(self):
-        ledger.append("spawn", "a", pane="w2:p1", branch="gabriel/a")
+        ledger.append("spawn", "a", pane="w2:p1", branch="you/a")
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_status": "idle"}}}}])
         out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "status", "--json"], capture_output=True, text=True,
                              env=dict(os.environ))
@@ -265,11 +265,11 @@ class CliTest(unittest.TestCase):
 
     def test_cli_nudge_submits_a_bare_slash_command(self):
         from athena_lib import cli
-        ledger.append("spawn", "plt-9", pane="w9:p1")
-        cli.main(["nudge", "plt-9", "/exit"])
-        cli.main(["nudge", "plt-9", "/goal", "clear"])
+        ledger.append("spawn", "abc-9", pane="w9:p1")
+        cli.main(["nudge", "abc-9", "/exit"])
+        cli.main(["nudge", "abc-9", "/goal", "clear"])
         calls = logged_calls(self.tmp.name)
-        self.assertEqual(calls.count(["agent", "send-keys", "plt-9", "enter"]), 1)
+        self.assertEqual(calls.count(["agent", "send-keys", "abc-9", "enter"]), 1)
 
     def test_cli_nudge_only_workers(self):
         out = subprocess.run([str(helpers.ROOT / "bin" / "athena"), "nudge", "claude-w2g", "hi"], capture_output=True,

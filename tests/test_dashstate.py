@@ -50,7 +50,7 @@ class HistoryTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         os.environ["ATHENA_EXIT_GRACE"] = "0"
         self.repo, _ = make_repo(self.tmp.name)
-        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1"
+        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1"
         git(self.repo, "worktree", "add", "-q", "-b", "you/abc-1", str(self.wt), "main")
         ledger.append("spawn", "abc-1", repo=str(self.repo), path=os.path.realpath(self.wt), branch="you/abc-1",
                       linear="ABC-1", title="A title", workspace="w5", pane="w5:p1", terminal="term_1")

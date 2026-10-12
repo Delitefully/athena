@@ -22,7 +22,7 @@ class HookStatusTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
-        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "plt-1-x"
+        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1-x"
         self.wt.mkdir(parents=True)
         ledger.touch()
 
@@ -44,69 +44,69 @@ class HookStatusTest(unittest.TestCase):
 
     def test_worker_found_by_env(self):
         proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt), "prompt": "secret text"},
-                        {"ATHENA_WORKER": "plt-1"}, cwd=self.wt)
+                        {"ATHENA_WORKER": "abc-1"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
-        st = self.status("plt-1")
+        st = self.status("abc-1")
         self.assertEqual(st["state"], "working")
         self.assertNotIn("secret", json.dumps(st))
 
     def test_worker_found_by_ledger_path(self):
-        ledger.append("spawn", "plt-1", path=os.path.realpath(self.wt))
+        ledger.append("spawn", "abc-1", path=os.path.realpath(self.wt))
         run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, cwd=self.wt)
-        self.assertEqual(self.status("plt-1")["state"], "working")
+        self.assertEqual(self.status("abc-1")["state"], "working")
 
     def test_stop_with_report_sets_done(self):
         msg = 'All green.\nATHENA-REPORT {"status":"DONE","pr":"https://x/1","head":"abc","verify":"make test -> pass"}'
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "plt-1")
-        st = self.status("plt-1")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "abc-1")
+        st = self.status("abc-1")
         self.assertEqual(st["state"], "done")
         self.assertEqual(st["report"]["pr"], "https://x/1")
 
     def test_blocked_report(self):
         msg = 'ATHENA-REPORT {"status":"BLOCKED","concerns":["needs creds"]}'
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "plt-1")
-        self.assertEqual(self.status("plt-1")["state"], "blocked")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": msg}, "abc-1")
+        self.assertEqual(self.status("abc-1")["state"], "blocked")
 
     def test_stop_without_report_is_idle(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "thinking about it"}, "plt-1")
-        self.assertEqual(self.status("plt-1")["state"], "idle")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "thinking about it"}, "abc-1")
+        self.assertEqual(self.status("abc-1")["state"], "idle")
 
     def test_report_survives_later_prompt(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "plt-1")
-        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "plt-1")
-        st = self.status("plt-1")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "abc-1")
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        st = self.status("abc-1")
         self.assertEqual(st["state"], "working")
         self.assertIsNone(st["report"])
         self.assertEqual(st["last_report"]["status"], "DONE")
 
     def test_permission_prompt_blocked(self):
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "permission_prompt",
-                          "message": "Claude needs your permission to use Bash"}, "plt-1")
-        self.assertEqual(self.status("plt-1")["state"], "blocked")
-        hookstatus.apply({"hook_event_name": "Notification", "message": "Claude needs your permission to use Edit"}, "plt-2")
-        self.assertEqual(self.status("plt-2")["state"], "blocked")
+                          "message": "Claude needs your permission to use Bash"}, "abc-1")
+        self.assertEqual(self.status("abc-1")["state"], "blocked")
+        hookstatus.apply({"hook_event_name": "Notification", "message": "Claude needs your permission to use Edit"}, "abc-2")
+        self.assertEqual(self.status("abc-2")["state"], "blocked")
 
     def test_idle_prompt_does_not_override_done(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "plt-1")
-        hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "waiting"}, "plt-1")
-        self.assertEqual(self.status("plt-1")["state"], "done")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "abc-1")
+        hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "waiting"}, "abc-1")
+        self.assertEqual(self.status("abc-1")["state"], "done")
 
     def test_session_end_exited(self):
-        hookstatus.apply({"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}, "plt-1")
-        self.assertEqual(self.status("plt-1")["state"], "exited")
+        hookstatus.apply({"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}, "abc-1")
+        self.assertEqual(self.status("abc-1")["state"], "exited")
 
     def test_summary_truncated_to_300(self):
-        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "x" * 1000}, "plt-1")
-        self.assertEqual(len(self.status("plt-1")["summary"]), 300)
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "x" * 1000}, "abc-1")
+        self.assertEqual(len(self.status("abc-1")["summary"]), 300)
 
     def test_hook_noop_without_ledger(self):
         (paths.state_dir() / "ledger.jsonl").unlink()
-        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, {"ATHENA_WORKER": "plt-1"}, cwd=self.wt)
+        proc = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.wt)}, {"ATHENA_WORKER": "abc-1"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
-        self.assertIsNone(self.status("plt-1"))
+        self.assertIsNone(self.status("abc-1"))
 
     def test_garbage_stdin_exits_zero(self):
-        proc = run_hook("{not json", {"ATHENA_WORKER": "plt-1"}, cwd=self.wt)
+        proc = run_hook("{not json", {"ATHENA_WORKER": "abc-1"}, cwd=self.wt)
         self.assertEqual(proc.returncode, 0)
 
     def test_parse_report_takes_last(self):
