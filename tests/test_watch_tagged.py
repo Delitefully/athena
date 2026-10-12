@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 
 from tests import helpers
-from athena_lib import ledger, paths, watch
+from athena_lib import dashstate, ledger, paths, watch
 
 WAKE = [
     "abc-1 report DONE",
@@ -104,36 +104,42 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(b["needs"], ["a blocked"])
 
     def test_prs_that_need_the_human(self):
-        def pr(n, **kw):
-            return {"state": "OPEN", "draft": False, "review": "", "url": f"https://github.com/o/r/pull/{n}", **kw}
-        snap = {"workers": {"a": _w("working", pr(1, draft=True, review="APPROVED")), "b": _w("done", pr(2)),
-                            "c": _w("idle", pr(3)), "d": _w("done", pr(4, draft=True)), "e": _w("working", pr(5)),
-                            "f": _w("idle", pr(6, state="MERGED"))}}
-        self.assertEqual(watch.board(snap)["prs"], ["#1", "#2", "#3"])
-        self.assertEqual(watch.summary(snap), "3 PRs need you · a, e working · c, f idle · b, d done")
-        one = {"workers": {"a": _w("working", pr(1, review="APPROVED"))}}
-        self.assertEqual(watch.summary(one), "1 PR needs you · a working")
+        # Only a PR whose dash row is in Needs you counts: never one that waits on a teammate's review.
+        def pr(n, review="REVIEW_REQUIRED", requested=(), **kw):
+            p = {"state": "OPEN", "draft": False, "review": review, "checks": "success", "requested": list(requested),
+                 "reviews": {}, "auto_merge": False, "queued": False, "url": f"https://github.com/o/r/pull/{n}", **kw}
+            p["move"] = watch.pr.move(p, live=True, human_merge=False)
+            return p
+        snap = {"workers": {"a": _w("working", pr(1, review="APPROVED")),  # approved: the human's go
+                            "b": _w("done", pr(2)),  # no reviewer requested
+                            "c": _w("idle", pr(3, requested=["alex"])),  # a teammate's move
+                            "d": _w("done", pr(4, draft=True)),
+                            "e": _w("working", pr(5)),  # still working: its worker's move
+                            "f": _w("idle", pr(6, state="MERGED")),
+                            "g": _w("blocked", pr(7)),  # counted as blocked, not again as a PR
+                            "h": _w("idle", pr(8, review="APPROVED", auto_merge=True)),
+                            "i": _w("idle", pr(9, review="CHANGES_REQUESTED", reviews={"x": "CHANGES_REQUESTED"})),
+                            "j": _w("idle", {"state": "OPEN", "draft": False, "review": "",
+                                             "url": "https://github.com/o/r/pull/10"})}}  # no review data yet
+        self.assertEqual(watch.board(snap)["prs"], ["#1", "#2"])
+        self.assertEqual(watch.summary(snap), "g blocked · 2 PRs need you · a, e working · c, f, h, i, j idle · b, d done")
 
-    def test_stack_prs_awaiting_the_human(self):
-        # The bottom of a chain (based on main, not a draft) awaits a review or merge; a conflicting one too.
-        snap = {"workers": {}, "stacks": {"o/r#1": "OPEN base=b CONFLICTING", "o/r#2": "OPEN base=b MERGEABLE",
-                                          "o/r#3": "OPEN base=main MERGEABLE", "o/r#4": "OPEN base=main DRAFT MERGEABLE",
-                                          "o/r#5": "MERGED base=main UNKNOWN"}}
-        self.assertEqual(watch.board(snap)["prs"], ["#1", "#3"])
-        self.assertEqual(watch.summary(snap), "2 PRs need you · no live workers")
+    def test_followed_prs_and_review_requests_count_by_their_row(self):
+        def followed(n, label, needs):
+            return {"state": "OPEN", "move": {"label": label, "needs": needs, "kind": "x"}, "number": n}
+        snap = {"workers": {}, "prs": {"o/r#148": followed(148, "awaiting review · alex", False),
+                                       "o/r#149": followed(149, "no reviewer requested", True),
+                                       "o/r#150": followed(150, "checks failing", True),
+                                       "o/r#151": {"state": "MERGED", "move": None, "number": 151}},
+                "review_requests": [{"repo": "o/r", "number": 7, "title": "t"}, {"repo": "o/x", "number": 149, "title": "u"}]}
+        self.assertEqual(watch.board(snap)["prs"], ["#7", "#149", "#150"])
+        self.assertEqual(watch.summary(snap), "3 PRs need you · no live workers")
 
-    def test_prs_named_in_needs_you_and_one_pr_counted_once(self):
+    def test_needs_you_notes_never_add_prs(self):
+        # needs-you.md is for decisions: a PR it links counts only when its own row is in Needs you.
         paths.ensure()
-        (paths.state_dir() / "needs-you.md").write_text(
-            "- Approve and merge web #43: https://github.com/o/web/pull/43\n"
-            "- Approve and merge #45: https://github.com/o/web/pull/45.\n"
-            "- File a ticket? nothing to merge\n")
-        snap = {"workers": {"abc-101": _w("idle", {"state": "OPEN", "draft": False, "review": "",
-                                                    "url": "https://github.com/o/web/pull/45"},
-                                           report={"status": "DONE"})},
-                "stacks": {"o/web#42": "OPEN base=main MERGEABLE", "o/web#45": "OPEN base=main MERGEABLE"}}
-        self.assertEqual(watch.board(snap)["prs"], ["#42", "#43", "#45"])
-        self.assertEqual(watch.summary(snap), "3 PRs need you · abc-101 done")
+        (paths.state_dir() / "needs-you.md").write_text("- Merge web #43? https://github.com/o/web/pull/43\n")
+        self.assertEqual(watch.board({"workers": {}})["prs"], [])
 
 
 class BoardLinksTest(unittest.TestCase):
@@ -150,42 +156,41 @@ class BoardLinksTest(unittest.TestCase):
     def test_links_and_repos_come_from_the_worker_repo_and_the_stack(self):
         def pr(n, repo="delitefully/ATHENA"):
             return {"state": "OPEN", "draft": False, "review": "APPROVED", "number": n,
-                    "url": f"https://github.com/{repo}/pull/{n}"}
+                    "url": f"https://github.com/{repo}/pull/{n}", "move": {"label": "approved", "needs": True}}
         snap = {"workers": {"a": {**_w("idle", pr(12)), "slug": "Delitefully/athena"},
                             "b": {**_w("idle", pr(13)), "slug": None},
                             "c": _w("working")},
-                "stacks": {"o/stack#42": "OPEN base=main MERGEABLE"}}
-        b = watch.board(snap, notes="")
-        self.assertEqual(b["prs"], ["#12", "#13", "#42"])
-        self.assertEqual(b["links"], {"12": "Delitefully/athena", "42": "o/stack"})
+                "stacks": {"o/stack#42": "OPEN base=main MERGEABLE"},
+                "prs": {"o/stack#42": {"state": "OPEN", "number": 42, "slug": "o/stack",
+                                       "move": {"label": "no reviewer requested", "needs": True}},
+                        "o/old#44": {"state": "OPEN", "number": 44, "slug": "o/old", "move": None}},
+                "review_requests": [{"repo": "o/team", "number": 46, "title": "t"}]}
+        b = watch.board(snap)
+        self.assertEqual(b["prs"], ["#12", "#13", "#42", "#46"])
+        self.assertEqual(b["links"], {"12": "Delitefully/athena", "42": "o/stack", "44": "o/old", "46": "o/team"})
         self.assertEqual(b["repos"], {"a": "Delitefully/athena"})
         self.assertNotIn("dash", b)
 
     def test_a_pr_in_another_repo_than_the_origin_draws_plain(self):
         # A fork, or a PR opened elsewhere: the origin is not where the PR lives, so neither #n nor the wake row links.
         pr = {"state": "OPEN", "draft": False, "review": "APPROVED", "number": 12,
-              "url": "https://github.com/upstream/athena/pull/12"}
-        b = watch.board({"workers": {"a": {**_w("idle", pr), "slug": "me/athena"}}}, notes="")
+              "url": "https://github.com/upstream/athena/pull/12", "move": {"label": "approved", "needs": True}}
+        b = watch.board({"workers": {"a": {**_w("idle", pr), "slug": "me/athena"}}})
         self.assertEqual((b["prs"], b["links"], b["repos"]), (["#12"], {}, {}))
 
     def test_a_slug_with_a_trailing_newline_is_no_slug(self):
         snap = {"workers": {"a": {**_w("idle", {"state": "OPEN", "number": 7}), "slug": "o/r\n"}},
                 "stacks": {"o/r\n#8": "OPEN base=main MERGEABLE"}}
-        b = watch.board(snap, notes="")
+        b = watch.board(snap)
         self.assertEqual((b["links"], b["repos"]), ({}, {}))
 
     def test_a_number_two_repos_share_links_nowhere(self):
         snap = {"workers": {"a": {**_w("idle", {"state": "OPEN", "number": 7}), "slug": "o/one"}},
                 "stacks": {"o/two#7": "OPEN base=main MERGEABLE"}}
-        self.assertEqual(watch.board(snap, notes="")["links"], {})
-
-    def test_needs_you_notes_name_prs_but_give_no_links(self):
-        snap = {"workers": {}}
-        b = watch.board(snap, notes="- merge https://github.com/o/r/pull/9\n")
-        self.assertEqual((b["prs"], b["links"]), (["#9"], {}))
+        self.assertEqual(watch.board(snap)["links"], {})
 
     def test_the_dash_url_while_it_runs(self):
-        b = watch.board({"workers": {}, "dash": "http://127.0.0.1:28431/"}, notes="")
+        b = watch.board({"workers": {}, "dash": "http://127.0.0.1:28431/"})
         self.assertEqual(b["dash"], "http://127.0.0.1:28431/")
 
     def test_step_records_the_running_dash_and_nothing_once_it_stops(self):
@@ -240,27 +245,34 @@ class StackTest(unittest.TestCase):
         (paths.state_dir() / "stack.json").write_text("not json")
         self.assertEqual(watch.stacks(), [])
 
-    def _gh(self, answers):
-        def run(argv, **kw):
-            n = argv[3]
-            value = answers.get(n)
-            if value is None:
-                return mock.Mock(returncode=1, stdout="", stderr="no such PR")
-            return mock.Mock(returncode=0, stdout=json.dumps(value), stderr="")
-        return mock.patch.object(watch.subprocess, "run", side_effect=run)
+    def _batch(self, answers):
+        """pr.batch answering from `answers` (`repo#n` -> reduced PR), recording each call's keys."""
+        calls = []
 
-    def test_stack_snapshot_reads_gh_and_skips_unknown(self):
+        def batch(keys):
+            calls.append(list(keys))
+            return {f"{r}#{n}": answers[f"{r}#{n}"] for r, n in keys if f"{r}#{n}" in answers}
+        return mock.patch.object(watch.pr, "batch", side_effect=batch), calls
+
+    def test_stack_snapshot_reads_one_batch_and_skips_unknown(self):
         watch.set_stack("o/web", [1, 2, 3])
-        answers = {"1": {"state": "OPEN", "baseRefName": "main", "mergeable": "MERGEABLE"},
-                   "2": {"state": "OPEN", "baseRefName": "b1", "mergeable": "UNKNOWN"},
-                   "3": {"state": "OPEN", "baseRefName": "main", "mergeable": "CONFLICTING", "isDraft": True}}
-        with self._gh(answers) as run:
+        answers = {"o/web#1": {"state": "OPEN", "base": "main", "mergeable": "MERGEABLE"},
+                   "o/web#2": {"state": "OPEN", "base": "b1", "mergeable": "UNKNOWN"},
+                   "o/web#3": {"state": "OPEN", "base": "main", "mergeable": "CONFLICTING", "draft": True}}
+        patch, calls = self._batch(answers)
+        with patch:
             snap = watch.stack_snapshot({"o/web#2": "OPEN base=b1 MERGEABLE"})
         self.assertEqual(snap, {"o/web#1": "OPEN base=main MERGEABLE", "o/web#2": "OPEN base=b1 MERGEABLE",
                                 "o/web#3": "OPEN base=main DRAFT CONFLICTING"})
         self.assertEqual(watch.classify("stack o/web#3: OPEN base=main DRAFT MERGEABLE -> OPEN base=main DRAFT CONFLICTING"),
                          "wake")
-        self.assertEqual(run.call_args_list[0].args[0][:6], ["gh", "pr", "view", "1", "--repo", "o/web"])
+        self.assertEqual(calls, [[("o/web", 1), ("o/web", 2), ("o/web", 3)]])
+
+    def test_a_failed_batch_keeps_the_last_stack_state(self):
+        watch.set_stack("o/web", [1])
+        with mock.patch.object(watch.pr, "batch", return_value=None):
+            self.assertEqual(watch.stack_snapshot({"o/web#1": "OPEN base=main MERGEABLE"}),
+                             {"o/web#1": "OPEN base=main MERGEABLE"})
 
     def test_stack_lines_in_diff(self):
         prev = {"workers": {}, "mains": {}, "stacks": {"o/p#1": "OPEN base=main MERGEABLE", "o/p#2": "OPEN base=b1 MERGEABLE"}}
@@ -270,13 +282,100 @@ class StackTest(unittest.TestCase):
 
     def test_step_polls_stacks_only_when_fetching(self):
         watch.set_stack("o/p", [1])
-        with self._gh({"1": {"state": "OPEN", "baseRefName": "main", "mergeable": "MERGEABLE"}}) as run, \
-                mock.patch.object(watch.spawn, "deliver_pending", return_value=[]):
+        patch, calls = self._batch({"o/p#1": {"state": "OPEN", "base": "main", "mergeable": "MERGEABLE"}})
+        with patch, mock.patch.object(watch.spawn, "deliver_pending", return_value=[]), \
+                mock.patch.object(watch.pr, "review_requested", return_value=[]) as search:
             cur, _ = watch.step(None, fetch=True, with_pr=False)
             self.assertEqual(cur["stacks"], {"o/p#1": "OPEN base=main MERGEABLE"})
             again, lines = watch.step(cur, fetch=False, with_pr=False)
             self.assertEqual((again["stacks"], lines), (cur["stacks"], []))
-            self.assertEqual(run.call_count, 1)
+            self.assertEqual((len(calls), search.call_count), (1, 1))
+
+
+def _reviewed(n, **kw):
+    """A reduced PR as pr.batch or pr.summary gives it, with review data."""
+    return {"number": n, "url": f"https://github.com/o/web/pull/{n}", "title": f"change {n}", "state": "OPEN",
+            "draft": False, "review": "REVIEW_REQUIRED", "checks": "success", "base": "main", "mergeable": "MERGEABLE",
+            "requested": [], "reviews": {}, "auto_merge": False, "queued": False, **kw}
+
+
+class FollowedTest(unittest.TestCase):
+    """Every PR athena follows gets one row: a live worker's, a stacked one, and a retired worker's while open."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        self.repo = helpers_repo(self.tmp.name + "/web", "git@github.com:o/web.git")
+        watch._SLUGS.clear()
+        paths.ensure()
+        (paths.state_dir() / "config.json").write_text(json.dumps({"human_merge_repos": ["web"]}))
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def _history(self, name, pr, age=3600):
+        with open(paths.state_dir() / "history.jsonl", "a") as f:
+            f.write(json.dumps({"ts": watch.time.time() - age, "name": name, "repo": self.repo, "pr": pr}) + "\n")
+
+    def test_one_batch_for_stacked_and_retired_prs_and_one_row_each(self):
+        ledger.append("spawn", "abc-452", repo=self.repo, branch="you/abc-452")
+        ledger.append("spawn", "abc-300", repo=self.repo, branch="you/abc-300")
+        ledger.append("retire", "abc-300")
+        ledger.append("spawn", "abc-301", repo=self.repo, branch="you/abc-301")
+        ledger.append("retire", "abc-301")
+        self._history("abc-300", {"state": "OPEN", "url": "https://github.com/o/web/pull/300"})
+        self._history("abc-301", {"state": "MERGED", "url": "https://github.com/o/web/pull/301"})
+        self._history("abc-299", {"state": "OPEN", "url": "https://github.com/o/web/pull/299"}, age=15 * 24 * 3600)
+        watch.set_stack("o/web", [148, 452])
+        live_pr = _reviewed(452, requested=["alex"], auto_merge=True)
+        answers = {"o/web#148": _reviewed(148, requested=["alex"], auto_merge=True),
+                   "o/web#452": live_pr, "o/web#300": _reviewed(300, review="APPROVED")}
+        calls = []
+
+        def batch(keys):
+            calls.append(sorted(keys))
+            return {f"{r}#{n}": answers[f"{r}#{n}"] for r, n in keys if f"{r}#{n}" in answers}
+        mine = [{"repo": "o/web", "number": 77, "title": "Teammate change", "author": "kim",
+                 "url": "https://github.com/o/web/pull/77"}]
+        with mock.patch.object(watch.pr, "batch", side_effect=batch), \
+                mock.patch.object(watch.pr, "review_requested", return_value=mine) as search, \
+                mock.patch.object(watch.spawn, "deliver_pending", return_value=[]), \
+                mock.patch.object(watch.status, "collect", return_value={
+                    "state": "idle", "pr": dict(live_pr), "report": None, "detail": None}):
+            cur, _ = watch.step(None, fetch=True)
+        self.assertEqual(calls, [[("o/web", 148), ("o/web", 300), ("o/web", 452)]])
+        self.assertEqual(search.call_args.args[0], ["o/web"])
+        self.assertEqual(cur["workers"]["abc-452"]["pr"]["move"]["label"], "awaiting review · alex")
+        self.assertEqual(sorted(cur["prs"]), ["o/web#148", "o/web#300"])  # #452 is its live worker's row
+        stacked, retired = cur["prs"]["o/web#148"], cur["prs"]["o/web#300"]
+        self.assertEqual((stacked["owner"], stacked["slug"], stacked["move"]["label"]),
+                         (None, "o/web", "awaiting review · alex"))
+        self.assertEqual((retired["owner"], retired["slug"], retired["move"]["label"], retired["move"]["needs"]),
+                         ("abc-300", "o/web", "approved · yours to merge", True))
+        self.assertEqual(cur["review_requests"], mine)
+        self.assertEqual(watch.board(cur)["prs"], ["#77", "#300"])
+        dashstate.save_watch(cur, now=1.0)
+        saved = dashstate.load_watch()
+        self.assertEqual((sorted(saved["prs"]), saved["review_requests"]), (["o/web#148", "o/web#300"], mine))
+
+    def test_between_fetches_the_last_followed_prs_carry_over(self):
+        prev = {"workers": {}, "mains": {}, "stacks": {}, "prs": {"o/web#1": _reviewed(1)},
+                "review_requests": [{"repo": "o/web", "number": 2, "title": "t"}]}
+        with mock.patch.object(watch.pr, "batch") as batch, mock.patch.object(watch.pr, "review_requested") as search, \
+                mock.patch.object(watch.spawn, "deliver_pending", return_value=[]):
+            cur, _ = watch.step(prev, fetch=False, with_pr=False)
+        self.assertEqual((cur["prs"], cur["review_requests"]), (prev["prs"], prev["review_requests"]))
+        self.assertEqual((batch.call_count, search.call_count), (0, 0))
+
+    def test_a_review_request_athena_already_follows_gets_no_second_row(self):
+        watch.set_stack("o/web", [148])
+        with mock.patch.object(watch.pr, "batch", return_value={"o/web#148": _reviewed(148)}), \
+                mock.patch.object(watch.pr, "review_requested", return_value=[
+                    {"repo": "o/web", "number": 148, "title": "t", "author": "", "url": "u"}]), \
+                mock.patch.object(watch.spawn, "deliver_pending", return_value=[]):
+            cur, _ = watch.step(None, fetch=True, with_pr=False)
+        self.assertEqual(cur["review_requests"], [])
 
 
 class TaggedTest(unittest.TestCase):

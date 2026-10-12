@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from athena_lib import dash, dashstate, gitops, herdr, hq, ledger, paths, spawn, status
+from athena_lib import config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -213,14 +213,11 @@ def _notes() -> str:
 
 
 _NEEDS_ORDER = ("needs context", "blocked", "exited")
-_SLUG = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")  # whole string only: fullmatch
 _REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
 _SLUGS = {}
 
 
-def is_slug(text) -> bool:
-    """`owner/name` and nothing else: no host, no query, no trailing newline."""
-    return isinstance(text, str) and _SLUG.fullmatch(text) is not None
+is_slug = pr.is_slug
 
 
 def _worker_slug(w):
