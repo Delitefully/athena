@@ -5,7 +5,7 @@
 ```sh
 tests/lab/lab.sh up && tests/lab/lab.sh trust
 eval "$(tests/lab/lab.sh env)"; export ATHENA_HQ=<your session name>   # workers report to you
-bin/athena spawn --repo ~/Developer/.athena-lab-sandbox --branch gabriel/lab-1-x --name lab-1 \
+bin/athena spawn --repo ~/Developer/.athena-lab-sandbox --branch you/lab-1-x --name lab-1 \
   --brief <brief.md> --model haiku --effort low --goal "LAB-1 is done when ..."
 bin/athena status; bin/athena board show
 tests/lab/lab.sh down

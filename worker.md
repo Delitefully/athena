@@ -18,7 +18,7 @@ A chief-of-staff Claude session (named in your goal, usually `athena`) launched 
 
 - Commit on your branch in small steps. Push your branch. Open a draft PR whose title starts with the ticket id, and print its URL.
 - Never merge. Never push to the default branch. Never force-push, with one exception: after a rebase the chief of staff asked for, push your own branch with `git push --force-with-lease`.
-- If the chief of staff tells you main moved, rebase on `origin/<default branch>` when your tree is clean, re-run VERIFY, and push with `--force-with-lease`. If the PR is already approved, say so in your report: in platform, a push after approval needs a new approval.
+- If the chief of staff tells you main moved, rebase on `origin/<default branch>` when your tree is clean, re-run VERIFY, and push with `--force-with-lease`. If the PR is already approved, say so in your report: in repos that dismiss stale approvals, a push after approval needs a new approval.
 
 ## Questions
 

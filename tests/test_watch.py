@@ -46,12 +46,12 @@ class WatchTest(unittest.TestCase):
     def test_diff_lines(self):
         prev = {"workers": {"a": {"state": "working", "pr": None, "report": None},
                             "b": {"state": "idle", "pr": {"checks": "pending", "comments": 1, "review": "", "state": "OPEN"}}},
-                "mains": {"/r/platform": "1a2b3c4"}}
+                "mains": {"/r/web": "1a2b3c4"}}
         cur = {"workers": {"a": {"state": "done", "pr": {"checks": "pending", "comments": 0, "review": "", "state": "OPEN", "url": "u"},
                                  "report": {"status": "DONE"}},
                            "b": {"state": "idle", "pr": {"checks": "failure", "comments": 3, "review": "CHANGES_REQUESTED", "state": "OPEN"}},
                            "c": {"state": "working", "pr": None, "report": None}},
-               "mains": {"/r/platform": "4d5e6f7"}}
+               "mains": {"/r/web": "4d5e6f7"}}
         lines = watch.diff(prev, cur)
         self.assertIn("a state working->done", lines)
         self.assertIn("a report DONE", lines)
@@ -60,7 +60,7 @@ class WatchTest(unittest.TestCase):
         self.assertIn("b review comments +2", lines)
         self.assertIn("b review CHANGES_REQUESTED", lines)
         self.assertIn("c new worker (working)", lines)
-        self.assertIn("platform main moved 1a2b3c4..4d5e6f7", lines)
+        self.assertIn("web main moved 1a2b3c4..4d5e6f7", lines)
 
     def test_snapshot_keeps_pr_when_gh_fails(self):
         import tempfile as _t

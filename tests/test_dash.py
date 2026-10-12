@@ -41,7 +41,7 @@ class HqPidTest(unittest.TestCase):
         self.assertEqual(dash.find_hq(only, "athena"), 6001)
 
     def test_a_resumed_hq(self):
-        ps = PS.replace("4703 claude --name athena", "4703 claude --resume 7a1ed26c-e8ec-4c66-8686-e6d7c75c4eb1 --name athena")
+        ps = PS.replace("4703 claude --name athena", "4703 claude --resume 00000000-0000-4000-8000-000000000002 --name athena")
         self.assertIn("--resume", ps)
         self.assertEqual(dash.find_hq(ps, "athena"), 4703)
 
