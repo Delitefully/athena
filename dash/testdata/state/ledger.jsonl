@@ -24,3 +24,7 @@
 {"event": "update", "name": "abc-107", "prompt": "accepted", "ts": 1791494301}
 {"branch": "you/abc-109-faster", "effort": "high", "event": "spawn", "linear": "ABC-109", "model": "opus", "name": "abc-109", "path": "/home/you/.worktrees/api/abc-109", "repo": "/home/you/src/api", "title": "Faster audit log queries", "ts": 1791495800}
 {"event": "update", "name": "abc-109", "prompt": "accepted", "ts": 1791495801}
+{"branch": "you/abc-104-keys", "effort": "high", "event": "spawn", "linear": "ABC-104", "model": "opus", "name": "abc-104", "path": "/home/you/.worktrees/api/abc-104", "repo": "/home/you/src/api", "title": "Webhook signatures rotate keys", "ts": 1791480000}
+{"event": "retire", "name": "abc-104", "removed": true, "ts": 1791490000}
+{"branch": "you/abc-452-saved", "effort": "high", "event": "spawn", "linear": "ABC-452", "model": "opus", "name": "abc-452", "path": "/home/you/.worktrees/web/abc-452", "repo": "/home/you/src/web", "title": "Saved searches sync across devices", "ts": 1791496000}
+{"event": "update", "name": "abc-452", "prompt": "accepted", "ts": 1791496001}

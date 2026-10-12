@@ -14,6 +14,8 @@ const (
 	doneWindow = 14 * 24 * 3600 // seconds a retired worker stays under Done
 	doneMax    = 12
 	staleAfter = 120 // seconds after which watch.json's PR state is shown with its age
+
+	reviewRequestsMax = 10 // teammates' PRs asking for the human's review, at most
 )
 
 // Item is one row on the page.
@@ -30,7 +32,8 @@ type Item struct {
 	Detail    string
 	When      float64
 	PR        *PRView
-	Note      template.HTML // a needs-you.md line, in athena's voice
+	Note      template.HTML   // a needs-you.md line, in athena's voice
+	Folds     []template.HTML // needs-you.md lines that link this row's PR, shown under it
 }
 
 type PRView struct {
@@ -63,6 +66,23 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		watchTS, watched = s.Watch.TS, s.Watch.Workers
 	}
 
+	var followedPRs map[string]*PR
+	var reviewRequests []ReviewRequest
+	if s.Watch != nil {
+		followedPRs, reviewRequests = s.Watch.PRs, s.Watch.ReviewRequests
+	}
+	followedStale := 0.0
+	if now-watchTS > staleAfter {
+		followedStale = watchTS
+	}
+	owned := map[string]*PR{} // a retired worker's PR, as athena watch follows it
+	for _, p := range followedPRs {
+		if p.Owner != "" {
+			owned[p.Owner] = p
+		}
+	}
+	shown := map[string]bool{} // PRs that have a row: each gets one
+
 	var retired []Item
 	for _, w := range s.Workers {
 		hook := s.Hooks[w.Name]
@@ -89,6 +109,9 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			}
 			it.PR = prView(pr, stale)
 			it.When = maxf(hook.TS, w.Updated)
+			if pr != nil {
+				shown[prKey(pr.URL)] = true
+			}
 			state := hook.State
 			if (state == "" || state == "unknown" || state == "starting") && inWatch {
 				switch ww.State {
@@ -106,6 +129,15 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			if pr == nil {
 				pr = prFromReport(hook.Report, hook.LastReport)
 			}
+			if f := owned[w.Name]; f != nil && (pr == nil || prKey(pr.URL) == prKey(f.URL)) {
+				shown[prKey(f.URL)] = true
+				if f.State == "OPEN" && f.Move != nil {
+					it.PR = prView(f, followedStale)
+					placeMove(&v, it, f.Move)
+					continue // still open: its row says whose move it is
+				}
+				pr = f
+			}
 			if pr == nil && w.Linear == "" {
 				continue // a probe or experiment: it stays in the ledger, off the page
 			}
@@ -122,11 +154,41 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			retired = append(retired, it)
 		}
 	}
-	for i, n := range s.Notes {
-		v.NeedsYou = append(v.NeedsYou, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Label: "athena asks"})
+	keys := make([]string, 0, len(followedPRs))
+	for k := range followedPRs {
+		keys = append(keys, k)
 	}
-	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
+	sort.Strings(keys)
+	for _, k := range keys {
+		p := followedPRs[k]
+		if p.State != "OPEN" || p.Move == nil || shown[prKey(p.URL)] || prKey(p.URL) == "" {
+			continue
+		}
+		shown[prKey(p.URL)] = true
+		it := Item{ID: "pr-" + slug(k), Name: repoName(prKey(p.URL)), Title: p.Title, PR: prView(p, followedStale)}
+		placeMove(&v, it, p.Move)
+	}
+	n := 0
+	for _, r := range reviewRequests {
+		if !repoSlug.MatchString(r.Repo) || r.Number <= 0 || n >= reviewRequestsMax {
+			continue
+		}
+		url := "https://github.com/" + r.Repo + "/pull/" + strconv.Itoa(r.Number)
+		if shown[prKey(url)] {
+			continue
+		}
+		shown[prKey(url)] = true
+		n++
+		it := Item{ID: "rr-" + slug(r.Repo+"-"+strconv.Itoa(r.Number)), Name: repoName(prKey(url)), Title: r.Title,
+			Icon: "done", Badge: true, Label: "your review requested", PR: &PRView{URL: url, Text: "#" + strconv.Itoa(r.Number)}}
+		if r.Author != "" {
+			it.Detail = "by " + r.Author
+		}
+		v.NeedsYou = append(v.NeedsYou, it)
+	}
 	v.Done = append(v.Done, retired...)
+	foldNotes(&v, s.Notes) // once every row is in, retired ones too
+	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
 	if len(v.Done) > doneMax {
 		v.Done = v.Done[:doneMax]
@@ -146,6 +208,99 @@ func needRank(it Item) int {
 		return 0
 	}
 	return 1
+}
+
+// foldNotes: a needs-you.md line that links a PR with a row shows under that row; any other is a row of its own,
+// "athena asks" when it asks something (a question mark in its text) and "note" otherwise.
+func foldNotes(v *View, notes []string) {
+	rows := map[string]*Item{}
+	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
+		for i := range group {
+			if group[i].PR != nil && prKey(group[i].PR.URL) != "" {
+				rows[prKey(group[i].PR.URL)] = &group[i]
+			}
+		}
+	}
+	var own []Item
+	for i, n := range notes {
+		var row *Item
+		for _, m := range prURL.FindAllString(n, -1) {
+			if r := rows[prKey(m)]; r != nil {
+				row = r
+				break
+			}
+		}
+		if row != nil {
+			row.Folds = append(row.Folds, inlineNote(n, prKey(row.PR.URL)))
+			continue
+		}
+		label := "note"
+		if asks(n) {
+			label = "athena asks"
+		}
+		own = append(own, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Label: label})
+	}
+	v.NeedsYou = append(v.NeedsYou, own...)
+}
+
+var (
+	prURL    = regexp.MustCompile(`https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+`)
+	prKeyURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
+	repoSlug = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
+)
+
+// prKey is a PR's `owner/name#n`, lower case, from its GitHub URL; empty for any other URL.
+func prKey(url string) string {
+	m := prKeyURL.FindStringSubmatch(url)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1]) + "#" + m[2]
+}
+
+func repoName(key string) string {
+	repo, _, _ := strings.Cut(key, "#")
+	_, name, _ := strings.Cut(repo, "/")
+	return name
+}
+
+// moveOverWorking: the moves a working worker's row shows; on any other, the row says `working`.
+var moveOverWorking = map[string]bool{"approved": true, "queued": true, "changes": true}
+
+// moveMerges: the moves that make a PR the human's to merge. A live worker's PR is that only once the worker
+// reported DONE; until then its row shows the worker's own state (athena_lib/watch.py `_reported` agrees).
+var moveMerges = map[string]bool{"approved": true, "mergeable": true}
+
+// placeMove puts a PR's row where whose move it is says: Needs you when it is the human's, else In progress.
+func placeMove(v *View, it Item, m *Move) {
+	it.Label, it.Badge = m.Label, m.Needs
+	switch m.Kind {
+	case "approved", "mergeable":
+		it.Icon = "ready"
+	case "queued":
+		it.Icon = "ok"
+	case "failing":
+		it.Icon = "fail"
+	case "pending":
+		it.Icon = "working"
+	case "unrequested":
+		it.Icon = "done"
+	case "changes":
+		it.Icon = "working"
+		if m.Needs {
+			it.Icon = "done"
+		}
+	default:
+		it.Icon = "pr"
+	}
+	if it.PR != nil {
+		it.PR.Review = "" // the label says it
+	}
+	if m.Needs {
+		v.NeedsYou = append(v.NeedsYou, it)
+	} else {
+		v.InProgress = append(v.InProgress, it)
+	}
 }
 
 func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
@@ -169,12 +324,10 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	case pr != nil && pr.State == "MERGED":
 		it.Icon, it.Label = "merged", "merged, not retired yet"
 		v.Done = append(v.Done, it)
-	case pr != nil && pr.State == "OPEN" && pr.Review == "APPROVED":
-		it.Icon, it.Badge, it.Label = "ready", true, "approved, ready to merge"
-		v.NeedsYou = append(v.NeedsYou, it)
-	case pr != nil && pr.State == "OPEN" && !pr.Draft && reported(state, hook) && pr.Checks != "failure":
-		it.Icon, it.Badge, it.Label = "done", true, "ready for your review"
-		v.NeedsYou = append(v.NeedsYou, it)
+	case pr != nil && pr.State == "OPEN" && !pr.Draft && pr.Move != nil && (state != "working" || moveOverWorking[pr.Move.Kind]) &&
+		(!moveMerges[pr.Move.Kind] || reported(state, hook)):
+		it.Detail = summary
+		placeMove(v, it, pr.Move)
 	default:
 		it.Icon, it.Label, it.Detail = stateIcon(state, pr), stateLabel(state, report), summary
 		if it.Detail == "" && report != nil && len(report.Concerns) > 0 {
@@ -334,20 +487,43 @@ var (
 
 // inline renders the little markdown a needs-you line uses: links, bare URLs, **bold** and `code`.
 // Text is escaped first, so nothing in the file can inject markup, and bold and code apply only outside links.
-func inline(s string) template.HTML {
+func inline(s string) template.HTML { return inlineNote(s, "") }
+
+// inlineNote is inline for a note shown under the row of PR `own` (an owner/name#n key, or empty): a bare URL of
+// that PR is dropped, since the row links it, and any other bare PR URL shows as its short `owner/name#n`.
+func inlineNote(s, own string) template.HTML {
 	var b strings.Builder
 	last := 0
 	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
 		b.WriteString(prose(s[last:m[0]]))
+		last = m[1]
 		text, url := s[m[0]:m[1]], s[m[0]:m[1]]
 		if m[2] >= 0 {
 			text, url = s[m[2]:m[3]], s[m[4]:m[5]]
+		} else if key := prKey(url); key != "" {
+			if key == own {
+				if strings.HasSuffix(b.String(), " ") && strings.HasPrefix(s[last:], " ") {
+					last++ // one space where the URL was
+				}
+				continue
+			}
+			sm := prKeyURL.FindStringSubmatch(url)
+			text, url = sm[1]+"#"+sm[2], sm[0]
 		}
 		fmt.Fprintf(&b, `<a href="%s">%s</a>`, template.HTMLEscapeString(url), template.HTMLEscapeString(text))
-		last = m[1]
 	}
 	b.WriteString(prose(s[last:]))
-	return template.HTML(b.String())
+	return template.HTML(strings.TrimRight(b.String(), " :;,-–—"))
+}
+
+// asks: a note that asks something, a question mark anywhere in its text (a URL's query does not count).
+func asks(s string) bool {
+	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
+		if m[2] >= 0 && strings.Contains(s[m[2]:m[3]], "?") {
+			return true
+		}
+	}
+	return strings.Contains(links.ReplaceAllString(s, " "), "?")
 }
 
 func prose(s string) string {

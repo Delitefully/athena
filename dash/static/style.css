@@ -89,6 +89,10 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .note .meta { color: var(--thread); font-weight: 600; }
 .note-text { line-height: 1.45; }
 .note-text a { font-weight: 600; }
+/* A needs-you.md line about a PR with a row of its own: under that row, muted like its detail line, so an
+   In progress row never reads as needing you. */
+.fold { margin-top: 5px !important; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.fold a { color: inherit; }
 .code { background: var(--wash); border-radius: 3px; padding: 0 4px; }
 
 .notices { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; color: var(--muted); }

@@ -42,8 +42,9 @@ with open(path) as f:
             continue
         m = re.match(r"^(\S+) pr opened https://github\.com/\S+/pull/(\d+)$", line)
         if m:
-            snap["workers"].setdefault(m.group(1), {"state": "working"})["pr"] = {
-                "state": "OPEN", "draft": False, "review": "", "number": int(m.group(2))}
+            opened = {"state": "OPEN", "draft": False, "review": "", "number": int(m.group(2)), "requested": []}
+            opened["move"] = watch.pr.move(opened, live=True, human_merge=False)  # no reviewer requested yet
+            snap["workers"].setdefault(m.group(1), {"state": "working"})["pr"] = opened
         m = re.match(r"^(\S+) report (\S+)$", line)
         if m:
             snap["workers"].setdefault(m.group(1), {"state": "done"})["report"] = {"status": m.group(2)}

@@ -40,11 +40,21 @@ type Hook struct {
 type PR struct {
 	Number   int
 	URL      string
+	Title    string
 	State    string // OPEN, MERGED, CLOSED
 	Draft    bool
 	Review   string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED or empty
 	Checks   string // success, failure, pending, none
 	Comments int
+	Move     *Move  // whose move it waits on, as athena watch reads it; nil without review data
+	Owner    string // a followed PR's retired worker, if it has one
+}
+
+// Move is whose move an open PR waits on (athena_lib/pr.py `move`): its row's label, and whether the row is in Needs you.
+type Move struct {
+	Label string
+	Kind  string // awaiting, unrequested, approved, mergeable, queued, changes, failing, draft
+	Needs bool
 }
 
 type WatchWorker struct {
@@ -53,9 +63,19 @@ type WatchWorker struct {
 	PR     *PR
 }
 
+// ReviewRequest is a teammate's open PR that asks the human for a review.
+type ReviewRequest struct {
+	Repo   string // owner/name, the repo athena searched
+	Number int
+	Title  string
+	Author string
+}
+
 type Watch struct {
-	TS      float64
-	Workers map[string]WatchWorker
+	TS             float64
+	Workers        map[string]WatchWorker
+	PRs            map[string]*PR // every other PR athena follows, by owner/name#n: stacked, or a retired worker's
+	ReviewRequests []ReviewRequest
 }
 
 type HistoryEntry struct {
@@ -325,9 +345,13 @@ func parsePR(m map[string]any) *PR {
 	if m == nil || str(m, "url") == "" {
 		return nil
 	}
-	return &PR{Number: int(num(m, "number")), URL: str(m, "url"), State: strings.ToUpper(str(m, "state")),
+	p := &PR{Number: int(num(m, "number")), URL: str(m, "url"), Title: str(m, "title"), State: strings.ToUpper(str(m, "state")),
 		Draft: truthy(m["draft"]), Review: strings.ToUpper(str(m, "review")), Checks: str(m, "checks"),
-		Comments: int(num(m, "comments"))}
+		Comments: int(num(m, "comments")), Owner: str(m, "owner")}
+	if mv := obj(m, "move"); mv != nil && str(mv, "label") != "" {
+		p.Move = &Move{Label: str(mv, "label"), Kind: str(mv, "kind"), Needs: truthy(mv["needs"])}
+	}
+	return p
 }
 
 func parseWatch(m map[string]any) *Watch {
@@ -335,6 +359,24 @@ func parseWatch(m map[string]any) *Watch {
 	for name, v := range obj(m, "workers") {
 		if wm, ok := v.(map[string]any); ok {
 			w.Workers[name] = WatchWorker{State: str(wm, "state"), Detail: str(wm, "detail"), PR: parsePR(obj(wm, "pr"))}
+		}
+	}
+	for key, v := range obj(m, "prs") {
+		if pm, ok := v.(map[string]any); ok {
+			if p := parsePR(pm); p != nil {
+				if w.PRs == nil {
+					w.PRs = map[string]*PR{}
+				}
+				w.PRs[key] = p
+			}
+		}
+	}
+	if list, ok := m["review_requests"].([]any); ok {
+		for _, v := range list {
+			if rm, ok := v.(map[string]any); ok && num(rm, "number") > 0 && str(rm, "repo") != "" {
+				w.ReviewRequests = append(w.ReviewRequests, ReviewRequest{Repo: str(rm, "repo"), Number: int(num(rm, "number")),
+					Title: str(rm, "title"), Author: str(rm, "author")})
+			}
 		}
 	}
 	return w

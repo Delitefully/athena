@@ -40,13 +40,22 @@ func write(t *testing.T, path, text string) {
 
 func TestLoadFixture(t *testing.T) {
 	s := NewStore("testdata/state").Load()
-	if len(s.Workers) != 11 || len(s.Hooks) != 11 || s.Watch == nil || len(s.Watch.Workers) != 7 {
+	if len(s.Workers) != 13 || len(s.Hooks) != 12 || s.Watch == nil || len(s.Watch.Workers) != 8 || len(s.Watch.PRs) != 2 {
 		t.Fatalf("workers %d hooks %d watch %+v", len(s.Workers), len(s.Hooks), s.Watch)
 	}
-	if len(s.History) != 2 || s.History[0].PR.State != "MERGED" {
+	if p := s.Watch.PRs["acme/web#906"]; p == nil || p.Move == nil || p.Move.Label != "awaiting review · alex" || p.Move.Needs || p.Title == "" {
+		t.Fatalf("stacked PR %+v", p)
+	}
+	if p := s.Watch.PRs["acme/api#64"]; p.Owner != "abc-104" || !p.Move.Needs || p.Move.Kind != "changes" {
+		t.Fatalf("retired worker's PR %+v %+v", p, p.Move)
+	}
+	if rr := s.Watch.ReviewRequests; len(rr) != 1 || rr[0] != (ReviewRequest{Repo: "acme/web", Number: 6170, Title: "Tidy the export queue", Author: "kim"}) {
+		t.Fatalf("review requests %+v", rr)
+	}
+	if len(s.History) != 3 || s.History[0].PR.State != "MERGED" {
 		t.Fatalf("history %+v", s.History)
 	}
-	if len(s.Notes) != 2 || len(s.Notices) != 0 {
+	if len(s.Notes) != 5 || len(s.Notices) != 0 {
 		t.Fatalf("notes %q notices %q", s.Notes, s.Notices)
 	}
 	h := s.Hooks["abc-106"]
@@ -124,8 +133,8 @@ func TestBrokenFileWithNoGoodStateIsSkippedQuietly(t *testing.T) {
 	if strings.Join(s.Notices, "|") != strings.Join(want, "|") {
 		t.Fatalf("notices %q", s.Notices)
 	}
-	// Without watch.json, abc-108's approval is unknown, so it waits under In progress.
-	if v := Build(s, 1791500000, "acme"); len(v.InProgress) != 5 || len(v.NeedsYou) != 4 {
+	// Without watch.json, no PR's move is known, so each worker shows its own state.
+	if v := Build(s, 1791500000, "acme"); len(v.InProgress) != 6 || len(v.NeedsYou) != 6 {
 		t.Fatalf("a broken file blanked the page: %s / %s", ids(v.NeedsYou), ids(v.InProgress))
 	}
 }
@@ -136,7 +145,7 @@ func TestLedgerLineBeingAppendedIsSkipped(t *testing.T) {
 	f.WriteString(`{"event": "retire", "name": "abc-1`)
 	f.Close()
 	s := NewStore(dir).Load()
-	if len(s.Workers) != 11 || s.Workers[4].State != "live" {
+	if len(s.Workers) != 13 || s.Workers[4].State != "live" {
 		t.Fatalf("workers %+v", s.Workers)
 	}
 	if len(s.Notices) != 1 || s.Notices[0] != "ledger.jsonl: skipped 1 unreadable line" {

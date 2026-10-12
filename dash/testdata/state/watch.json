@@ -1,4 +1,69 @@
 {
+  "prs": {
+    "acme/api#64": {
+      "auto_merge": false,
+      "base": "main",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "4f2c1ab9d0e3",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "changes",
+        "label": "changes requested",
+        "needs": true
+      },
+      "number": 64,
+      "owner": "abc-104",
+      "queued": false,
+      "requested": [],
+      "review": "CHANGES_REQUESTED",
+      "reviews": {
+        "alex": "CHANGES_REQUESTED"
+      },
+      "slug": "acme/api",
+      "state": "OPEN",
+      "title": "Webhook signatures rotate keys",
+      "url": "https://github.com/acme/api/pull/64"
+    },
+    "acme/web#906": {
+      "auto_merge": true,
+      "base": "you/abc-147-step-1",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "4f2c1ab9d0e3",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "awaiting",
+        "label": "awaiting review · alex",
+        "needs": false
+      },
+      "number": 906,
+      "owner": null,
+      "queued": false,
+      "requested": [
+        "alex"
+      ],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Billing export, step 2: CSV writer",
+      "url": "https://github.com/acme/web/pull/906"
+    }
+  },
+  "review_requests": [
+    {
+      "author": "kim",
+      "number": 6170,
+      "repo": "acme/web",
+      "title": "Tidy the export queue",
+      "url": "https://github.com/acme/web/pull/6170"
+    }
+  ],
   "ts": 1791499970.0,
   "workers": {
     "abc-101": {
@@ -54,14 +119,26 @@
     "abc-108": {
       "detail": null,
       "pr": {
+        "auto_merge": false,
         "checks": "success",
         "comments": 0,
         "draft": false,
         "head": "4f2c1ab9d0e3",
         "mergeable": "MERGEABLE",
+        "move": {
+          "kind": "approved",
+          "label": "approved · yours to merge",
+          "needs": true
+        },
         "number": 48,
+        "queued": false,
+        "requested": [],
         "review": "APPROVED",
+        "reviews": {
+          "alex": "APPROVED"
+        },
         "state": "OPEN",
+        "title": "Search results keep their filters",
         "url": "https://github.com/acme/web/pull/48"
       },
       "report": null,
@@ -82,6 +159,37 @@
       },
       "report": null,
       "state": "working"
+    },
+    "abc-452": {
+      "detail": null,
+      "pr": {
+        "auto_merge": true,
+        "base": "main",
+        "checks": "success",
+        "comments": 0,
+        "draft": false,
+        "head": "4f2c1ab9d0e3",
+        "merge_state": "BLOCKED",
+        "mergeable": "MERGEABLE",
+        "move": {
+          "kind": "awaiting",
+          "label": "awaiting review · alex",
+          "needs": false
+        },
+        "number": 907,
+        "queued": false,
+        "requested": [
+          "alex"
+        ],
+        "review": "REVIEW_REQUIRED",
+        "reviews": {},
+        "state": "OPEN",
+        "title": "Saved searches sync across devices",
+        "url": "https://github.com/acme/web/pull/907"
+      },
+      "report": null,
+      "slug": "acme/web",
+      "state": "idle"
     }
   }
 }
