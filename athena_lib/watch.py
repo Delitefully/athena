@@ -92,26 +92,99 @@ def set_stack(repo: str, prs) -> list:
     return chains
 
 
-def stack_snapshot(prev=None) -> dict:
-    """`<repo>#<n>` -> "STATE base=<branch> [DRAFT ]MERGEABLE" per watched PR. gh's UNKNOWN (still computing) keeps the last value."""
+def _stack_keys() -> list:
+    return [(chain["repo"], n) for chain in stacks() for n in chain["prs"]]
+
+
+def stack_snapshot(prev=None, fetched=None) -> dict:
+    """`<repo>#<n>` -> "STATE base=<branch> [DRAFT ]MERGEABLE" per watched PR, from one `pr.batch` (or `fetched`,
+    a batch already made). A PR gh cannot read, or whose mergeability is still computing, keeps the last value."""
     prev = prev or {}
+    if fetched is None:
+        fetched = pr.batch(_stack_keys())
     out = {}
-    for chain in stacks():
-        for n in chain["prs"]:
-            key = f"{chain['repo']}#{n}"
-            try:
-                proc = subprocess.run(["gh", "pr", "view", str(n), "--repo", chain["repo"], "--json",
-                                       "state,baseRefName,mergeable,isDraft"], capture_output=True, text=True, timeout=30)
-                data = json.loads(proc.stdout) if proc.returncode == 0 else None
-            except (OSError, subprocess.TimeoutExpired, ValueError):
-                data = None
-            if not data or data.get("mergeable") == "UNKNOWN" and data.get("state") == "OPEN":
-                if key in prev:
-                    out[key] = prev[key]
-                continue
-            draft = " DRAFT" if data.get("isDraft") else ""
-            out[key] = f"{data.get('state')} base={data.get('baseRefName')}{draft} {data.get('mergeable')}"
+    for repo, n in _stack_keys():
+        key = f"{repo}#{n}"
+        data = (fetched or {}).get(key)
+        if not data or data.get("mergeable") == "UNKNOWN" and data.get("state") == "OPEN":
+            if key in prev:
+                out[key] = prev[key]
+            continue
+        draft = " DRAFT" if data.get("draft") else ""
+        out[key] = f"{data.get('state')} base={data.get('base')}{draft} {data.get('mergeable')}"
     return out
+
+
+_FOLLOW_RETIRED = 14 * 24 * 3600  # as long as the dashboard lists a retired worker under Done
+
+
+def _human_merge(repo) -> bool:
+    try:
+        return config.listed("human_merge_repos", repo)
+    except config.ConfigError:
+        return False
+
+
+def _retired_open() -> dict:
+    """`owner/name#n` -> (worker, its repo) for each recently retired worker whose PR was open when it retired."""
+    try:
+        lines = (paths.state_dir() / "history.jsonl").read_text().splitlines()
+    except OSError:
+        return {}
+    last = {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("name"):
+            last[entry["name"]] = entry
+    out = {}
+    for name, entry in last.items():
+        p = entry.get("pr") if isinstance(entry.get("pr"), dict) else {}
+        key = _pr_key(p.get("url"))
+        if key and p.get("state") == "OPEN" and time.time() - (entry.get("ts") or 0) <= _FOLLOW_RETIRED:
+            out[key] = (name, entry.get("repo"))
+    return out
+
+
+def _key_number(key):
+    repo, _, n = key.rpartition("#")
+    return repo, int(n) if n.isdigit() else 0
+
+
+def follow(cur, prev=None) -> None:
+    """On a fetch tick: one `pr.batch` for the stacked PRs and the retired workers' open ones, then one review
+    search per repo athena knows. Sets cur's `stacks`, `prs` (each followed PR no live worker owns, with whose move
+    it waits on) and `review_requests` (a teammate's PR asking the human, one row each)."""
+    prev = prev or {}
+    retired = _retired_open()
+    stacked = {f"{r}#{n}" for r, n in _stack_keys()}
+    keys = sorted(set(_stack_keys()) | {_key_number(k) for k in retired})
+    fetched = pr.batch(keys)
+    cur["stacks"] = stack_snapshot(prev.get("stacks"), fetched=fetched)
+    owned = {_pr_key((w.get("pr") or {}).get("url")) for w in cur.get("workers", {}).values()}
+    prs = {}
+    for key in sorted(stacked | set(retired)):
+        if key in owned:
+            continue
+        data = (fetched or {}).get(key) or (prev.get("prs") or {}).get(key)
+        if not data:
+            continue
+        repo, _ = _key_number(key)
+        owner, worker_repo = retired.get(key, (None, None))
+        slug = repo if key in stacked else (repo_slug(worker_repo) if worker_repo else None)
+        entry = dict(data)
+        entry.update({"owner": owner, "slug": slug if slug and slug.lower() == repo.lower() else None,
+                      "move": pr.move(data, live=False, human_merge=_human_merge(worker_repo or repo))})
+        prs[key] = entry
+    cur["prs"] = prs
+    slugs = [w.get("slug") for w in cur.get("workers", {}).values()]
+    slugs += [repo_slug(w["repo"]) for w in ledger.workers().values() if w.get("repo")]
+    slugs += [chain["repo"] for chain in stacks()]
+    known = owned | set(prs) | stacked
+    cur["review_requests"] = [r for r in pr.review_requested([s for s in dict.fromkeys(slugs) if is_slug(s)])
+                              if f"{r['repo']}#{r['number']}" not in known]
 
 
 _WAKE_REVIEWS = ("CHANGES_REQUESTED", "APPROVED")
@@ -182,34 +255,26 @@ def _pr_key(url):
     return f"{m.group(1)}#{m.group(2)}" if m else None
 
 
-def _prs_awaiting(snap, notes) -> list:
-    """`#n` per PR that waits on the human, each counted once: a live worker's open, ready PR once the worker
-    stopped or it is approved; a stacked PR that conflicts or is next to land (open on main, not a draft); and
-    every PR that HQ's needs-you.md links."""
+_OVER_WORKING = ("approved", "queued", "changes")  # moves a working worker's row shows; others show `working`
+
+
+def _prs_awaiting(snap) -> list:
+    """`#n` per PR whose dashboard row is in Needs you, each once: a live worker's PR whose move is the human's
+    (unless the worker itself is blocked, or still working on it), a followed PR whose move is the human's, and a
+    teammate's PR asking the human for a review. needs-you.md adds none: it is for decisions."""
     keys = []
     for w in snap.get("workers", {}).values():
-        pr = w.get("pr") or {}
-        if pr.get("state") != "OPEN":
+        p = w.get("pr") or {}
+        m = p.get("move") or {}
+        if not m.get("needs") or _group(w) in ("needs context", "blocked"):
             continue
-        approved = pr.get("review") == "APPROVED"
-        stopped = not pr.get("draft") and (_group(w) in ("done", "exited") or w.get("state") == "idle")
-        if approved or stopped:
-            keys.append(_pr_key(pr.get("url")) or f"#{pr.get('number')}")
-    for key, value in (snap.get("stacks") or {}).items():
-        parts = value.split()
-        base = next((p[len("base="):] for p in parts if p.startswith("base=")), "")
-        if parts[:1] == ["OPEN"] and (parts[-1] == "CONFLICTING" or base in _DEFAULT_BASES and "DRAFT" not in parts):
-            keys.append(key)
-    keys += [f"{m.group(1)}#{m.group(2)}" for m in _PR_URL.finditer(notes or "")]
+        if w.get("state") == "working" and m.get("kind") not in _OVER_WORKING:
+            continue
+        keys.append(_pr_key(p.get("url")) or f"#{p.get('number')}")
+    keys += [k for k, p in (snap.get("prs") or {}).items() if (p.get("move") or {}).get("needs")]
+    keys += [f"{r.get('repo')}#{r.get('number')}" for r in snap.get("review_requests") or []]
     numbers = [k.rsplit("#", 1)[1] for k in dict.fromkeys(keys)]
-    return ["#" + n for n in sorted(numbers, key=lambda n: int(n) if n.isdigit() else 0)]
-
-
-def _notes() -> str:
-    try:
-        return (paths.state_dir() / "needs-you.md").read_text()
-    except OSError:
-        return ""
+    return ["#" + n for n in sorted(dict.fromkeys(numbers), key=lambda n: int(n) if n.isdigit() else 0)]
 
 
 _NEEDS_ORDER = ("needs context", "blocked", "exited")
@@ -244,8 +309,9 @@ def repo_slug(repo):
 
 def _links(snap) -> dict:
     """PR number -> `owner/name`, for the mod to link `#n`: a live worker's PR by the worker's own repo (its origin
-    remote, from the ledger), a stacked PR by stack.json's repo. Never from a URL GitHub or a worker wrote, nor
-    from needs-you.md; a number two repos share is left out, so it draws plain."""
+    remote, from the ledger), a stacked PR by stack.json's repo, a retired worker's by its origin, a review request
+    by the repo searched. Never from a URL GitHub or a worker wrote, nor from needs-you.md; a number two repos
+    share is left out, so it draws plain."""
     seen = {}
     for w in snap.get("workers", {}).values():
         n = (w.get("pr") or {}).get("number")
@@ -256,10 +322,17 @@ def _links(snap) -> dict:
         repo, _, n = key.rpartition("#")
         if n.isdigit() and is_slug(repo):
             seen.setdefault(n, set()).add(repo)
+    for key, p in (snap.get("prs") or {}).items():
+        n = key.rpartition("#")[2]
+        if n.isdigit() and is_slug(p.get("slug")):
+            seen.setdefault(n, set()).add(p["slug"])
+    for r in snap.get("review_requests") or []:
+        if isinstance(r.get("number"), int) and is_slug(r.get("repo")):
+            seen.setdefault(str(r["number"]), set()).add(r["repo"])
     return {n: next(iter(r)) for n, r in seen.items() if len(r) == 1}
 
 
-def board(snap, notes=None) -> dict:
+def board(snap) -> dict:
     """The status line's parts, most urgent first: what needs the human (each worker, then the PRs awaiting a
     review or merge), the active workers grouped by state, and the done ones."""
     workers = snap.get("workers", {})
@@ -269,7 +342,7 @@ def board(snap, notes=None) -> dict:
     needs = [f"{n} {g}" for g in _NEEDS_ORDER for n in groups.get(g, [])]
     active = [[g, names] for g, names in sorted(groups.items(), key=lambda kv: (status.urgency(kv[0]) * -1, kv[0]))
               if g not in _NEEDS_ORDER and g != "done"]
-    out = {"needs": needs, "prs": _prs_awaiting(snap, _notes() if notes is None else notes),
+    out = {"needs": needs, "prs": _prs_awaiting(snap),
            "active": active, "done": groups.get("done", []), "links": _links(snap),
            "repos": {n: _worker_slug(w) for n, w in sorted(workers.items()) if _worker_slug(w)}}
     if snap.get("dash"):
@@ -277,10 +350,10 @@ def board(snap, notes=None) -> dict:
     return out
 
 
-def summary(snap, notes=None) -> str:
+def summary(snap) -> str:
     """The status line as one plain line (the mod draws `board` itself): what needs the human, the PRs awaiting
     them, the active workers by state, then the done ones."""
-    b = board(snap, notes)
+    b = board(snap)
     parts = list(b["needs"])
     if b["prs"]:
         n = len(b["prs"])
@@ -326,6 +399,8 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
         s = status.collect(w, with_pr=with_pr)
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
         repo = w.get("repo")
+        if pr_state and "requested" in pr_state:
+            pr_state = {**pr_state, "move": pr.move(pr_state, live=True, human_merge=_human_merge(repo or ""))}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
                               "slug": repo_slug(repo) if repo else None}
         if repo and repo not in mains:
@@ -352,7 +427,12 @@ def step(prev, fetch=False, with_pr=True):
     cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
     cur["missing"] = missing
     cur["dash"] = _dash_url()
-    cur["stacks"] = stack_snapshot((prev or {}).get("stacks")) if fetch else dict((prev or {}).get("stacks") or {})
+    if fetch:
+        follow(cur, prev)
+    else:
+        prev = prev or {}
+        cur["stacks"], cur["prs"] = dict(prev.get("stacks") or {}), dict(prev.get("prs") or {})
+        cur["review_requests"] = list(prev.get("review_requests") or [])
     return cur, lines + ([] if prev is None else diff(prev, cur))
 
 

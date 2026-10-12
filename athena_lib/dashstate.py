@@ -1,6 +1,8 @@
 """State files kept for the dashboard (`athena dash`), which reads files only.
 
-`watch.json`: the last `athena watch` snapshot, so the page knows each live PR's checks and review.
+`watch.json`: the last `athena watch` snapshot, so the page knows each live PR's checks and review, every other PR
+athena follows (`prs`: stacked, or a retired worker's still open) with whose move it waits on, and the teammates' PRs
+that ask the human for a review (`review_requests`).
 `history.jsonl`: one line per retired worker with its PR as last known, so a merge is still known after retire.
 """
 import json
@@ -18,8 +20,11 @@ def _watch_file():
 def save_watch(snapshot, now=None):
     target = _watch_file()
     tmp = target.with_suffix(".json.tmp%d" % os.getpid())
-    tmp.write_text(json.dumps({"ts": time.time() if now is None else now, "workers": snapshot.get("workers", {})},
-                              sort_keys=True, default=str))
+    data = {"ts": time.time() if now is None else now, "workers": snapshot.get("workers", {})}
+    for key in ("prs", "review_requests"):
+        if key in snapshot:
+            data[key] = snapshot[key]
+    tmp.write_text(json.dumps(data, sort_keys=True, default=str))
     os.replace(tmp, target)
 
 
