@@ -21,6 +21,19 @@ func ids(items []Item) string {
 	return strings.Join(out, " ")
 }
 
+// asksOf makes an ask per text, a question when it starts "? " (cut off) and a note otherwise.
+func asksOf(texts ...string) []Ask {
+	var out []Ask
+	for i, t := range texts {
+		a := Ask{ID: "a" + strconv.Itoa(i+1), Kind: "note", Text: t}
+		if q, ok := strings.CutPrefix(t, "? "); ok {
+			a.Kind, a.Text = "question", q
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 func find(items []Item, name string) Item {
 	for _, it := range items {
 		if it.Name == name {
@@ -49,12 +62,12 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 	// auto-merge on, and each linked from a note that folds into its row.
 	own := find(v.InProgress, "abc-452")
 	if own.Label != "awaiting review · alex" || own.Badge || own.PR.Text != "#907" || own.PR.Review != "" || len(own.Folds) != 1 ||
-		string(own.Folds[0]) != "Approve and merge ABC-452" {
+		string(own.Folds[0].Text) != "Approve and merge ABC-452" {
 		t.Fatalf("abc-452 %+v %+v", own, own.PR)
 	}
 	stack := v.InProgress[len(v.InProgress)-1]
 	if stack.Label != "awaiting review · alex" || stack.Title != "Billing export, step 2: CSV writer" || stack.PR.Text != "#906" ||
-		stack.Ticket != "" || len(stack.Folds) != 1 || string(stack.Folds[0]) != "Billing export step 2 is next to land" {
+		stack.Ticket != "" || len(stack.Folds) != 1 || string(stack.Folds[0].Text) != "Billing export step 2 is next to land" {
 		t.Fatalf("stack row %+v %+v", stack, stack.PR)
 	}
 	notes := v.NeedsYou[len(v.NeedsYou)-3:]
@@ -377,20 +390,19 @@ func TestNotesFoldIntoTheRowOfThePRTheyLink(t *testing.T) {
 	s := Snapshot{Hooks: map[string]Hook{}, Workers: []Worker{{Name: "abc-1", State: "live"}}}
 	s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"abc-1": {PR: followed(1, "", "awaiting review · alex", "awaiting", false)}},
 		PRs: map[string]*PR{"acme/web#9": followed(9, "", "awaiting review · sam", "awaiting", false)}}
-	s.Notes = []string{
+	s.Asks = asksOf(
 		"Merge **ABC-1**: https://github.com/Acme/Web/pull/1",
 		"Then [the next one](https://github.com/acme/web/pull/9).",
 		"After https://github.com/acme/web/pull/9 lands, rebase https://github.com/acme/api/pull/3",
-		"Is https://github.com/acme/web/pull/99 still needed? It has been idle a week.",
+		"? Is https://github.com/acme/web/pull/99 still needed? It has been idle a week.",
 		"FYI: the quota resets at 14:00, see https://x.test/q?when=now",
-		"Which first: ABC-5 or [ABC-6?](https://x.test/6)",
+		"? Which first: ABC-5 or [ABC-6?](https://x.test/6)",
 		"Draft notes: [the plan](https://x.test/p?v=2)",
-	}
+	)
 	v := Build(s, fixtureNow, "acme")
 	if got := ids(v.NeedsYou); got != "note note note note" {
 		t.Fatalf("needs you: %s", got)
 	}
-	// A question mark anywhere outside a URL makes a question.
 	for i, want := range []string{"athena asks", "note", "athena asks", "note"} {
 		if v.NeedsYou[i].Label != want {
 			t.Errorf("%q: %q, want %q", v.NeedsYou[i].Note, v.NeedsYou[i].Label, want)
@@ -409,13 +421,13 @@ func TestNotesFoldIntoTheRowOfThePRTheyLink(t *testing.T) {
 		t.Errorf("any other URL stays as it is: %s", got)
 	}
 	// A folded note drops the URL of its own row's PR (the row links #n) and shortens any other.
-	if f := v.InProgress[0].Folds; len(f) != 1 || string(f[0]) != "Merge <strong>ABC-1</strong>" {
-		t.Fatalf("abc-1 folds %q", f)
+	if f := v.InProgress[0].Folds; len(f) != 1 || string(f[0].Text) != "Merge <strong>ABC-1</strong>" {
+		t.Fatalf("abc-1 folds %+v", f)
 	}
 	f := v.InProgress[1].Folds
-	if len(f) != 2 || !strings.Contains(string(f[0]), ">the next one</a>") ||
-		string(f[1]) != `After lands, rebase <a href="https://github.com/acme/api/pull/3">acme/api#3</a>` {
-		t.Fatalf("#9 folds %q", f)
+	if len(f) != 2 || !strings.Contains(string(f[0].Text), ">the next one</a>") ||
+		string(f[1].Text) != `After lands, rebase <a href="https://github.com/acme/api/pull/3">acme/api#3</a>` {
+		t.Fatalf("#9 folds %+v", f)
 	}
 	if v.Title != "(4) athena" {
 		t.Fatalf("title %q", v.Title)
@@ -446,9 +458,9 @@ func TestANoteFoldsUnderARetiredWorkersMergedPR(t *testing.T) {
 	merged := followed(2, "", "", "", false)
 	merged.State = "MERGED"
 	s.History = []HistoryEntry{{TS: fixtureNow - 3600, Name: "abc-2", PR: merged}}
-	s.Notes = []string{"Announce https://github.com/acme/web/pull/2 in the release notes?"}
+	s.Asks = asksOf("? Announce https://github.com/acme/web/pull/2 in the release notes?")
 	v := Build(s, fixtureNow, "acme")
-	if len(v.NeedsYou) != 0 || len(v.Done) != 1 || len(v.Done[0].Folds) != 1 || string(v.Done[0].Folds[0]) != "Announce in the release notes?" {
+	if len(v.NeedsYou) != 0 || len(v.Done) != 1 || len(v.Done[0].Folds) != 1 || string(v.Done[0].Folds[0].Text) != "Announce in the release notes?" {
 		t.Fatalf("needs %+v done %+v", v.NeedsYou, v.Done)
 	}
 }

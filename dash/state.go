@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // The state files the page is built from, all written by athena (see docs/dashboard.md).
@@ -17,8 +18,9 @@ const (
 	ledgerFile  = "ledger.jsonl"
 	watchFile   = "watch.json"
 	historyFile = "history.jsonl"
-	needsFile   = "needs-you.md"
-	configFile  = "dash.json" // local settings, outside the repository: {"linear_workspace": "..."}
+	asksFile    = "needs-you.json" // athena's asks, written by `athena ask` only
+	actionsFile = "actions.jsonl"  // the human's answers from the page, appended by this server (actions.go)
+	configFile  = "dash.json"      // local settings, outside the repository: {"linear_workspace": "..."}
 	workersDir  = "workers"
 )
 
@@ -98,7 +100,8 @@ type Snapshot struct {
 	Hooks   map[string]Hook
 	Watch   *Watch
 	History []HistoryEntry
-	Notes   []string
+	Asks    []Ask
+	Actions []Action // folded by seq, oldest first
 	Notices []string
 	// LinearWorkspace comes from dash.json; ATHENA_LINEAR_WORKSPACE overrides it. Empty leaves ticket ids unlinked.
 	LinearWorkspace string
@@ -129,7 +132,7 @@ func (s *Store) watched() map[string]sig {
 			out[rel] = sig{fi.Size(), fi.ModTime().UnixNano()}
 		}
 	}
-	for _, f := range []string{ledgerFile, watchFile, historyFile, needsFile, configFile} {
+	for _, f := range []string{ledgerFile, watchFile, historyFile, asksFile, actionsFile, configFile} {
 		add(f)
 	}
 	entries, _ := os.ReadDir(filepath.Join(s.dir, workersDir))
@@ -256,9 +259,10 @@ func (s *Store) Load() Snapshot {
 			snap.Notices = append(snap.Notices, "dash.json: linear_workspace must be a Linear workspace slug")
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(s.dir, needsFile)); err == nil {
-		snap.Notes = parseNotes(string(data))
+	if m := s.object(asksFile, &snap.Notices); m != nil {
+		snap.Asks = parseAsks(m)
 	}
+	snap.Actions = foldActions(s.lines(actionsFile, &snap.Notices))
 	sort.Strings(snap.Notices)
 	return snap
 }
@@ -382,34 +386,116 @@ func parseWatch(m map[string]any) *Watch {
 	return w
 }
 
-// parseNotes takes needs-you.md: one ask per list item or plain line; headings, comments and blank lines are skipped.
-func parseNotes(text string) []string {
-	var out []string
-	inComment := false
-	for _, line := range strings.Split(text, "\n") {
-		t := strings.TrimSpace(line)
-		if inComment {
-			if strings.Contains(t, "-->") {
-				inComment = false
+// Ask is one item of needs-you.json: a decision or note of athena's that belongs to no worker.
+type Ask struct {
+	ID, Kind, Text, Why, PR string // Kind: question or note; PR: owner/name#n, the row it folds into
+	Options                 []Option
+}
+
+// Option is one answer athena offers. Do is reply (athena acts on it) or dismiss (nothing to do).
+type Option struct {
+	ID, Label, Icon, Do string
+}
+
+const (
+	optionsMax = 2
+	labelMax   = 20
+	askTextMax = 600
+	askWhyMax  = 200
+)
+
+var askID = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// parseAsks reads needs-you.json, dropping what `athena ask add` would refuse rather than failing the file:
+// an item without an id or text, options past the second or with a long label, and icons not in icons.txt.
+func parseAsks(m map[string]any) []Ask {
+	list, _ := m["items"].([]any)
+	var out []Ask
+	seen := map[string]bool{}
+	for _, v := range list {
+		im, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		a := Ask{ID: str(im, "id"), Kind: str(im, "kind"), Text: clip(str(im, "text"), askTextMax), Why: clip(str(im, "why"), askWhyMax),
+			PR: strings.ToLower(str(im, "pr"))}
+		if k := prKey(str(im, "pr")); k != "" {
+			a.PR = k // a PR's URL works too
+		}
+		if !askID.MatchString(a.ID) || strings.TrimSpace(a.Text) == "" || seen[a.ID] {
+			continue
+		}
+		seen[a.ID] = true
+		if a.Kind != "note" {
+			a.Kind = "question"
+		}
+		opts, _ := im["options"].([]any)
+		for _, ov := range opts {
+			om, ok := ov.(map[string]any)
+			if !ok || len(a.Options) == optionsMax {
+				continue
+			}
+			o := Option{ID: str(om, "id"), Label: strings.TrimSpace(str(om, "label")), Icon: str(om, "icon"), Do: str(om, "do")}
+			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax {
+				continue
+			}
+			if !knownIcon(o.Icon) {
+				o.Icon = ""
+			}
+			if o.Do != "dismiss" {
+				o.Do = "reply"
+			}
+			a.Options = append(a.Options, o)
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func clip(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+// Action is one answer from the page, as actions.jsonl folds: a line with an item queues it, a later line with
+// only its seq and a status moves it on (queued -> done or cancelled).
+type Action struct {
+	Seq     int
+	TS      float64
+	Item    string
+	Option  string
+	Text    string
+	Discuss bool
+	Status  string
+}
+
+func foldActions(lines []map[string]any) []Action {
+	bySeq := map[int]*Action{}
+	var order []int
+	for _, m := range lines {
+		seq := int(num(m, "seq"))
+		if seq <= 0 {
+			continue
+		}
+		if a := bySeq[seq]; a != nil {
+			if st := str(m, "status"); st == "done" || st == "cancelled" {
+				a.Status = st
 			}
 			continue
 		}
-		if strings.HasPrefix(t, "<!--") {
-			inComment = !strings.Contains(t, "-->")
+		if str(m, "item") == "" {
 			continue
 		}
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		for _, p := range []string{"- [ ] ", "- ", "* ", "+ "} {
-			if strings.HasPrefix(t, p) {
-				t = strings.TrimSpace(t[len(p):])
-				break
-			}
-		}
-		if t != "" {
-			out = append(out, t)
-		}
+		bySeq[seq] = &Action{Seq: seq, TS: num(m, "ts"), Item: str(m, "item"), Option: str(m, "option"), Text: str(m, "text"),
+			Discuss: truthy(m["discuss"]), Status: str(m, "status")}
+		order = append(order, seq)
+	}
+	sort.Ints(order)
+	out := make([]Action, 0, len(order))
+	for _, seq := range order {
+		out = append(out, *bySeq[seq])
 	}
 	return out
 }

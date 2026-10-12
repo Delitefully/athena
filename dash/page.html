@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="athena-token" content="{{.Token}}">
 <title>{{.Title}}</title>
 <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
 <link rel="preload" href="/static/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
@@ -17,6 +18,7 @@
 <p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
 </header>
 <main>{{template "main" .View}}</main>
+<div class="toast" role="status" aria-live="polite" hidden><span class="toast-text"></span><button type="button" class="undo">Undo</button></div>
 <script src="/static/app.js"></script>
 </body>
 </html>{{end}}
@@ -35,14 +37,17 @@
 
 {{define "item"}}{{if .Note}}<li id="{{.ID}}" class="item note">
 <svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
-<div class="body"><p class="note-text">{{.Note}}</p><p class="meta">{{.Label}}</p></div>
+<div class="body"><p class="note-text">{{.Note}}</p><p class="meta">{{.Label}}</p>
+{{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
+{{template "actions" .Actions}}</div>
 </li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body">
 <p class="line">{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}<span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span></p>
 <p class="meta"><span class="label">{{.Label}}</span>{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>
 {{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
-{{range .Folds}}<p class="fold">{{.}}</p>{{end}}
+{{range .Folds}}<div class="fold" id="{{.ID}}"><p>{{.Text}}</p>{{if .Why}}<p class="detail" title="{{.Why}}">{{.Why}}</p>{{end}}{{template "actions" .Actions}}</div>{{end}}
+{{template "actions" .Actions}}
 </div>
 </li>{{end}}{{end}}
 
@@ -65,6 +70,32 @@
 <g id="i-fail"><circle r="8" stroke="none"/><g fill="none"><path d="M-2.5 -2.5L2.5 2.5M2.5 -2.5L-2.5 2.5"/></g></g>
 <g id="i-done"><circle r="8" stroke="none"/><g fill="none"><path d="M-3.25 4.5V-4.25M-3.25 -4H3.25L.5 -1.75L3.25 .5H-3.25"/></g></g>
 <g id="i-ready"><circle r="8" stroke="none"/><g fill="none"><path d="M-5 .2L-2.8 2.4L1.4 -2.2M-.2 1.8L.4 2.4L4.6 -2.2"/></g></g>
+{{/* The pills' icons: Lucide v0.460.0 (https://lucide.dev, ISC; static/Lucide-LICENSE.txt), each unmodified in a
+     <symbol>; icons.txt names them, and an ask's option may show only these. */}}
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/> <path d="m6 6 12 12"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/> <path d="m21.854 2.147-10.94 10.939"/></symbol>
+<symbol id="i-message-circle" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/> <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <polyline points="12 6 12 12 16 14"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2"/> <line x1="12" x2="15" y1="14" y2="11"/> <circle cx="12" cy="14" r="8"/></symbol>
+<symbol id="i-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/> <path d="M3 3v5h5"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/> <rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="i-git-merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/> <circle cx="6" cy="6" r="3"/> <path d="M6 21V9a9 9 0 0 0 9 9"/></symbol>
+<symbol id="i-git-pull-request" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/> <circle cx="6" cy="6" r="3"/> <path d="M13 6h3a2 2 0 0 1 2 2v7"/> <line x1="6" x2="6" y1="9" y2="21"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/> <circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-thumbs-up" viewBox="0 0 24 24"><path d="M7 10v12"/> <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></symbol>
+<symbol id="i-thumbs-down" viewBox="0 0 24 24"><path d="M17 14V2"/> <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></symbol>
+<symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/> <path d="M14 2v4a2 2 0 0 0 2 2h4"/> <path d="M9 15h6"/> <path d="M12 18v-6"/></symbol>
+<symbol id="i-ticket" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/> <path d="M13 5v2"/> <path d="M13 17v2"/> <path d="M13 11v2"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/> <line x1="4" x2="4" y1="22" y2="15"/></symbol>
+<symbol id="i-archive" viewBox="0 0 24 24"><rect width="20" height="5" x="2" y="3" rx="1"/> <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/> <path d="M10 12h4"/></symbol>
+<symbol id="i-trash-2" viewBox="0 0 24 24"><path d="M3 6h18"/> <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/> <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/> <line x1="10" x2="10" y1="11" y2="17"/> <line x1="14" x2="14" y1="11" y2="17"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/> <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+<symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/> <path d="M10 14 21 3"/> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+<symbol id="i-at-sign" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/> <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></symbol>
+<symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/> <path d="M20 3v4"/> <path d="M22 5h-4"/> <path d="M4 17v2"/> <path d="M5 18H3"/></symbol>
 </defs></svg>{{end}}
 
 {{/* /glyphs: every row glyph beside a first line, laid out as the dash's rows, to check box, size and baseline. */}}
@@ -88,3 +119,12 @@
 </section></main>
 </body>
 </html>{{end}}
+
+{{/* The pills: real buttons, shown on hover and focus (always on touch and narrow screens). app.js posts each to
+     /api/action; data-hides marks an answer that hides its ask until athena takes it up. */}}
+{{define "actions"}}{{with .}}<div class="acts" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
+{{- range .Options}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
+{{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" aria-label="Dismiss" title="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end}}
+{{- if .Discuss}}<button type="button" class="pill" data-discuss><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg>Discuss in Athena</button>{{end}}
+{{- if .Reply}}<button type="button" class="pill" data-reply><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg>Reply…</button>{{end -}}
+</div>{{end}}{{end}}

@@ -1,0 +1,26 @@
+# The icons an ask's option may name (athena ask add --option label:icon), from Lucide v0.460.0 (ISC);
+# page.html's sprite holds one <symbol id="i-<name>"> per line. Keep both, and SKILL.md's list, in step.
+check
+x
+send
+message-circle
+bell
+clock
+timer
+rotate-ccw
+play
+pause
+git-merge
+git-pull-request
+eye
+thumbs-up
+thumbs-down
+file-plus
+ticket
+flag
+archive
+trash-2
+link
+external-link
+at-sign
+sparkles

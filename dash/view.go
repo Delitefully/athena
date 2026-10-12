@@ -16,6 +16,9 @@ const (
 	staleAfter = 120 // seconds after which watch.json's PR state is shown with its age
 
 	reviewRequestsMax = 10 // teammates' PRs asking for the human's review, at most
+
+	stuckAfter = 600 // seconds a queued answer may wait for athena before its ask shows again
+	stuckWhy   = "athena hasn't picked this up yet"
 )
 
 // Item is one row on the page.
@@ -32,8 +35,45 @@ type Item struct {
 	Detail    string
 	When      float64
 	PR        *PRView
-	Note      template.HTML   // a needs-you.md line, in athena's voice
-	Folds     []template.HTML // needs-you.md lines that link this row's PR, shown under it
+	Note      template.HTML // an ask's text, in athena's voice
+	Folds     []Fold        // asks about this row's PR, shown under it
+	Actions   *Actions      // the pills the row offers, or nil
+}
+
+// Fold is an ask shown under the row of the PR it is about.
+type Fold struct {
+	ID      string
+	Text    template.HTML
+	Why     string
+	Actions *Actions
+}
+
+// Actions are what a row or fold lets the human answer from the page, each a POST to /api/action naming Item.
+type Actions struct {
+	Item    string
+	Options []Option // athena's, at most two
+	Discuss bool     // "Discuss in Athena"
+	Reply   bool     // "Reply…": a line of free text
+	Dismiss bool     // a note athena gave no options: "×"
+	Hides   bool     // an answer hides the ask until athena takes it up
+}
+
+// allows: whether a POST's answer is one these actions offer.
+func (a *Actions) allows(option, text string, discuss bool) bool {
+	switch {
+	case discuss:
+		return a.Discuss
+	case text != "":
+		return a.Reply
+	case option == "dismiss":
+		return a.Dismiss
+	}
+	for _, o := range a.Options {
+		if o.ID == option {
+			return true
+		}
+	}
+	return false
 }
 
 type PRView struct {
@@ -45,6 +85,8 @@ type View struct {
 	Title                      string
 	NeedsYou, InProgress, Done []Item
 	Notices                    []string
+
+	actionable map[string]*Actions // every row and fold the page offers actions on, by Item
 }
 
 // Build sorts the snapshot into the page's three groups. now is in Unix seconds.
@@ -109,6 +151,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			}
 			it.PR = prView(pr, stale)
 			it.When = maxf(hook.TS, w.Updated)
+			it.Actions = &Actions{Item: it.ID, Discuss: true, Reply: true} // no dismiss: the row is the worker's state
 			if pr != nil {
 				shown[prKey(pr.URL)] = true
 			}
@@ -187,7 +230,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		v.NeedsYou = append(v.NeedsYou, it)
 	}
 	v.Done = append(v.Done, retired...)
-	foldNotes(&v, s.Notes) // once every row is in, retired ones too
+	foldAsks(&v, s.Asks, waiting(s.Actions), now) // once every row is in, retired ones too
 	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
 	if len(v.Done) > doneMax {
@@ -197,7 +240,34 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 	if n := len(v.NeedsYou); n > 0 {
 		v.Title = fmt.Sprintf("(%d) athena", n)
 	}
+	v.actionable = map[string]*Actions{}
+	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
+		for _, it := range group {
+			if it.Actions != nil {
+				v.actionable[it.Actions.Item] = it.Actions
+			}
+			for _, f := range it.Folds {
+				if f.Actions != nil {
+					v.actionable[f.Actions.Item] = f.Actions
+				}
+			}
+		}
+	}
 	return v
+}
+
+// waiting: when each item's oldest still queued answer was given.
+func waiting(actions []Action) map[string]float64 {
+	out := map[string]float64{}
+	for _, a := range actions {
+		if a.Status != "queued" {
+			continue
+		}
+		if ts, ok := out[a.Item]; !ok || a.TS < ts {
+			out[a.Item] = a.TS
+		}
+	}
+	return out
 }
 
 func needRank(it Item) int {
@@ -210,10 +280,10 @@ func needRank(it Item) int {
 	return 1
 }
 
-// foldNotes: a needs-you.md line that links a PR with a row shows under that row; any other is a row of its own,
-// "athena asks" with the question-mark glyph when it asks something (a question mark in its text), and "note"
-// with the thread's dash otherwise.
-func foldNotes(v *View, notes []string) {
+// foldAsks: an ask about a PR with a row (its `pr`, else a PR URL in its text) shows under that row; any other is a
+// row of its own, "athena asks" with the question-mark glyph for a question, and "note" with the thread's dash otherwise. An ask the human answered from the page is
+// hidden while athena has the answer queued, and shows again, saying so, once it has waited stuckAfter.
+func foldAsks(v *View, asks []Ask, queued map[string]float64, now float64) {
 	rows := map[string]*Item{}
 	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
 		for i := range group {
@@ -223,23 +293,36 @@ func foldNotes(v *View, notes []string) {
 		}
 	}
 	var own []Item
-	for i, n := range notes {
-		var row *Item
-		for _, m := range prURL.FindAllString(n, -1) {
-			if r := rows[prKey(m)]; r != nil {
-				row = r
+	for _, a := range asks {
+		why := a.Why
+		if ts, ok := queued[a.ID]; ok {
+			if now-ts < stuckAfter {
+				continue
+			}
+			why = stuckWhy
+		}
+		acts := &Actions{Item: a.ID, Options: a.Options, Hides: true}
+		if a.Kind == "question" {
+			acts.Discuss, acts.Reply = true, true
+		} else if len(a.Options) == 0 {
+			acts.Dismiss = true
+		}
+		row := rows[a.PR]
+		for _, m := range prURL.FindAllString(a.Text, -1) {
+			if row != nil {
 				break
 			}
+			row = rows[prKey(m)]
 		}
 		if row != nil {
-			row.Folds = append(row.Folds, inlineNote(n, prKey(row.PR.URL)))
+			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(a.Text, prKey(row.PR.URL)), Why: why, Actions: acts})
 			continue
 		}
 		icon, label := "note", "note"
-		if asks(n) {
+		if a.Kind == "question" {
 			icon, label = "ask", "athena asks"
 		}
-		own = append(own, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Icon: icon, Label: label})
+		own = append(own, Item{ID: "ask-" + a.ID, Note: inline(a.Text), Icon: icon, Label: label, Detail: why, Actions: acts})
 	}
 	v.NeedsYou = append(v.NeedsYou, own...)
 }
@@ -515,16 +598,6 @@ func inlineNote(s, own string) template.HTML {
 	}
 	b.WriteString(prose(s[last:]))
 	return template.HTML(strings.TrimRight(b.String(), " :;,-–—"))
-}
-
-// asks: a note that asks something, a question mark anywhere in its text (a URL's query does not count).
-func asks(s string) bool {
-	for _, m := range links.FindAllStringSubmatchIndex(s, -1) {
-		if m[2] >= 0 && strings.Contains(s[m[2]:m[3]], "?") {
-			return true
-		}
-	}
-	return strings.Contains(links.ReplaceAllString(s, " "), "?")
 }
 
 func prose(s string) string {
