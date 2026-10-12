@@ -211,7 +211,8 @@ func needRank(it Item) int {
 }
 
 // foldNotes: a needs-you.md line that links a PR with a row shows under that row; any other is a row of its own,
-// "athena asks" when it asks something (a question mark in its text) and "note" otherwise.
+// "athena asks" with the question-mark glyph when it asks something (a question mark in its text), and "note"
+// with the thread's dash otherwise.
 func foldNotes(v *View, notes []string) {
 	rows := map[string]*Item{}
 	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
@@ -234,11 +235,11 @@ func foldNotes(v *View, notes []string) {
 			row.Folds = append(row.Folds, inlineNote(n, prKey(row.PR.URL)))
 			continue
 		}
-		label := "note"
+		icon, label := "note", "note"
 		if asks(n) {
-			label = "athena asks"
+			icon, label = "ask", "athena asks"
 		}
-		own = append(own, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Label: label})
+		own = append(own, Item{ID: "n-" + strconv.Itoa(i) + "-" + slug(n), Note: inline(n), Icon: icon, Label: label})
 	}
 	v.NeedsYou = append(v.NeedsYou, own...)
 }

@@ -11,22 +11,7 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<svg width="0" height="0" class="sprite" aria-hidden="true"><defs>
-{{/* The watch.svg icon family (assets/src/icons.py): stroke 2, round caps, 16 px grid centred on 0,0.
-     Colours come by inheritance from the <svg class="icon">: a badge's disc takes its fill (ink), its glyph its stroke (ground). */}}
-<g id="i-pr"><circle cx="-4.5" cy="-4.5" r="1.75"/><circle cx="-4.5" cy="4.5" r="1.75"/><circle cx="4.5" cy="4.5" r="1.75"/><path d="M-4.5 -2.75V2.75M4.5 2.75V-1.5Q4.5 -4.5 1.5 -4.5H.5M2.5 -6.5L.5 -4.5L2.5 -2.5"/></g>
-<g id="i-review"><path d="M-6.5 -5.5H6.5V3H-.5L-4 6.25V3H-6.5ZM-3.25 -1.25H3.25"/></g>
-<g id="i-merged"><path d="M-7 -5C-2.5 -5 -2.5 0 1.5 0M-7 5C-2.5 5 -2.5 0 1.5 0"/><circle cx="4.5" r="2.25" fill="currentColor"/></g>
-<g id="i-ok"><circle r="6.25"/><path d="M-2.75 .25L-.75 2.25L3 -1.75"/></g>
-<g id="i-working"><path d="M-6.5 0H-3.5L-1.5 -4.5L1.5 4.5L3.5 0H6.5"/></g>
-<g id="i-idle"><circle r="6.25"/><path d="M0 -3V0L2.25 1.75"/></g>
-<g id="i-exited"><circle r="6.25"/><path d="M-3 0H3"/></g>
-<g id="i-retired"><path d="M-6.5 0H6.5"/><circle r="2.25" fill="currentColor"/></g>
-<g id="i-blocked"><circle r="10" stroke="none"/><g fill="none"><path d="M0 -5V.75"/><circle cy="4.25" r="1.3" fill="currentColor" stroke="none"/></g></g>
-<g id="i-fail"><circle r="10" stroke="none"/><g fill="none"><path d="M-3.25 -3.25L3.25 3.25M3.25 -3.25L-3.25 3.25"/></g></g>
-<g id="i-done"><circle r="10" stroke="none"/><g fill="none"><path d="M-3.25 5.25V-5M-3.25 -4.75H4L2 -1.75L4 1.25H-3.25"/></g></g>
-<g id="i-ready"><circle r="10" stroke="none"/><g fill="none"><path d="M-6.25 .25L-3.5 3L1.75 -2.75M-.25 2.25L.5 3L5.75 -2.75"/></g></g>
-</defs></svg>
+{{template "sprite"}}
 <header>
 <a class="lockup" href="/" aria-label="athena">{{template "lockup"}}</a>
 <p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
@@ -49,7 +34,7 @@
 </section>{{end}}
 
 {{define "item"}}{{if .Note}}<li id="{{.ID}}" class="item note">
-<svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><path class="thread" d="M-8 0H8"/></svg>
+<svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body"><p class="note-text">{{.Note}}</p><p class="meta">{{.Label}}</p></div>
 </li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
@@ -60,3 +45,46 @@
 {{range .Folds}}<p class="fold">{{.}}</p>{{end}}
 </div>
 </li>{{end}}{{end}}
+
+{{define "sprite"}}<svg width="0" height="0" class="sprite" aria-hidden="true"><defs>
+{{/* The row glyphs, drawn in the watch.svg family (assets/src/icons.py): stroke 2 from .icon, round caps, a 16 px
+     grid centred on 0,0. Every glyph's ink, stroke included, fills that square: a stroke stays within ±7, an
+     outline circle is r 7, a badge's disc r 8. Colours come by inheritance from the <svg class="icon">: a badge's
+     disc takes its fill (ink), its glyph its stroke (ground). /glyphs shows them side by side. */}}
+<g id="i-pr"><circle cx="-5" cy="-5" r="2"/><circle cx="-5" cy="5" r="2"/><circle cx="5" cy="5" r="2"/><path d="M-5 -3V3M5 3V-1.5Q5 -5 1.5 -5H.5M2.5 -7L.5 -5L2.5 -3"/></g>
+<g id="i-review"><path d="M-7 -6H7V2.5H-.5L-4 6V2.5H-7ZM-3.5 -1.75H3.5"/></g>
+<g id="i-merged"><path d="M-7 -5C-2.5 -5 -2.5 0 1.5 0M-7 5C-2.5 5 -2.5 0 1.5 0"/><circle cx="4.75" r="2.25" fill="currentColor"/></g>
+<g id="i-ok"><circle r="7"/><path d="M-3 .25L-.75 2.5L3.25 -1.75"/></g>
+<g id="i-working"><path d="M-7 0H-4L-1.75 -5L1.75 5L4 0H7"/></g>
+<g id="i-idle"><circle r="7"/><path d="M0 -3.5V0L2.5 2"/></g>
+<g id="i-exited"><circle r="7"/><path d="M-3.5 0H3.5"/></g>
+<g id="i-retired"><path d="M-7 0H7"/><circle r="2.5" fill="currentColor"/></g>
+<g id="i-note"><path d="M-7 0H7"/></g>
+<g id="i-ask"><circle r="7"/><path d="M-2.2 -2.25A2.25 2.25 0 0 1 2.2 -1.5C2.2 0 0 .75 0 .75"/><circle cy="3.75" r="1.1" fill="currentColor" stroke="none"/></g>
+<g id="i-blocked"><circle r="8" stroke="none"/><g fill="none"><path d="M0 -4V.5"/><circle cy="3.5" r="1.1" fill="currentColor" stroke="none"/></g></g>
+<g id="i-fail"><circle r="8" stroke="none"/><g fill="none"><path d="M-2.5 -2.5L2.5 2.5M2.5 -2.5L-2.5 2.5"/></g></g>
+<g id="i-done"><circle r="8" stroke="none"/><g fill="none"><path d="M-3.25 4.5V-4.25M-3.25 -4H3.25L.5 -1.75L3.25 .5H-3.25"/></g></g>
+<g id="i-ready"><circle r="8" stroke="none"/><g fill="none"><path d="M-5 .2L-2.8 2.4L1.4 -2.2M-.2 1.8L.4 2.4L4.6 -2.2"/></g></g>
+</defs></svg>{{end}}
+
+{{/* /glyphs: every row glyph beside a first line, laid out as the dash's rows, to check box, size and baseline. */}}
+{{define "glyphs"}}<!doctype html>
+<html lang="en"{{if .Scheme}} data-scheme="{{.Scheme}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>athena glyphs</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "sprite"}}
+<main class="sheet"><section class="group">
+<h2>Row glyphs <span class="count">{{len .Glyphs}}</span></h2>
+<ul>{{range .Glyphs}}<li class="item{{if .Note}} note{{end}}">
+<svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
+<div class="body"><p class="{{if .Note}}note-text{{else}}line{{end}}"><span class="ticket">{{.Icon}}</span> <span class="title">{{.Text}}</span></p></div>
+</li>{{end}}</ul>
+</section></main>
+</body>
+</html>{{end}}

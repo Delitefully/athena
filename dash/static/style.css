@@ -85,7 +85,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .detail { margin-top: 5px !important; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* A needs-you.md line is athena speaking, so its mark is the thread. */
-.note .icon { stroke: var(--thread); stroke-width: 2.5; }
+.note .icon { stroke: var(--thread); color: var(--thread); }
 .note .meta { color: var(--thread); font-weight: 600; }
 .note-text { line-height: 1.45; }
 .note-text a { font-weight: 600; }
