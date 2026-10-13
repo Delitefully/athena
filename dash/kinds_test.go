@@ -227,3 +227,39 @@ func TestMergeOnlyWhereWatchSaysAthenaMerges(t *testing.T) {
 		}
 	}
 }
+
+func TestTheLabelSaysTheChecksSoThePRDoesNot(t *testing.T) {
+	failing := followed(20, "", "checks failing", "failing", true)
+	failing.Checks = "failure"
+	running := followed(21, "", "checks running", "pending", false)
+	running.Checks = "pending"
+	green := followed(22, "", "your go to merge", "mergeable", true)
+	green.Checks = "success"
+	v := Build(snapshotOf(failing, running, green), fixtureNow, "acme")
+	if c := find(v.NeedsYou, "web").PR.Checks; c != "" {
+		t.Errorf("a failing row's PR repeats %q", c)
+	}
+	if c := v.InProgress[0].PR.Checks; c != "" {
+		t.Errorf("a running row's PR repeats %q", c)
+	}
+	for _, it := range v.NeedsYou {
+		if it.Label == "your go to merge" && it.PR.Checks != "success" {
+			t.Errorf("a ready row's checks %q", it.PR.Checks)
+		}
+	}
+}
+
+func TestAPRRowKeepsItsStatusLineBesideItsPills(t *testing.T) {
+	p := followed(20, "", "your go to merge", "mergeable", true)
+	p.Head, p.Move.AthenaMerges = "4f2c1ab9d0e3", true
+	var buf bytes.Buffer
+	templates(time.Now).ExecuteTemplate(&buf, "main", Build(snapshotOf(p), fixtureNow, "acme"))
+	// keep: the status line stays as it is, and the pills have a line of their own under it.
+	if !strings.Contains(buf.String(), `<div class="swap has-acts keep"><p class="meta"><span class="label">your go to merge</span>`) {
+		t.Fatal(buf.String())
+	}
+	_, page := get(t, func() string { _, base := start(t, copyFixture(t)); return base }()+"/", "")
+	if !strings.Contains(page, `<li id="w-abc-102" class="item act">`) || strings.Contains(between(page, `<li id="w-abc-102"`, "</li>"), "keep") {
+		t.Fatal("a worker's row swaps its line for its pills, as before")
+	}
+}

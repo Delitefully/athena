@@ -431,6 +431,9 @@ func placeMove(v *View, it Item, m *Move) {
 	}
 	if it.PR != nil {
 		it.PR.Review = "" // the label says it
+		if m.Kind == "failing" || m.Kind == "pending" {
+			it.PR.Checks = "" // "checks failing" or "checks running": the label says that too
+		}
 	}
 	if m.Kind == "awaiting" && it.pr != nil && prKey(it.pr.URL) != "" {
 		v.awaiting = append(v.awaiting, it) // the Awaiting review row's, once stackAwaiting has sorted out the stacks
