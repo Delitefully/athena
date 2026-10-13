@@ -56,6 +56,12 @@ class MoveTest(unittest.TestCase):
                    "awaiting review · alex, Sam Lee, Web Core +1", False)
         self.check(_pr(review="", requested=["alex"]), True, False, "awaiting review · alex", False)
 
+    def test_it_says_who_merges(self):
+        # The dashboard offers Merge (a go for athena) only where athena merges: never in human_merge_repos.
+        for human_merge in (True, False):
+            for p in (_pr(review="APPROVED"), _pr(review=""), _pr(), _pr(checks="failure")):
+                self.assertIs(pr.move(p, live=False, human_merge=human_merge)["human_merge"], human_merge, p)
+
     def test_nobody_yet(self):
         self.check(_pr(), True, False, "no reviewer requested", True)
         self.check(_pr(auto_merge=True), False, False, "no reviewer requested", True)

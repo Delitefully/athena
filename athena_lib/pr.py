@@ -63,7 +63,8 @@ def _names(names, most=3) -> str:
 
 
 def move(p, live: bool, human_merge: bool, ci=True):
-    """Whose move an open PR waits on: {"label", "kind", "needs"}; `needs` puts its row in the human's Needs you.
+    """Whose move an open PR waits on: {"label", "kind", "needs", "human_merge"}; `needs` puts its row in the human's
+    Needs you, and `human_merge` (its repo is in `human_merge_repos`) keeps the dashboard's Merge, a go for athena, off it.
 
     `no reviewer requested` only where a review is required (REVIEW_REQUIRED); a repo whose branch has no review
     rule (reviewDecision empty) waits on the merge alone. A merge is the human's only once checks are green (or the
@@ -78,7 +79,7 @@ def move(p, live: bool, human_merge: bool, ci=True):
         return None
 
     def out(label, kind, needs):
-        return {"label": label, "kind": kind, "needs": needs}
+        return {"label": label, "kind": kind, "needs": needs, "human_merge": human_merge}
 
     def starting():
         return out("checks starting" if p.get("checks") == "none" else "checks running", "pending", False)

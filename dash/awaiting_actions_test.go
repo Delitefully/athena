@@ -122,6 +122,7 @@ func TestDismissIsTheDashsOwnAndUndoes(t *testing.T) {
         "merge_state": "BLOCKED",
         "mergeable": "MERGEABLE",
         "move": {
+          "human_merge": true,
           "kind": "awaiting",
           "label": "awaiting review · alex",
           "needs": false
@@ -130,6 +131,7 @@ func TestDismissIsTheDashsOwnAndUndoes(t *testing.T) {
         "merge_state": "BLOCKED",
         "mergeable": "MERGEABLE",
         "move": {
+          "human_merge": true,
           "kind": "awaiting",
           "label": "awaiting review · alex",
           "needs": false

@@ -10,7 +10,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
-        "human_merge": true,
+        "human_merge": false,
         "kind": "changes",
         "label": "changes requested",
         "needs": true
@@ -39,6 +39,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": false,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -94,6 +95,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": false,
         "kind": "awaiting",
         "label": "awaiting review · kim",
         "needs": false
@@ -122,6 +124,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · priya, sam",
         "needs": false
@@ -151,6 +154,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -179,6 +183,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -207,6 +212,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "pending",
         "label": "checks running",
         "needs": false
@@ -395,6 +401,7 @@
         "merge_state": "BLOCKED",
         "mergeable": "MERGEABLE",
         "move": {
+          "human_merge": true,
           "kind": "awaiting",
           "label": "awaiting review · alex",
           "needs": false

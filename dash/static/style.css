@@ -127,6 +127,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
   border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);
   font: 500 13px/1 "Instrument Sans", system-ui, sans-serif; white-space: nowrap; cursor: pointer;
 }
+a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other pills */
 .pill:hover { background: var(--wash); border-color: var(--muted); }
 .pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .pill.dismiss { width: 22px; padding: 0; justify-content: center; }

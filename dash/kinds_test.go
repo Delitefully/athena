@@ -188,16 +188,16 @@ func TestKindActionsTheServerRefuses(t *testing.T) {
 		body string
 		code int
 	}{
-		{`{"item": "pr:acme/web#4242", "option": "request-review"}`, 422}, // a PR the dash does not show
-		{`{"item": "pr:acme/web#41", "option": "recheck"}`, 422},          // shown, but In progress, by its worker's state
-		{`{"item": "pr:acme/web#912", "option": "go", "head": "a1b2c3d4e5f6"}`, 422}, // not ready to merge
-		{`{"item": "pr:acme/web#912", "option": "recheck"}`, 422},         // not the button its kind has
-		{`{"item": "pr:acme/web#48", "option": "go", "head": "1a2b3c4d5e6f"}`, 422},  // a human-merge repo: no Merge
-		{`{"item": "pr:acme/web#48", "text": "merge it"}`, 422},           // no Reply on a PR's row
-		{`{"item": "pr:acme/api#75", "option": "go"}`, 409},               // a go must name the head it is for
-		{`{"item": "pr:acme/api#75", "option": "go", "head": "0000000000aa"}`, 409}, // the PR moved on since the page
+		{`{"item": "pr:acme/web#4242", "option": "request-review"}`, 422},                        // a PR the dash does not show
+		{`{"item": "pr:acme/web#41", "option": "recheck"}`, 422},                                 // shown, but In progress, by its worker's state
+		{`{"item": "pr:acme/web#912", "option": "go", "head": "a1b2c3d4e5f6"}`, 422},             // not ready to merge
+		{`{"item": "pr:acme/web#912", "option": "recheck"}`, 422},                                // not the button its kind has
+		{`{"item": "pr:acme/web#48", "option": "go", "head": "1a2b3c4d5e6f"}`, 422},              // a human-merge repo: no Merge
+		{`{"item": "pr:acme/web#48", "text": "merge it"}`, 422},                                  // no Reply on a PR's row
+		{`{"item": "pr:acme/api#75", "option": "go"}`, 409},                                      // a go must name the head it is for
+		{`{"item": "pr:acme/api#75", "option": "go", "head": "0000000000aa"}`, 409},              // the PR moved on since the page
 		{`{"item": "pr:acme/web#912", "option": "request-review", "head": "a1b2c3d4e5f6"}`, 400}, // a head is a go's only
-		{`{"item": "w-abc-108", "discuss": true}`, 422},                   // its row answers for its PR now
+		{`{"item": "w-abc-108", "discuss": true}`, 422},                                          // its row answers for its PR now
 	} {
 		if code, out := post(t, srv, base, c.body, nil); code != c.code {
 			t.Errorf("%s: %d %v, want %d", c.body, code, out, c.code)
@@ -205,5 +205,25 @@ func TestKindActionsTheServerRefuses(t *testing.T) {
 	}
 	if got := queued(t, dir); len(got) != 0 {
 		t.Fatalf("queued %+v", got)
+	}
+}
+
+func TestMergeOnlyWhereWatchSaysAthenaMerges(t *testing.T) {
+	dir := t.TempDir()
+	pr := func(n int, move string) string {
+		return `"acme/api#` + itoa(n) + `": {"number": ` + itoa(n) + `, "url": "https://github.com/acme/api/pull/` + itoa(n) +
+			`", "state": "OPEN", "head": "8d1c2b3a4f5e", "move": {"kind": "mergeable", "label": "your go to merge", "needs": true` + move + `}}`
+	}
+	write(t, filepath.Join(dir, watchFile), `{"ts": `+itoa(fixtureNow)+`, "workers": {}, "prs": {`+
+		pr(1, `, "human_merge": false`)+`, `+pr(2, `, "human_merge": true`)+`, `+pr(3, "")+`}}`)
+	v := Build(NewStore(dir).Load(), fixtureNow, "acme")
+	for id, want := range map[string]string{
+		"pr-acme-api-1": "open-pr go discuss", // athena merges on the human's go
+		"pr-acme-api-2": "open-pr discuss",    // in human_merge_repos: the human merges on GitHub
+		"pr-acme-api-3": "open-pr discuss",    // a watch.json from before the field: never a Merge
+	} {
+		if got := rowPills(t, v, id); got != want {
+			t.Errorf("%s: %q, want %q", id, got, want)
+		}
 	}
 }
