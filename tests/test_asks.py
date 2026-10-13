@@ -148,6 +148,22 @@ class AsksTest(unittest.TestCase):
         self.assertTrue(got[3]["discuss"])
         self.assertEqual([e["seq"] for e in asks.queue(now=T + 4 + asks.SETTLE)], [1, 2, 3, 4, 5])
 
+    def test_a_recheck_from_the_awaiting_review_row_names_its_pr(self):
+        answer(1, "pr:acme/web#906", option="recheck")
+        answer(2, "pr:acme/web#907", ts=T + 3, option="recheck")  # still undoable
+        got = asks.queue(now=T + asks.SETTLE)
+        self.assertEqual(got, [{"seq": 1, "item": "pr:acme/web#906", "at": T, "pr": "acme/web#906",
+                                "url": "https://github.com/acme/web/pull/906",
+                                "option": {"id": "recheck", "label": "Re-check and fix", "do": "reply"}}])
+        # HQ marks it done by its item, as any answer: the pill stops showing "re-checking…".
+        self.assertEqual(asks.done("pr:acme/web#906", now=T + asks.SETTLE), {"item": "pr:acme/web#906", "removed": False, "done": [1]})
+        self.assertEqual([e["seq"] for e in asks.queue(now=T + 3 + asks.SETTLE)], [2])
+        code, out, _ = self.run_cli("done", "pr:acme/web#907")
+        self.assertEqual((code, json.loads(out)["done"]), (0, [2]))
+        # Anything else that starts pr: is no PR: it reads as an ask that is gone.
+        answer(3, "pr:acme/web#906; rm -rf /", option="recheck")
+        self.assertEqual(asks.queue(now=T + 60)[0]["ask"], None)
+
     def test_done_marks_settled_answers_and_compacts(self):
         a1 = asks.add("Ship?")
         a2 = asks.add("And then?")
@@ -209,6 +225,12 @@ class DoorbellTest(unittest.TestCase):
         answer(4, "a4", ts=T + 20)
         status(4, "cancelled", ts=T + 21)
         self.assertIsNone(bell.check(now=T + 30))  # undone: nothing to ring for
+
+    def test_rings_for_a_recheck_as_for_any_answer(self):
+        bell = asks.Doorbell()
+        answer(1, "pr:acme/web#906", option="recheck")
+        self.assertIsNone(bell.check(now=T + 1))  # still undoable from the toast
+        self.assertEqual(bell.check(now=T + asks.SETTLE), "dash-queue 1")
 
     def test_only_a_stat_while_nothing_changed(self):
         bell = asks.Doorbell()

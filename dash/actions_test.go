@@ -274,7 +274,7 @@ func TestPillsTakeThePlaceOfTheLabelLine(t *testing.T) {
 		t.Error("a worker's pills are not in its state line's cell")
 	}
 	// A folded ask gets a label line of its own to swap with.
-	if !strings.Contains(page, `<div class="fold" id="ask-a3"><p>Approve and merge ABC-452</p><div class="swap has-acts"><p class="fold-label">note</p><div class="acts" data-item="a3" data-hides>`) {
+	if !strings.Contains(page, `<div class="fold" id="ask-a3"><p>Approve and merge ABC-108</p><div class="swap has-acts"><p class="fold-label">note</p><div class="acts" data-item="a3" data-hides>`) {
 		t.Error("a folded ask's pills have no line to swap with")
 	}
 	// A row with no pills has no pill-height line.

@@ -94,6 +94,15 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 		return 0, &httpError{http.StatusBadRequest, "not an answer"}
 	}
 	now := float64(s.now().UnixNano()) / 1e9
+	if strings.HasPrefix(req.Item, pillItem) && !prKeyText.MatchString(strings.TrimPrefix(req.Item, pillItem)) {
+		return 0, &httpError{http.StatusBadRequest, "not a PR"}
+	}
+	if req.Undo && req.Seq == 0 && strings.HasPrefix(req.Item, pillItem) {
+		if req.Option != "" || req.Text != nil || req.Discuss {
+			return 0, &httpError{http.StatusBadRequest, "undo names a seq, or a dismissed PR"}
+		}
+		return 0, s.undismiss(strings.TrimPrefix(req.Item, pillItem))
+	}
 	if req.Undo {
 		if req.Seq <= 0 || req.Item != "" || req.Option != "" || req.Text != nil || req.Discuss {
 			return 0, &httpError{http.StatusBadRequest, "undo names a seq only"}
@@ -130,12 +139,15 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 	if acts == nil || !acts.allows(req.Option, text, req.Discuss) {
 		return 0, &httpError{http.StatusUnprocessableEntity, "the page does not offer that answer"}
 	}
+	if p := view.pills[req.Item]; p != nil && req.Option == "dismiss" {
+		return 0, s.dismiss(p, now) // the dash's own: athena is not told
+	}
 	var seq int
 	err := s.appendAction(func(cur map[int]Action, max int) (map[string]any, error) {
 		// The page check above ran outside the lock: an ask a second tab answered meanwhile is refused here. An ask
 		// shown again because its answer is stuck takes a new one; a worker's row takes any number.
 		for _, a := range cur {
-			if acts.Hides && a.Item == req.Item && a.Status == "queued" && now-a.TS < stuckAfter {
+			if (acts.Hides || acts.Recheck) && a.Item == req.Item && a.Status == "queued" && now-a.TS < stuckAfter {
 				return nil, &httpError{http.StatusConflict, "already answered"}
 			}
 		}
@@ -219,4 +231,58 @@ func readActions(path string) (map[int]Action, int, error) {
 		cur[a.Seq] = a
 	}
 	return cur, max, nil
+}
+
+// dismissAge: seconds a dismissal is kept; by then its PR has a new head or is long gone.
+const dismissAge = 30 * 24 * 3600
+
+// dismiss takes a PR off the Awaiting review row, as it is now: dismissed-prs.json keeps its head and review state,
+// and the PR shows again once either changes. Nothing goes to actions.jsonl, so the doorbell never rings for it.
+func (s *Server) dismiss(p *Pill, now float64) error {
+	return s.editDismissed(func(prs map[string]any) error {
+		prs[p.Key] = map[string]any{"head": p.head, "review": p.Label, "ts": now}
+		return nil
+	}, now)
+}
+
+// undismiss is the Undo of a dismiss: the PR shows again.
+func (s *Server) undismiss(key string) error {
+	return s.editDismissed(func(prs map[string]any) error {
+		if _, ok := prs[key]; !ok {
+			return &httpError{http.StatusConflict, "not dismissed"}
+		}
+		delete(prs, key)
+		return nil
+	}, float64(s.now().UnixNano())/1e9)
+}
+
+// editDismissed rewrites dismissed-prs.json through edit, dropping dismissals older than dismissAge, atomically.
+func (s *Server) editDismissed(edit func(prs map[string]any) error, now float64) error {
+	s.dismissing.Lock()
+	defer s.dismissing.Unlock()
+	path := filepath.Join(s.store.dir, dismissFile)
+	var file struct {
+		PRs map[string]any `json:"prs"`
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &file) // an unreadable file starts over: a dismissal is a convenience
+	}
+	prs := map[string]any{}
+	for k, v := range file.PRs {
+		if d, ok := v.(map[string]any); ok && prKeyText.MatchString(k) && now-num(d, "ts") < dismissAge {
+			prs[k] = d
+		}
+	}
+	if err := edit(prs); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(map[string]any{"prs": prs}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.tmp%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

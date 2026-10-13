@@ -153,7 +153,7 @@ def _graphql(nodes):
 class BatchTest(unittest.TestCase):
     def test_one_graphql_call_for_every_pr(self):
         node = {"number": 906, "url": "https://github.com/acme/web/pull/906", "title": "Stacked: step 2",
-                "state": "OPEN", "isDraft": False, "baseRefName": "main", "mergeable": "MERGEABLE",
+                "state": "OPEN", "isDraft": False, "baseRefName": "main", "headRefName": "you/abc-147-step-2", "mergeable": "MERGEABLE",
                 "reviewDecision": "REVIEW_REQUIRED", "headRefOid": "abcdef1234567890", "isInMergeQueue": False,
                 "mergeStateStatus": "BLOCKED", "autoMergeRequest": {"enabledAt": "x"},
                 "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "User", "login": "alex", "name": None}}]},
@@ -170,8 +170,9 @@ class BatchTest(unittest.TestCase):
         self.assertIn("n1=api", argv)
         self.assertEqual(set(got), {"acme/web#906", "acme/api#9"})
         web = got["acme/web#906"]
-        self.assertEqual((web["requested"], web["auto_merge"], web["checks"], web["base"], web["title"]),
-                         (["alex"], True, "success", "main", "Stacked: step 2"))
+        self.assertEqual((web["requested"], web["auto_merge"], web["checks"], web["base"], web["branch"], web["title"]),
+                         (["alex"], True, "success", "main", "you/abc-147-step-2", "Stacked: step 2"))
+        self.assertIn("headRefName", " ".join(argv))  # the dash stacks a PR on the one whose head branch is its base
         self.assertEqual(got["acme/api#9"]["state"], "MERGED")
 
     def test_nothing_to_fetch_makes_no_call_and_a_failure_is_no_data(self):

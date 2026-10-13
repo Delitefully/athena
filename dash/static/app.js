@@ -39,7 +39,7 @@ function render(html) {
   document.title = main.querySelector("[data-title]")?.dataset.title || document.title;
   for (const item of answered) {
     const acts = main.querySelector(`.acts[data-item="${CSS.escape(item)}"]`);
-    if (acts) (acts.closest(".fold") || acts.closest("li"))?.remove();
+    if (acts) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
     else answered.delete(item); // the server's page has it too
   }
   for (const [item, text] of drafts) {
@@ -72,17 +72,19 @@ async function post(body) {
   return out;
 }
 
-// The row collapses by height alone, never a fade; at once when the reader asks for less motion.
+// The row collapses by height alone, never a fade, and a pill on the Awaiting review row by its width; at once when the
+// reader asks for less motion.
 function collapse(el) {
   if (!motion.matches) {
     el.remove();
     return;
   }
   collapsing++;
-  el.style.height = el.offsetHeight + "px";
-  el.offsetHeight; // start from the measured height
+  const side = el.matches(".apr") ? "width" : "height";
+  el.style[side] = (side === "width" ? el.offsetWidth : el.offsetHeight) + "px";
+  el.offsetHeight; // start from the measured size
   el.classList.add("collapsing");
-  el.style.height = "0px";
+  el.style[side] = "0px";
   let done = false;
   const end = () => {
     if (done) return;
@@ -91,7 +93,7 @@ function collapse(el) {
     collapsing--;
     release();
   };
-  el.addEventListener("transitionend", (e) => e.propertyName === "height" && end());
+  el.addEventListener("transitionend", (e) => e.propertyName === side && end());
   setTimeout(end, 300);
 }
 
@@ -99,7 +101,7 @@ const toast = document.querySelector(".toast");
 const toastText = toast.querySelector(".toast-text");
 const undo = toast.querySelector(".undo");
 let toastTimer = 0;
-let last = null; // {seq, item} of the answer the toast can undo
+let last = null; // {seq, item} of the answer the toast can undo; seq 0 for a PR dismissed from Awaiting review
 
 function say(text, undoable) {
   toastText.textContent = text;
@@ -116,9 +118,10 @@ function say(text, undoable) {
   }, 5000);
 }
 
-function answer(acts, body, text) {
+// hides: the answer takes its ask, or its pill, off the page.
+function answer(acts, body, text, hides = acts.hasAttribute("data-hides")) {
   const item = acts.dataset.item;
-  const row = acts.hasAttribute("data-hides") ? acts.closest(".fold") || acts.closest("li") : null;
+  const row = hides ? acts.closest(".fold") || acts.closest(".apr") || acts.closest("li") : null;
   drafts.delete(item);
   if (row) {
     answered.add(item);
@@ -134,7 +137,7 @@ function answer(acts, body, text) {
     .catch((err) => {
       answered.delete(item);
       say("Not sent: " + err.message, false);
-      if (row) render(held ?? shown); // bring the row back
+      if (row || acts.closest(".apr")) render(held ?? shown); // bring the row back, or the pill as it was
     });
 }
 
@@ -145,7 +148,7 @@ undo.addEventListener("click", () => {
   undo.disabled = true;
   // Before the POST: the server pushes the restored row before it replies, and a page must not hide it again.
   answered.delete(item);
-  post({ seq, undo: true })
+  post(seq ? { seq, undo: true } : { item, undo: true }) // a dismissed PR has no seq: its undo names it
     .then(() => say("Undone", false))
     .catch((err) => say(err.message === "too late to undo" ? "Too late: athena has it" : "Not undone: " + err.message, false));
 });
@@ -175,9 +178,14 @@ main.addEventListener("click", (e) => {
   const acts = pill?.closest(".acts");
   if (!acts) return;
   const label = pill.textContent.trim();
+  const apr = acts.closest(".apr");
   if (pill.hasAttribute("data-reply")) openReply(acts);
   else if (pill.hasAttribute("data-discuss")) answer(acts, { discuss: true }, "athena will bring it up in HQ");
-  else if (pill.dataset.option === "dismiss") answer(acts, { option: "dismiss" }, "Dismissed");
+  else if (apr && pill.dataset.option === "dismiss") answer(acts, { option: "dismiss" }, "Dismissed until it changes", true);
+  else if (apr && pill.dataset.option === "recheck") {
+    apr.classList.add("rechecking"); // the server's page says so too, once it has the answer
+    answer(acts, { option: "recheck" }, "athena will re-check it");
+  } else if (pill.dataset.option === "dismiss") answer(acts, { option: "dismiss" }, "Dismissed");
   else answer(acts, { option: pill.dataset.option }, `“${label}” sent to athena`);
 });
 main.addEventListener("submit", (e) => {

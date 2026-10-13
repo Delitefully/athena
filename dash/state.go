@@ -18,9 +18,11 @@ const (
 	ledgerFile  = "ledger.jsonl"
 	watchFile   = "watch.json"
 	historyFile = "history.jsonl"
-	asksFile    = "needs-you.json" // athena's asks, written by `athena ask` only
-	actionsFile = "actions.jsonl"  // the human's answers from the page, appended by this server (actions.go)
-	configFile  = "dash.json"      // local settings, outside the repository: {"linear_workspace": "..."}
+	asksFile    = "needs-you.json"     // athena's asks, written by `athena ask` only
+	actionsFile = "actions.jsonl"      // the human's answers from the page, appended by this server (actions.go)
+	dismissFile = "dismissed-prs.json" // PRs the human dismissed from Awaiting review, written by this server (actions.go)
+	stackFile   = "stack.json"         // the stacked-PR chains athena watches (`athena stack`)
+	configFile  = "dash.json"          // local settings, outside the repository: {"linear_workspace": "..."}
 	workersDir  = "workers"
 )
 
@@ -50,6 +52,9 @@ type PR struct {
 	Comments int
 	Move     *Move  // whose move it waits on, as athena watch reads it; nil without review data
 	Owner    string // a followed PR's retired worker, if it has one
+	Head     string // its head commit, short
+	Branch   string // its head branch, when athena watch read it
+	Base     string // its base branch
 }
 
 // Move is whose move an open PR waits on (athena_lib/pr.py `move`): its row's label, and whether the row is in Needs you.
@@ -102,7 +107,10 @@ type Snapshot struct {
 	History []HistoryEntry
 	Asks    []Ask
 	Actions []Action // folded by seq, oldest first
-	Notices []string
+	Stacks  []Stack  // stack.json's chains, each bottom first
+	// Dismissed: the PRs the human took off the Awaiting review row, by owner/name#n, each as it was then.
+	Dismissed map[string]Dismissal
+	Notices   []string
 	// LinearWorkspace comes from dash.json; ATHENA_LINEAR_WORKSPACE overrides it. Empty leaves ticket ids unlinked.
 	LinearWorkspace string
 }
@@ -132,7 +140,7 @@ func (s *Store) watched() map[string]sig {
 			out[rel] = sig{fi.Size(), fi.ModTime().UnixNano()}
 		}
 	}
-	for _, f := range []string{ledgerFile, watchFile, historyFile, asksFile, actionsFile, configFile} {
+	for _, f := range []string{ledgerFile, watchFile, historyFile, asksFile, actionsFile, configFile, dismissFile, stackFile} {
 		add(f)
 	}
 	entries, _ := os.ReadDir(filepath.Join(s.dir, workersDir))
@@ -263,6 +271,12 @@ func (s *Store) Load() Snapshot {
 		snap.Asks = parseAsks(m)
 	}
 	snap.Actions = foldActions(s.lines(actionsFile, &snap.Notices))
+	if m := s.object(stackFile, &snap.Notices); m != nil {
+		snap.Stacks = parseStacks(m)
+	}
+	if m := s.object(dismissFile, &snap.Notices); m != nil {
+		snap.Dismissed = parseDismissed(m)
+	}
 	sort.Strings(snap.Notices)
 	return snap
 }
@@ -351,7 +365,7 @@ func parsePR(m map[string]any) *PR {
 	}
 	p := &PR{Number: int(num(m, "number")), URL: str(m, "url"), Title: str(m, "title"), State: strings.ToUpper(str(m, "state")),
 		Draft: truthy(m["draft"]), Review: strings.ToUpper(str(m, "review")), Checks: str(m, "checks"),
-		Comments: int(num(m, "comments")), Owner: str(m, "owner")}
+		Comments: int(num(m, "comments")), Owner: str(m, "owner"), Head: str(m, "head"), Branch: str(m, "branch"), Base: str(m, "base")}
 	if mv := obj(m, "move"); mv != nil && str(mv, "label") != "" {
 		p.Move = &Move{Label: str(mv, "label"), Kind: str(mv, "kind"), Needs: truthy(mv["needs"])}
 	}
@@ -384,6 +398,49 @@ func parseWatch(m map[string]any) *Watch {
 		}
 	}
 	return w
+}
+
+// Stack is one chain of stack.json: a repo's stacked PRs, bottom first.
+type Stack struct {
+	Repo string // owner/name
+	PRs  []int
+}
+
+func parseStacks(m map[string]any) []Stack {
+	list, _ := m["stacks"].([]any)
+	var out []Stack
+	for _, v := range list {
+		cm, ok := v.(map[string]any)
+		if !ok || !repoSlug.MatchString(str(cm, "repo")) {
+			continue
+		}
+		c := Stack{Repo: strings.ToLower(str(cm, "repo"))}
+		prs, _ := cm["prs"].([]any)
+		for _, n := range prs {
+			if f, ok := n.(float64); ok && f > 0 {
+				c.PRs = append(c.PRs, int(f))
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// Dismissal is a PR the human dismissed from Awaiting review, as it was then: it stays hidden while its head commit
+// and its review state (its whose-move label, which names the reviewers) are the same.
+type Dismissal struct {
+	Head, Review string
+	TS           float64
+}
+
+func parseDismissed(m map[string]any) map[string]Dismissal {
+	out := map[string]Dismissal{}
+	for key, v := range obj(m, "prs") {
+		if dm, ok := v.(map[string]any); ok && prKeyText.MatchString(key) {
+			out[key] = Dismissal{Head: str(dm, "head"), Review: str(dm, "review"), TS: num(dm, "ts")}
+		}
+	}
+	return out
 }
 
 // Ask is one item of needs-you.json: a decision or note of athena's that belongs to no worker.
