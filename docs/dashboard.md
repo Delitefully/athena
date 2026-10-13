@@ -2,6 +2,29 @@
 
 `athena dash` serves one page on `http://127.0.0.1:2843/` while athena's HQ is open: what needs you, what is in progress, and what is done, each with its ticket and PR. It reads athena's state files and nothing else, and it updates by itself when they change.
 
+## What the page shows
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard.png" alt="athena dash: needs you, in progress and done, with ticket and PR links" width="960">
+</picture>
+
+While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: what needs you, what is in progress with its PR checks, and what was done in the last two weeks, each linked to its ticket and PR. Every PR athena follows (a live worker's, a stacked one from `stack.json`, a retired worker's while still open) has one row, and its label says whose move it is, as `who · what`:
+
+| Whose move | Label | Section |
+|---|---|---|
+| a teammate | `awaiting review · <names>` | In progress |
+| nobody yet | `no reviewer requested` (a review is required, and nobody is asked) | Needs you |
+| the human, merge, no review rule | `your go to merge`, `yours to merge` (`human_merge_repos`); `in merge queue`, `auto-merge on` go to In progress. Its branch requires no review, so a green PR waits on the merge alone, once its worker is done | Needs you |
+| the human, merge | `approved · yours to merge` (`human_merge_repos`), `approved · your go to merge` (athena merges once you say go) | Needs you |
+| nobody | `approved · in merge queue`, `approved · auto-merge on` | In progress |
+| the worker | `changes requested · worker fixing`; with no live worker, `changes requested` in Needs you | In progress |
+| the human, review | `your review requested` (a teammate's non-draft PR naming you, not just your team, from one `gh search prs user-review-requested:@me draft:false` per repo athena knows, every two minutes, at most 10) | Needs you |
+| CI | `checks failing`; in Needs you when no worker is live | In progress |
+| CI, before a merge | `checks running` while checks run, `checks starting` while none have registered yet: approved (or needing no review) | In progress |
+
+A worker's own state comes first: blocked, a permission prompt, needs context and a startup prompt need you; a worker still working, or a draft with athena reviewing, stays in progress. A PR is the human's to merge (`approved · …`, `your go to merge`, `yours to merge`) only once its checks are green (or the repo runs no CI: no `.github/workflows` on its default branch, asked once a day per repo) and, with a live worker, once that worker reported DONE; until then its row shows the worker's state. PR status is derived from GitHub, so athena asks no PR approvals: `athena ask add` (in `needs-you.json`) is for decisions. An ask about a PR with a row folds into that row as a muted second line, without the URL of that PR (the row links it); any other is a row of its own, `athena asks` for a question and `note` otherwise, with its one-sentence `why` under it. A bare PR URL in an ask shows as `owner/repo#n`. Hovering an ask shows its quick actions: athena's options (at most 2), Discuss in Athena and Reply…; a live worker's row offers Discuss and Reply. A click collapses the ask at once and offers Undo for 5 seconds; the answer goes to `actions.jsonl`, `athena watch` rings HQ with `dash-queue <seq>` once it settles, and HQ reads it with `athena ask queue`, so rapid triage queues and never interrupts an HQ turn. It reads athena's state files (`athena watch` fetches the PRs), makes no network calls, writes only the answers, and updates by itself within a second of a change. `athena hq` starts it, and closing HQ's space stops it. It is a small Go program in `dash/`, built on first use (Go required); the plan and its failure modes follow below.
+
 ## Plan
 
 The plan below is after a /refute pass; the objections it took and rejected are in the last section.
@@ -99,7 +122,7 @@ The page follows `docs/brand.md`:
 
 ### Tests
 
-One fixture state dir, `dash/testdata/state/`, with fictional tickets (`ABC-101`), a worker file cut off mid-write and one missing file. `go test` uses it, and the README screenshots and the live-update demo run against a copy of it. Tests never point `athena watch` or `athena retire` at the real state dir.
+One fixture state dir, `dash/testdata/state/`, with fictional tickets (`ABC-101`), a worker file cut off mid-write and one missing file. `go test` uses it, and the screenshots and the live-update demo run against a copy of it. Tests never point `athena watch` or `athena retire` at the real state dir.
 
 - Go: the ledger fold, worker classification into the three groups, invalid and missing files keeping the last good state, the rendered HTML (links, escaping), the Host check, and the SSE path (a file change reaches a connected client).
 - Python: `watch.json` written by a watch tick, `history.jsonl` appended by retire with the PR from `watch.json`, and `athena dash on|show|off` against a real build on a free port (skipped when `go` is missing).
