@@ -27,9 +27,95 @@
       "title": "Webhook signatures rotate keys",
       "url": "https://github.com/acme/api/pull/64"
     },
+    "acme/api#71": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-121-go",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "5e8f1a2b3c4d",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "awaiting",
+        "label": "awaiting review · alex",
+        "needs": false
+      },
+      "number": 71,
+      "owner": null,
+      "queued": false,
+      "requested": [
+        "alex"
+      ],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/api",
+      "state": "OPEN",
+      "title": "Pin the Go toolchain",
+      "url": "https://github.com/acme/api/pull/71"
+    },
+    "acme/docs#212": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-125-retries",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "7c6b5a4d3e2f",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "awaiting",
+        "label": "awaiting review · kim",
+        "needs": false
+      },
+      "number": 212,
+      "owner": null,
+      "queued": false,
+      "requested": [
+        "kim"
+      ],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/docs",
+      "state": "OPEN",
+      "title": "Document the webhook retry schedule",
+      "url": "https://github.com/acme/docs/pull/212"
+    },
+    "acme/web#6452": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-118-promo",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "2a7d9e1f0b3c",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "awaiting",
+        "label": "awaiting review · priya, sam",
+        "needs": false
+      },
+      "number": 6452,
+      "owner": null,
+      "queued": false,
+      "requested": [
+        "priya",
+        "sam"
+      ],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Checkout keeps the promo code when a cart is restored on another device after sign-in",
+      "url": "https://github.com/acme/web/pull/6452"
+    },
     "acme/web#906": {
       "auto_merge": true,
       "base": "you/abc-147-step-1",
+      "branch": "you/abc-147-step-2",
       "checks": "success",
       "comments": 0,
       "draft": false,
@@ -53,6 +139,60 @@
       "state": "OPEN",
       "title": "Billing export, step 2: CSV writer",
       "url": "https://github.com/acme/web/pull/906"
+    },
+    "acme/web#908": {
+      "auto_merge": false,
+      "base": "you/abc-147-step-2",
+      "branch": "you/abc-147-step-3",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "9b1e07c4a2d8",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "awaiting",
+        "label": "awaiting review · alex",
+        "needs": false
+      },
+      "number": 908,
+      "owner": null,
+      "queued": false,
+      "requested": [
+        "alex"
+      ],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Billing export, step 3: upload to object storage",
+      "url": "https://github.com/acme/web/pull/908"
+    },
+    "acme/web#909": {
+      "auto_merge": false,
+      "base": "you/abc-147-step-3",
+      "branch": "you/abc-147-step-4",
+      "checks": "pending",
+      "comments": 0,
+      "draft": false,
+      "head": "c0d4e5f6a7b8",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "kind": "pending",
+        "label": "checks running",
+        "needs": false
+      },
+      "number": 909,
+      "owner": null,
+      "queued": false,
+      "requested": [],
+      "review": "",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Billing export, step 4: email the download link",
+      "url": "https://github.com/acme/web/pull/909"
     }
   },
   "review_requests": [

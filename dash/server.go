@@ -79,6 +79,7 @@ type Server struct {
 	boot            string // per start, on the stylesheet's and script's URLs, so a new build is never served stale
 
 	refreshing sync.Mutex // one Refresh at a time: the poll and a POST both call it
+	dismissing sync.Mutex // one edit of dismissed-prs.json at a time
 	mu         sync.Mutex
 	main       []byte
 	view       View

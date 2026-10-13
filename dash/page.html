@@ -25,6 +25,7 @@
 </html>{{end}}
 
 {{define "main"}}<span hidden data-title="{{.Title}}"></span>
+{{if .Awaiting}}{{template "awaiting" .}}{{end}}
 {{template "group" (group "needs" "Needs you" .NeedsYou "Nothing waits on you.")}}
 {{template "group" (group "progress" "In progress" .InProgress "No live workers.")}}
 {{template "group" (group "done" "Done" .Done "Nothing finished in the last two weeks.")}}
@@ -49,6 +50,25 @@
 {{range .Folds}}<div class="fold" id="{{.ID}}"><p>{{.Text}}</p><div class="swap has-acts"><p class="fold-label">{{.Label}}</p>{{template "actions" .Actions}}</div>{{if .Why}}<p class="detail" title="{{.Why}}">{{.Why}}</p>{{end}}</div>{{end}}
 </div>
 </li>{{end}}{{end}}
+
+{{/* The Awaiting review row: a pill per PR that waits on a teammate's review, shown only when there is one. A PR stacked
+     on one stacks behind its pill, a quiet edge and a "+n" while collapsed, and fans out below it on hover and focus. */}}
+{{define "awaiting"}}<section class="awaiting" aria-labelledby="h-awaiting">
+<h2 id="h-awaiting">Awaiting review <span class="count">{{.AwaitingCount}}</span></h2>
+<ul class="aprs">{{range .Awaiting}}<li{{if .Behind}} class="stack{{if gt (len .Behind) 1}} deep{{end}}"{{end}}>{{template "apr" .}}
+{{- if .Behind}}<ul class="behind" aria-label="Stacked on {{.Num}}">{{range .Behind}}<li>{{template "apr" .}}</li>{{end}}</ul>{{end}}</li>{{end}}</ul>
+</section>{{end}}
+
+{{/* A pill: the whole of it links to the PR, the title in ink and its #n muted; on hover and focus the #n swaps for Re-check
+     and Dismiss, real buttons beside the link (never inside it). */}}
+{{define "apr"}}<div class="apr{{if .Rechecking}} rechecking{{end}}" id="{{.ID}}">
+<a class="apr-link" href="{{.URL}}" title="{{.Title}}&#10;{{.Label}}" aria-label="{{.Title}}, {{.Num}}, {{.Label}}{{if .WaitsOn}}, waits on {{.WaitsOn}}{{end}}{{if .Behind}}, {{len .Behind}} stacked on it{{end}}{{if .Rechecking}}, re-checking{{end}}">{{.Short}}</a>
+<div class="swap has-acts"><span class="apr-meta"><span class="apr-num">{{.Num}}</span>{{if .WaitsOn}}<span class="apr-waits">waits on {{.WaitsOn}}</span>{{end}}{{if .Behind}}<span class="apr-more">+{{len .Behind}}</span>{{end}}</span>
+{{- with .Actions}}<div class="acts" data-item="{{.Item}}">
+{{- if .Recheck}}<button type="button" class="pill recheck" data-option="recheck" aria-label="Re-check and fix"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg></button>{{end}}
+{{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" data-hides aria-label="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end -}}
+</div>{{end}}</div>
+</div>{{end}}
 
 {{define "sprite"}}<svg width="0" height="0" class="sprite" aria-hidden="true"><defs>
 {{/* The row glyphs, drawn in the watch.svg family (assets/src/icons.py): stroke 2 from .icon, round caps, a 16 px

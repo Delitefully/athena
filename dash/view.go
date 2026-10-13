@@ -38,6 +38,10 @@ type Item struct {
 	Note      template.HTML // an ask's text, in athena's voice
 	Folds     []Fold        // asks about this row's PR, shown under it
 	Actions   *Actions      // the pills the row offers, or nil
+
+	pr     *PR    // its PR, for the Awaiting review row
+	branch string // that PR's head branch
+	moved  bool   // placed by its PR's whose-move state, not by its worker's own state
 }
 
 // Fold is an ask shown under the row of the PR it is about.
@@ -55,7 +59,8 @@ type Actions struct {
 	Options []Option // athena's, at most two
 	Discuss bool     // "Discuss in Athena"
 	Reply   bool     // "Reply…": a line of free text
-	Dismiss bool     // a note athena gave no options: "×"
+	Dismiss bool     // a note athena gave no options, or a PR on the Awaiting review row: "×"
+	Recheck bool     // a PR on the Awaiting review row: "Re-check and fix", one queued at a time
 	Hides   bool     // an answer hides the ask until athena takes it up
 }
 
@@ -68,6 +73,8 @@ func (a *Actions) allows(option, text string, discuss bool) bool {
 		return a.Reply
 	case option == "dismiss":
 		return a.Dismiss
+	case option == "recheck":
+		return a.Recheck
 	}
 	for _, o := range a.Options {
 		if o.ID == option {
@@ -82,12 +89,31 @@ type PRView struct {
 	StaleSince                float64 // when set, the PR state is from watch.json as of this time
 }
 
+// Pill is a PR on the Awaiting review row: one that waits on a teammate's review, with the PRs stacked on it behind.
+type Pill struct {
+	ID, Key, URL string // Key: owner/name#n
+	Title        string // in full, for the tooltip
+	Short        string // the title as the pill shows it
+	Num          string // "#906"
+	Label        string // whose move it waits on: "awaiting review · alex", or a dependent's own state
+	WaitsOn      string // a dependent's: the #n of the PR it is stacked on
+	Rechecking   bool   // a re-check is queued for athena
+	Actions      *Actions
+	Behind       []Pill // the PRs stacked on it, in chain order
+
+	head string
+}
+
 type View struct {
 	Title                      string
+	Awaiting                   []Pill
+	AwaitingCount              int // every PR on the row, those stacked behind a pill too
 	NeedsYou, InProgress, Done []Item
 	Notices                    []string
 
 	actionable map[string]*Actions // every row and fold the page offers actions on, by Item
+	pills      map[string]*Pill    // every pill on the Awaiting review row, front or behind, by its action item
+	awaiting   []Item              // PRs waiting on a teammate's review, before stacking
 }
 
 // Build sorts the snapshot into the page's three groups. now is in Unix seconds.
@@ -153,6 +179,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			it.PR = prView(pr, stale)
 			it.When = maxf(hook.TS, w.Updated)
 			it.Actions = &Actions{Item: it.ID, Discuss: true, Reply: true} // no dismiss: the row is the worker's state
+			it.pr, it.branch = pr, w.Branch
 			if pr != nil {
 				shown[prKey(pr.URL)] = true
 			}
@@ -177,6 +204,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 				shown[prKey(f.URL)] = true
 				if f.State == "OPEN" && f.Move != nil {
 					it.PR = prView(f, followedStale)
+					it.pr, it.branch = f, w.Branch
 					placeMove(&v, it, f.Move)
 					continue // still open: its row says whose move it is
 				}
@@ -209,7 +237,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 			continue
 		}
 		shown[prKey(p.URL)] = true
-		it := Item{ID: "pr-" + slug(k), Name: repoName(prKey(p.URL)), Title: p.Title, PR: prView(p, followedStale)}
+		it := Item{ID: "pr-" + slug(k), Name: repoName(prKey(p.URL)), Title: p.Title, PR: prView(p, followedStale), pr: p}
 		placeMove(&v, it, p.Move)
 	}
 	n := 0
@@ -231,6 +259,8 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		v.NeedsYou = append(v.NeedsYou, it)
 	}
 	v.Done = append(v.Done, retired...)
+	stackAwaiting(&v, s.Stacks, s.Dismissed, waiting(s.Actions), now)
+	v.AwaitingCount = len(v.pills)
 	foldAsks(&v, s.Asks, waiting(s.Actions), now) // once every row is in, retired ones too
 	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
@@ -242,6 +272,9 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		v.Title = fmt.Sprintf("(%d) athena", n)
 	}
 	v.actionable = map[string]*Actions{}
+	for key, p := range v.pills {
+		v.actionable[key] = p.Actions
+	}
 	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
 		for _, it := range group {
 			if it.Actions != nil {
@@ -358,7 +391,7 @@ var moveMerges = map[string]bool{"approved": true, "mergeable": true}
 
 // placeMove puts a PR's row where whose move it is says: Needs you when it is the human's, else In progress.
 func placeMove(v *View, it Item, m *Move) {
-	it.Label, it.Badge = m.Label, m.Needs
+	it.Label, it.Badge, it.moved = m.Label, m.Needs, true
 	switch m.Kind {
 	case "approved", "mergeable":
 		it.Icon = "ready"
@@ -380,6 +413,10 @@ func placeMove(v *View, it Item, m *Move) {
 	}
 	if it.PR != nil {
 		it.PR.Review = "" // the label says it
+	}
+	if m.Kind == "awaiting" && it.pr != nil && prKey(it.pr.URL) != "" {
+		v.awaiting = append(v.awaiting, it) // the Awaiting review row's, once stackAwaiting has sorted out the stacks
+		return
 	}
 	if m.Needs {
 		v.NeedsYou = append(v.NeedsYou, it)

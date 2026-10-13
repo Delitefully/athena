@@ -45,39 +45,44 @@ func find(items []Item, name string) Item {
 
 func TestBuildGroupsTheFixture(t *testing.T) {
 	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
-	if got := ids(v.NeedsYou); got != "abc-102 abc-106 abc-108 abc-104 web note note note" {
+	if got := ids(v.NeedsYou); got != "abc-102 abc-106 abc-108 abc-104 web note note note note" {
 		t.Fatalf("needs you: %s", got)
 	}
-	if got := ids(v.InProgress); got != "abc-101 abc-103 abc-107 abc-109 abc-452 web" {
+	if got := ids(v.InProgress); got != "abc-101 abc-103 abc-107 abc-109" {
 		t.Fatalf("in progress: %s", got)
 	}
 	if got := ids(v.Done); got != "abc-100 abc-099 abc-098 abc-097" {
 		t.Fatalf("done: %s", got)
 	}
-	if v.Title != "(8) athena" {
+	if v.Title != "(9) athena" {
 		t.Fatalf("title %q", v.Title)
 	}
 
-	// The screenshot case: a live idle worker's PR and a stacked PR, each awaiting a teammate's review with
-	// auto-merge on, and each linked from a note that folds into its row.
-	own := find(v.InProgress, "abc-452")
-	if own.Label != "awaiting review · alex" || own.Badge || own.PR.Text != "#907" || own.PR.Review != "" || len(own.Folds) != 1 ||
-		string(own.Folds[0].Text) != "Approve and merge ABC-452" {
-		t.Fatalf("abc-452 %+v %+v", own, own.PR)
+	// The screenshot case: every PR awaiting a teammate's review is a pill on the Awaiting review row, a live idle
+	// worker's (#907) as much as a followed one's, and the stack.json chain 906 <- 908 <- 909 is one pill with two behind.
+	if got := pillKeys(v.Awaiting); got != "acme/api#71 acme/docs#212 acme/web#906[908 909] acme/web#907 acme/web#6452" {
+		t.Fatalf("awaiting: %s", got)
 	}
-	stack := v.InProgress[len(v.InProgress)-1]
-	if stack.Label != "awaiting review · alex" || stack.Title != "Billing export, step 2: CSV writer" || stack.PR.Text != "#906" ||
-		stack.Ticket != "" || len(stack.Folds) != 1 || string(stack.Folds[0].Text) != "Billing export step 2 is next to land" {
-		t.Fatalf("stack row %+v %+v", stack, stack.PR)
+	own := v.Awaiting[3]
+	if own.Label != "awaiting review · alex" || own.Title != "Saved searches sync across devices" || own.Num != "#907" || own.URL != "https://github.com/acme/web/pull/907" {
+		t.Fatalf("abc-452's pill %+v", own)
 	}
-	notes := v.NeedsYou[len(v.NeedsYou)-3:]
-	for i, want := range []string{"athena asks", "athena asks", "athena asks"} {
+	// An ask about a PR on the row has no row to fold into: it is a row of its own.
+	notes := v.NeedsYou[len(v.NeedsYou)-4:]
+	if string(notes[2].Note) != "Billing export step 2 is next to land" {
+		t.Fatalf("the note about #906 %q", notes[2].Note)
+	}
+	// One about a PR with a row folds into it.
+	if f := find(v.NeedsYou, "abc-108").Folds; len(f) != 1 || string(f[0].Text) != "Approve and merge ABC-108" {
+		t.Fatalf("abc-108 folds %+v", f)
+	}
+	for i, want := range []string{"athena asks", "athena asks", "note", "athena asks"} {
 		if notes[i].Label != want {
 			t.Errorf("note %d %q: label %q, want %q", i, notes[i].Note, notes[i].Label, want)
 		}
 	}
-	if !strings.Contains(string(notes[2].Note), "Close ABC-4550") {
-		t.Fatalf("the question %q", notes[2].Note)
+	if !strings.Contains(string(notes[3].Note), "Close ABC-4550") {
+		t.Fatalf("the question %q", notes[3].Note)
 	}
 	// A retired worker whose PR is still open leaves Done for the row of whose move it is.
 	if r := find(v.NeedsYou, "abc-104"); r.Label != "changes requested" || !r.Badge || r.PR.Text != "#64" || r.Ticket != "ABC-104" {
@@ -167,12 +172,12 @@ func TestBuildCases(t *testing.T) {
 		{"pending goal", Worker{Name: "a", State: "live", GoalPending: true}, Hook{}, nil, "needs", "waiting at a startup prompt"},
 		{"blocked report", live("b"), Hook{State: "blocked", Report: &Report{Status: "BLOCKED", Concerns: []string{"x"}}}, nil, "needs", "blocked"},
 		{"blocked, its PR approved", live("b2"), Hook{State: "blocked"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "needs", "permission prompt"},
-		{"done, a teammate reviews", live("c"), Hook{State: "done"}, &WatchWorker{PR: awaiting()}, "progress", "awaiting review · alex"},
+		{"done, a teammate reviews", live("c"), Hook{State: "done"}, &WatchWorker{PR: awaiting()}, "awaiting", "awaiting review · alex"},
 		{"done, nobody asked to review", live("c2"), Hook{State: "done"}, &WatchWorker{PR: moved("no reviewer requested", "unrequested", true)}, "needs", "no reviewer requested"},
 		{"done, checks failing", live("d"), Hook{State: "done"}, &WatchWorker{PR: moved("checks failing", "failing", false)}, "progress", "checks failing"},
-		{"idle after a DONE report", live("l"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: awaiting()}, "progress", "awaiting review · alex"},
+		{"idle after a DONE report", live("l"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: awaiting()}, "awaiting", "awaiting review · alex"},
 		{"exited after DONE", live("m"), Hook{State: "exited", LastReport: &Report{Status: "DONE_WITH_CONCERNS"}}, &WatchWorker{PR: moved("no reviewer requested", "unrequested", true)}, "needs", "no reviewer requested"},
-		{"idle with no report", live("n"), Hook{State: "idle"}, &WatchWorker{PR: awaiting()}, "progress", "awaiting review · alex"},
+		{"idle with no report", live("n"), Hook{State: "idle"}, &WatchWorker{PR: awaiting()}, "awaiting", "awaiting review · alex"},
 		{"no review data yet", live("n2"), Hook{State: "idle"}, &WatchWorker{PR: open(false, "", "success")}, "progress", "idle"},
 		{"done, draft", live("e"), Hook{State: "done"}, &WatchWorker{PR: open(true, "", "success")}, "progress", "done, athena reviewing"},
 		{"approved while working", live("f"), Hook{State: "working"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "working"},
@@ -202,9 +207,15 @@ func TestBuildCases(t *testing.T) {
 				s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{c.w.Name: *c.watch}}
 			}
 			v := Build(s, fixtureNow, "acme")
+			if c.group == "awaiting" {
+				if len(v.Awaiting) != 1 || v.Awaiting[0].Label != c.label || len(v.NeedsYou)+len(v.InProgress)+len(v.Done) != 0 {
+					t.Fatalf("want a pill %q, got awaiting=%+v needs=%+v progress=%+v done=%+v", c.label, v.Awaiting, v.NeedsYou, v.InProgress, v.Done)
+				}
+				return
+			}
 			groups := map[string][]Item{"needs": v.NeedsYou, "progress": v.InProgress, "done": v.Done}
 			got := groups[c.group]
-			if len(got) != 1 || got[0].Label != c.label {
+			if len(got) != 1 || got[0].Label != c.label || len(v.Awaiting) != 0 {
 				t.Fatalf("want %s %q, got needs=%+v progress=%+v done=%+v", c.group, c.label, v.NeedsYou, v.InProgress, v.Done)
 			}
 		})
@@ -372,8 +383,11 @@ func TestEveryFollowedPRHasOneRowByWhoseMoveItIs(t *testing.T) {
 	if got := label(v.NeedsYou); got != "#12 checks failing | #2 no reviewer requested | #14 approved · yours to merge" {
 		t.Fatalf("needs you: %s", got)
 	}
-	if got := label(v.InProgress); got != "#1 awaiting review · alex | #10 approved · in merge queue | #11 approved · auto-merge on | #13 draft" {
+	if got := label(v.InProgress); got != "#10 approved · in merge queue | #11 approved · auto-merge on | #13 draft" {
 		t.Fatalf("in progress: %s", got)
+	}
+	if got := pillKeys(v.Awaiting); got != "acme/web#1" { // its live worker's PR, once
+		t.Fatalf("awaiting: %s", got)
 	}
 	if got := label(v.Done); got != "#3 merged" {
 		t.Fatalf("done: %s", got)
@@ -388,8 +402,8 @@ func TestEveryFollowedPRHasOneRowByWhoseMoveItIs(t *testing.T) {
 
 func TestNotesFoldIntoTheRowOfThePRTheyLink(t *testing.T) {
 	s := Snapshot{Hooks: map[string]Hook{}, Workers: []Worker{{Name: "abc-1", State: "live"}}}
-	s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"abc-1": {PR: followed(1, "", "awaiting review · alex", "awaiting", false)}},
-		PRs: map[string]*PR{"acme/web#9": followed(9, "", "awaiting review · sam", "awaiting", false)}}
+	s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"abc-1": {PR: followed(1, "", "approved · in merge queue", "queued", false)}},
+		PRs: map[string]*PR{"acme/web#9": followed(9, "", "approved · auto-merge on", "queued", false)}}
 	s.Asks = asksOf(
 		"Merge **ABC-1**: https://github.com/Acme/Web/pull/1",
 		"Then [the next one](https://github.com/acme/web/pull/9).",
