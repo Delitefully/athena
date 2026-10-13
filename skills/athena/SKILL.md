@@ -40,6 +40,8 @@ FORBIDDEN: <never do without the human: migrations, deleting data, touching prod
 NOTES: <repo quirks, people to avoid pinging, model choice>
 ```
 
+**VERIFY must be able to pass.** The goal holds the worker to it literally, so name the packages or test targets the change touches rather than a whole-repo command, and leave out checks that already fail on main (a platform-only build, tests broken upstream) or tools the repo does not configure. Note such pitfalls per repo in `notes.md`.
+
 6. **Check for gaps.** If the ticket has no checkable acceptance criteria or no way to verify, ask the human before launching (decision D6). Otherwise show a launch card and launch:
 
 ```
@@ -57,7 +59,7 @@ athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <ABC-
 
 With `--ultracode`, the spawn output and the ledger carry `ultracode: true` (and `workflow_size`), and `athena status` marks the worker `UC` (`UC:<size>`).
 
-`athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (6 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
+`athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (6 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). To report the quota, read `used_percent` the way `athena_lib/quota.py` does (`python3 -c "from athena_lib import quota; print(quota.five_hour_used())"` in the athena repo) and say "N% used". Never quote the bars in `herdr agent list` (`5h ▰▰▰▰▰▰▰▰▰▱ 91%`): they show what is left, so 91% there means 9% used. Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 
 Exit code 3 means the worker is live but pending: its Claude stopped at a startup prompt (for example "Is this a project you trust?"), so its goal is not sent yet. Tell the human the space and the prompt from the message; they answer it in its column, never you. `athena watch` sends the goal once the worker is ready (`athena resume <w>` sends it by hand). `athena status` shows it as `goal pending (startup prompt)`; `athena retire <w>` works on it. Any other launch failure removes its space, or `athena status` lists it with the `athena retire` command to run.
 
@@ -75,6 +77,7 @@ The mod sends only the lines below that need you (`athena watch HH:MM:`, then on
 | `<w> ... (startup prompt)` | A pending worker: tell the human which space and prompt; they answer it there. `<w> goal sent` follows on its own; a later `->idle` or `->working` is normal. `<w> goal unconfirmed`: read its pane before resending anything. |
 | `<w> report DONE` / `DONE_WITH_CONCERNS` | Run section 4 (verify and review). |
 | `<w> report NEEDS_CONTEXT` / `BLOCKED` | Supply the context or escalate; then SendMessage the worker. |
+| A worker asks to amend VERIFY (a check that cannot pass for reasons outside its PR) | Confirm the cause yourself (for example, the same failure on origin/main). If the PR is still sound, tell the worker the amended check and the reason, then `athena nudge <w> "/goal clear"`: the goal accepts only the human's word, so your amendment alone leaves it looping. Never loosen the goal text instead. Tell the human in one line which check you amended and why. |
 | `<w> state ...->idle` without a report | It stopped early. `herdr agent read <w> --source visible --lines 40`, then nudge with SendMessage: what is left of the goal. Twice idle with no progress: tell the human. |
 | `<w> checks ...->failure` | Classify (real failure, flake, infra) from `gh pr checks`. Real: SendMessage the worker the failing check and log excerpt. Flake: rerun once with `gh run rerun --failed`. Infra: tell the human. |
 | `<w> review comments +N` / `review CHANGES_REQUESTED` | Triage each comment: fix (send to worker), dismiss (reply with a reason only if the human allows), or ask. Security, auth, billing and migrations always go to the human. Order: conflicts, then threads, then CI. |
