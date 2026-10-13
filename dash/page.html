@@ -63,7 +63,7 @@
      and Dismiss, real buttons beside the link (never inside it). */}}
 {{define "apr"}}<div class="apr{{if .Rechecking}} rechecking{{end}}" id="{{.ID}}">
 <a class="apr-link" href="{{.URL}}" title="{{.Title}}&#10;{{.Label}}" aria-label="{{.Title}}, {{.Num}}, {{.Label}}{{if .WaitsOn}}, waits on {{.WaitsOn}}{{end}}{{if .Behind}}, {{len .Behind}} stacked on it{{end}}{{if .Rechecking}}, re-checking{{end}}">{{.Short}}</a>
-<div class="swap has-acts"><span class="apr-meta"><span class="apr-num">{{.Num}}</span>{{if .WaitsOn}}<span class="apr-waits">waits on {{.WaitsOn}}</span>{{end}}{{if .Behind}}<span class="apr-more">+{{len .Behind}}</span>{{end}}</span>
+<div class="swap has-acts"><span class="apr-meta" aria-hidden="true"><span class="apr-num">{{.Num}}</span>{{if .WaitsOn}}<span class="apr-waits">waits on {{.WaitsOn}}</span>{{end}}{{if .Behind}}<span class="apr-more">+{{len .Behind}}</span>{{end}}</span>
 {{- with .Actions}}<div class="acts" data-item="{{.Item}}">
 {{- if .Recheck}}<button type="button" class="pill recheck" data-option="recheck" aria-label="Re-check and fix"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg></button>{{end}}
 {{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" data-hides aria-label="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end -}}

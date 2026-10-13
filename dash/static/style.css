@@ -150,6 +150,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .reply input::placeholder { color: var(--muted); }
 /* An answered ask leaves by its height alone, never a fade. */
 .collapsing { overflow: hidden; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; border-bottom-width: 0 !important; }
+.apr.collapsing { padding-inline: 0 !important; border-width: 0 !important; } /* a pill leaves by its width */
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1; max-width: calc(100vw - 32px);
   display: flex; align-items: center; gap: 16px; padding: 10px 12px 10px 16px; border-radius: 8px;
@@ -160,6 +161,61 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .undo:disabled { opacity: .5; cursor: default; }
 .undo:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; }
 
+/* Awaiting review: the PRs that wait on a teammate, a row of compact pills above the columns, only when there are any.
+   A pill is one link to its PR; its #n swaps for Re-check and Dismiss on hover and focus, as a row's label line swaps
+   for its pills. A PR stacked on another sits behind it: a quiet edge and a "+n", fanning out below on hover and focus. */
+.awaiting { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 22px; margin-bottom: 34px; }
+.awaiting h2 { font-size: 24px; padding: 0; border: 0; white-space: nowrap; gap: 8px; }
+.awaiting h2 .count { font-size: 16px; }
+.aprs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 8px; }
+.aprs > li { position: relative; z-index: 0; min-width: 0; max-width: 100%; }
+.aprs > li:is(:hover, :focus-within) { z-index: 2; }
+.apr {
+  position: relative; display: flex; align-items: center; gap: 8px; height: 28px; max-width: 100%; padding: 0 9px 0 12px;
+  border: 1px solid var(--rule); border-radius: 14px; background: var(--bg); font-size: 13px; line-height: 1; white-space: nowrap;
+}
+.apr:is(:hover, :focus-within) { border-color: var(--muted); background-image: linear-gradient(var(--wash), var(--wash)); }
+.apr-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); text-decoration: none; }
+.apr-link::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; } /* the whole pill is the link */
+.apr-link:focus-visible { outline: none; }
+.apr:has(.apr-link:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
+.apr > .swap { margin: 0; position: relative; z-index: 1; pointer-events: none; }
+.apr > .swap.has-acts { min-height: 0; }
+.apr-meta { display: flex; align-items: center; gap: 6px; align-self: center; color: var(--muted); }
+.apr-waits { font-size: 12px; }
+.apr.rechecking .apr-meta::after { content: "re-checking…"; font-size: 12px; }
+.apr.rechecking .recheck { display: none; }
+.apr .acts { gap: 3px; justify-content: flex-end; pointer-events: auto; }
+.apr .pill { width: 20px; height: 20px; padding: 0; justify-content: center; }
+.apr:hover > .swap > .acts, .apr:focus-within > .swap > .acts { clip-path: inset(-34px -8px -6px -4px); }
+.apr:hover > .swap > .apr-meta, .apr:focus-within > .swap > .apr-meta { clip-path: inset(0 0 0 100%); }
+.pill.recheck::after {
+  content: attr(aria-label); display: none; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  padding: 4px 8px; border-radius: 5px; background: var(--ink); color: var(--bg); pointer-events: none;
+  font: 500 12px/1.2 "Instrument Sans", system-ui, sans-serif; white-space: nowrap;
+}
+.pill.recheck:is(:hover, :focus-visible)::after { display: block; }
+/* The stacked edge: one outline peeking out under the pill, two for a deeper stack, narrower each time. */
+.stack > .apr::before, .stack.deep > .apr::after {
+  content: ""; position: absolute; z-index: -1; top: 4px; bottom: -5px; left: 7px; right: 7px;
+  border: 1px solid var(--rule); border-radius: inherit; background: var(--bg);
+}
+.stack.deep > .apr::after { top: 8px; bottom: -9px; left: 14px; right: 14px; z-index: -2; }
+.apr-more { font-size: 12px; }
+.behind {
+  position: absolute; top: 100%; left: 0; width: max-content; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 8px 0 0; clip-path: inset(0 0 100% 0); visibility: hidden; /* no antialiased sliver while closed */
+}
+.stack:is(:hover, :focus-within) > .apr::before, .stack:is(:hover, :focus-within) > .apr::after { visibility: hidden; } /* fanned out */
+.behind > li { max-width: min(560px, calc(100vw - 80px)); }
+.stack:is(:hover, :focus-within) > .behind { clip-path: inset(-40px -48px -48px -8px); visibility: visible; }
+@media (hover: none), (max-width: 760px) {
+  .apr > .swap { display: flex; align-items: center; gap: 8px; }
+  .apr .acts { margin-top: 0; }
+  .behind { position: static; width: auto; clip-path: none; visibility: visible; }
+  .stack > .apr::before, .stack.deep > .apr::after { visibility: hidden; }
+}
+
 .notices { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; color: var(--muted); }
 .notices p { margin: 0 0 2px; }
 
@@ -168,7 +224,13 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
   header::after { animation: draw 1.1s var(--arrive) both; }
   .enter { animation: reveal .7s var(--arrive) both; }
   .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
-  .collapsing { transition: height .16s ease-out, padding .16s ease-out, margin .16s ease-out; }
+  .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
+  .stack:is(:hover, :focus-within) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
+  .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }
+  .behind > li:nth-child(2) { transform: translateY(-20px); }
+  .behind > li:nth-child(n+3) { transform: translateY(-30px); }
+  .stack:is(:hover, :focus-within) > .behind > li { transform: none; }
+  .collapsing { transition: height .16s ease-out, width .16s ease-out, padding .16s ease-out, margin .16s ease-out; }
   .toast.show { animation: reveal .3s var(--arrive) both; }
 }
 @keyframes draw { from { transform: scaleX(0); } }
