@@ -39,7 +39,7 @@ Contrast (WCAG 2): indigo on linen 12.9:1, madder on linen 5.2:1, linen-lit on i
 
 ## Motion
 
-The three README graphics (`assets/one-thread.svg`, `ticket-path.svg`, `watch.svg`) share one protagonist, the red thread, and these rules:
+The three explainer graphics (in the README and [How it works](how-it-works.md)) (`assets/one-thread.svg`, `ticket-path.svg`, `watch.svg`) share one protagonist, the red thread, and these rules:
 
 1. Only athena is red: its thread, its replies and its knot. Workers, people, events and labels stay ink; an event that matters is full ink, routine progress is muted.
 2. Things appear by a moving edge (the thread drawing itself, a line running in) in the direction of cause and effect, never by a uniform fade.
