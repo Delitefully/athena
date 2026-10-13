@@ -57,4 +57,4 @@ and `athena` brings you back.
 - [Dashboard](docs/dashboard.md): what each row means, and how the page is built.
 - [Troubleshooting](docs/troubleshooting.md): common errors and their fixes.
 - [Development](docs/development.md): the code layout, tests, the lab, and updating after an edit.
-- [Brand](docs/brand.md) and [decisions](docs/decisions.md): the look, and the choices athena was built on.
+- [Decisions](docs/decisions.md): the choices athena was built on.
