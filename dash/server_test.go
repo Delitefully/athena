@@ -65,9 +65,9 @@ func TestPageRendersTheThreeGroups(t *testing.T) {
 		t.Fatalf("%d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 	for _, want := range []string{
-		"<title>(9) athena</title>",
+		"<title>(12) athena</title>",
 		`<h2 id="h-awaiting">Awaiting review <span class="count">7</span></h2>`,
-		`<h2 id="h-needs">Needs you <span class="count">9</span></h2>`,
+		`<h2 id="h-needs">Needs you <span class="count">12</span></h2>`,
 		`<h2 id="h-progress">In progress <span class="count">4</span></h2>`,
 		`<div class="fold" id="ask-a3"><p>Approve and merge ABC-108</p>`,
 		`<p class="meta">athena asks</p>`,

@@ -45,7 +45,7 @@ func find(items []Item, name string) Item {
 
 func TestBuildGroupsTheFixture(t *testing.T) {
 	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
-	if got := ids(v.NeedsYou); got != "abc-102 abc-106 abc-108 abc-104 web note note note note" {
+	if got := ids(v.NeedsYou); got != "abc-102 abc-106 web abc-108 abc-104 api web web note note note note" {
 		t.Fatalf("needs you: %s", got)
 	}
 	if got := ids(v.InProgress); got != "abc-101 abc-103 abc-107 abc-109" {
@@ -54,7 +54,7 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 	if got := ids(v.Done); got != "abc-100 abc-099 abc-098 abc-097" {
 		t.Fatalf("done: %s", got)
 	}
-	if v.Title != "(9) athena" {
+	if v.Title != "(12) athena" {
 		t.Fatalf("title %q", v.Title)
 	}
 
@@ -88,7 +88,7 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 	if r := find(v.NeedsYou, "abc-104"); r.Label != "changes requested" || !r.Badge || r.PR.Text != "#64" || r.Ticket != "ABC-104" {
 		t.Fatalf("abc-104 %+v %+v", r, r.PR)
 	}
-	rr := v.NeedsYou[4]
+	rr := v.NeedsYou[7]
 	if rr.Label != "your review requested" || !rr.Badge || rr.Title != "Tidy the export queue" || rr.PR.URL != "https://github.com/acme/web/pull/6170" || rr.Detail != "by kim" {
 		t.Fatalf("review request %+v %+v", rr, rr.PR)
 	}

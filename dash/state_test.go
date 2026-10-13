@@ -42,7 +42,7 @@ func write(t *testing.T, path, text string) {
 
 func TestLoadFixture(t *testing.T) {
 	s := NewStore("testdata/state").Load()
-	if len(s.Workers) != 13 || len(s.Hooks) != 12 || s.Watch == nil || len(s.Watch.Workers) != 8 || len(s.Watch.PRs) != 7 {
+	if len(s.Workers) != 13 || len(s.Hooks) != 12 || s.Watch == nil || len(s.Watch.Workers) != 8 || len(s.Watch.PRs) != 10 {
 		t.Fatalf("workers %d hooks %d watch %+v", len(s.Workers), len(s.Hooks), s.Watch)
 	}
 	if p := s.Watch.PRs["acme/web#906"]; p == nil || p.Move == nil || p.Move.Label != "awaiting review · alex" || p.Move.Needs || p.Title == "" {
