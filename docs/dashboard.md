@@ -13,7 +13,7 @@ While HQ is open, `athena dash` serves one page on `http://127.0.0.1:2843/`: wha
 
 | Whose move | Label | Section |
 |---|---|---|
-| a teammate | `awaiting review · <names>` | In progress |
+| a teammate | `awaiting review · <names>` | Awaiting review: a row of compact pills above the columns, only when there are any. A PR stacked on one stacks behind its pill and fans out on hover. Hover a pill for **Re-check and fix** (HQ inspects the PR and gets it ready again through a worker, never merging) or **Dismiss** (hidden until its head or review state changes) |
 | nobody yet | `no reviewer requested` (a review is required, and nobody is asked) | Needs you |
 | the human, merge, no review rule | `your go to merge`, `yours to merge` (`human_merge_repos`); `in merge queue`, `auto-merge on` go to In progress. Its branch requires no review, so a green PR waits on the merge alone, once its worker is done | Needs you |
 | the human, merge | `approved · yours to merge` (`human_merge_repos`), `approved · your go to merge` (athena merges once you say go) | Needs you |
