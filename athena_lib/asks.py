@@ -295,8 +295,11 @@ def queue(now=None):
                 opt = {"id": "dismiss", "label": "×", "do": "dismiss"}
             elif pill and a.get("option") in PR_OPTIONS:
                 opt = dict(PR_OPTIONS[a["option"]])
-                if a["option"] == "go" and _HEAD.match(a.get("head") or ""):
-                    entry["head"] = a["head"]
+                if a["option"] == "go":
+                    if _HEAD.match(a.get("head") or ""):
+                        entry["head"] = a["head"]
+                    else:
+                        opt = {"id": "go-without-head", "label": "Merge", "do": "dismiss"}  # no head, no go
             entry["option"] = opt or {"id": a.get("option")}
         out.append(entry)
     return out

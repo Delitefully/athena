@@ -213,12 +213,15 @@ class AsksTest(unittest.TestCase):
         self.assertEqual((got[1]["pr"], got[1]["option"], got[1]["head"]),
                          ("acme/api#75", {"id": "go", "label": "Merge", "do": "reply"}, "8d1c2b3a4f5e"))
         self.assertEqual((got[2]["pr"], got[2].get("discuss"), "option" in got[2]), ("acme/web#48", True, False))
-        # A head on anything but a go, or one that is not a commit, never reaches HQ.
+        # A head on anything but a go never reaches HQ, and a go without a head that is a commit is no go at all:
+        # it reads as an option HQ never acts on.
         answer(4, "pr:acme/web#912", option="request-review", head="8d1c2b3a4f5e")
         answer(5, "pr:acme/api#75", option="go", head="main; rm -rf /")
+        answer(6, "pr:acme/api#75", option="go")
         got = asks.queue(now=T + asks.SETTLE)
         self.assertNotIn("head", got[3])
-        self.assertNotIn("head", got[4])
+        for e in got[4:]:
+            self.assertEqual((e["option"], "head" in e), ({"id": "go-without-head", "label": "Merge", "do": "dismiss"}, False))
 
 
 class DoorbellTest(unittest.TestCase):

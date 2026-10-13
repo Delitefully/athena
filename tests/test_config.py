@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import helpers
-from athena_lib import config, paths, quota
+from athena_lib import config, paths, pr, quota, watch
 
 # The shape of a real repo map's merge policy (synthetic names): owners in parentheses, prose after the list.
 REPO_MAP = ("# Repos\n- ABC: ~/src/web (acme/web)\n\n# Merge policy\n"
@@ -59,6 +59,23 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.get("effort"), "medium")
         self.assertTrue(config.listed("human_merge_repos", "/somewhere/web"))
         self.assertFalse(config.listed("human_merge_repos", "/somewhere/api"))
+
+    def test_listed_ignores_case_and_reads_a_slug_by_its_repo_name(self):
+        self.write({"human_merge_repos": ["platform"]})
+        for repo in ("/src/Platform", "sun-security/Platform", "sun-security/platform", "PLATFORM"):
+            self.assertTrue(config.listed("human_merge_repos", repo), repo)
+        self.assertFalse(config.listed("human_merge_repos", "sun-security/platform-api"))
+
+    def test_human_merge_fails_closed(self):
+        # The dashboard offers Merge only where a move says human_merge is False: anything uncertain must say True.
+        approved = {"state": "OPEN", "requested": [], "review": "APPROVED", "checks": "success"}
+        self.write({"human_merge_repos": ["platform"]})
+        self.assertTrue(watch._move(approved, False, "sun-security/Platform", "sun-security/Platform")["human_merge"])
+        # A local folder named apart from its GitHub repo: either name being listed is enough.
+        self.assertTrue(watch._move(approved, False, "/src/plat", "sun-security/platform")["human_merge"])
+        self.assertFalse(watch._move(approved, False, "/src/api", "acme/api")["human_merge"])
+        config.config_file().write_text('{"human_merge_repos": ["plat')  # cut off mid-write
+        self.assertTrue(watch._move(approved, False, "/src/api", "acme/api")["human_merge"])
 
     def test_the_worktree_root_follows_the_projects_folder_when_unset(self):
         self.write({"projects_dir": "~/src"})

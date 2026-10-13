@@ -118,11 +118,13 @@ def stack_snapshot(prev=None, fetched=None) -> dict:
 _FOLLOW_RETIRED = 14 * 24 * 3600  # as long as the dashboard lists a retired worker under Done
 
 
-def _human_merge(repo) -> bool:
+def _human_merge(*repos) -> bool:
+    """Whether the human merges a PR of these repos (its folder, its owner/name): either one listed is enough. An
+    unreadable config.json counts as listed, so the dashboard never offers Merge on a guess."""
     try:
-        return config.listed("human_merge_repos", repo)
+        return any(config.listed("human_merge_repos", r) for r in repos if r)
     except config.ConfigError:
-        return False
+        return True
 
 
 _CI = {}  # owner/name -> (runs CI, when asked)
@@ -148,7 +150,7 @@ def _move(p, live, repo, slug):
     """pr.move for a PR of `repo` (a path or owner/name, for human_merge_repos); whether `slug` runs CI is asked only
     for a PR with no checks yet."""
     ci = has_ci(slug) if p.get("checks") == "none" and is_slug(slug) else None
-    return pr.move(p, live=live, human_merge=_human_merge(repo or ""), ci=ci)
+    return pr.move(p, live=live, human_merge=_human_merge(repo, slug), ci=ci)
 
 
 def _retired_open() -> dict:

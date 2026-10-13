@@ -150,7 +150,8 @@ def path(key):
 
 
 def listed(key, repo) -> bool:
-    return Path(str(repo)).name in (load().get(key) or [])
+    """Whether `repo` (a path, or an owner/name slug) is named in list `key`, by its last part, ignoring case."""
+    return Path(str(repo)).name.lower() in {str(name).lower() for name in load().get(key) or []}
 
 
 def _tilde(value):
