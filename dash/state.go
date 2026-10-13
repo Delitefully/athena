@@ -62,6 +62,9 @@ type Move struct {
 	Label string
 	Kind  string // awaiting, unrequested, approved, mergeable, queued, changes, failing, draft
 	Needs bool
+	// AthenaMerges: its repo is not in human_merge_repos, so athena merges it on the human's go. A move without the
+	// field (a watch.json from before it) counts as human-merged: the dash then offers no Merge.
+	AthenaMerges bool
 }
 
 type WatchWorker struct {
@@ -367,7 +370,7 @@ func parsePR(m map[string]any) *PR {
 		Draft: truthy(m["draft"]), Review: strings.ToUpper(str(m, "review")), Checks: str(m, "checks"),
 		Comments: int(num(m, "comments")), Owner: str(m, "owner"), Head: str(m, "head"), Branch: str(m, "branch"), Base: str(m, "base")}
 	if mv := obj(m, "move"); mv != nil && str(mv, "label") != "" {
-		p.Move = &Move{Label: str(mv, "label"), Kind: str(mv, "kind"), Needs: truthy(mv["needs"])}
+		p.Move = &Move{Label: str(mv, "label"), Kind: str(mv, "kind"), Needs: truthy(mv["needs"]), AthenaMerges: mv["human_merge"] == false}
 	}
 	return p
 }

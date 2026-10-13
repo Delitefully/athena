@@ -10,6 +10,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": false,
         "kind": "changes",
         "label": "changes requested",
         "needs": true
@@ -38,6 +39,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": false,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -55,6 +57,33 @@
       "title": "Pin the Go toolchain",
       "url": "https://github.com/acme/api/pull/71"
     },
+    "acme/api#75": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-131-limits",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "8d1c2b3a4f5e",
+      "merge_state": "CLEAN",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "human_merge": false,
+        "kind": "mergeable",
+        "label": "your go to merge",
+        "needs": true
+      },
+      "number": 75,
+      "owner": null,
+      "queued": false,
+      "requested": [],
+      "review": "",
+      "reviews": {},
+      "slug": "acme/api",
+      "state": "OPEN",
+      "title": "Rate limits per API key",
+      "url": "https://github.com/acme/api/pull/75"
+    },
     "acme/docs#212": {
       "auto_merge": false,
       "base": "main",
@@ -66,6 +95,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": false,
         "kind": "awaiting",
         "label": "awaiting review · kim",
         "needs": false
@@ -94,6 +124,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · priya, sam",
         "needs": false
@@ -123,6 +154,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -151,6 +183,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "awaiting",
         "label": "awaiting review · alex",
         "needs": false
@@ -179,6 +212,7 @@
       "merge_state": "BLOCKED",
       "mergeable": "MERGEABLE",
       "move": {
+        "human_merge": true,
         "kind": "pending",
         "label": "checks running",
         "needs": false
@@ -193,6 +227,60 @@
       "state": "OPEN",
       "title": "Billing export, step 4: email the download link",
       "url": "https://github.com/acme/web/pull/909"
+    },
+    "acme/web#912": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-128-switcher",
+      "checks": "success",
+      "comments": 0,
+      "draft": false,
+      "head": "3c9a7e5d1b20",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "human_merge": true,
+        "kind": "unrequested",
+        "label": "no reviewer requested",
+        "needs": true
+      },
+      "number": 912,
+      "owner": null,
+      "queued": false,
+      "requested": [],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Workspace switcher keeps the last tab",
+      "url": "https://github.com/acme/web/pull/912"
+    },
+    "acme/web#913": {
+      "auto_merge": false,
+      "base": "main",
+      "branch": "you/abc-129-index",
+      "checks": "failure",
+      "comments": 0,
+      "draft": false,
+      "head": "6e1f0a9c8b7d",
+      "merge_state": "BLOCKED",
+      "mergeable": "MERGEABLE",
+      "move": {
+        "human_merge": true,
+        "kind": "failing",
+        "label": "checks failing",
+        "needs": true
+      },
+      "number": 913,
+      "owner": null,
+      "queued": false,
+      "requested": [],
+      "review": "REVIEW_REQUIRED",
+      "reviews": {},
+      "slug": "acme/web",
+      "state": "OPEN",
+      "title": "Search index rebuilds in the background",
+      "url": "https://github.com/acme/web/pull/913"
     }
   },
   "review_requests": [
@@ -266,6 +354,7 @@
         "head": "4f2c1ab9d0e3",
         "mergeable": "MERGEABLE",
         "move": {
+          "human_merge": true,
           "kind": "approved",
           "label": "approved · yours to merge",
           "needs": true
@@ -312,6 +401,7 @@
         "merge_state": "BLOCKED",
         "mergeable": "MERGEABLE",
         "move": {
+          "human_merge": true,
           "kind": "awaiting",
           "label": "awaiting review · alex",
           "needs": false

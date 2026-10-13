@@ -6,8 +6,9 @@ later line with only its seq and a status moves it on: queued -> done (athena ac
 within SETTLE seconds). `athena ask done` compacts it. Both writers hold `ask.lock`.
 
 `athena watch` rings HQ with `dash-queue <seq>` once an answer settles (Doorbell); HQ then reads `athena ask queue`.
-An answer's item is an ask's id, `w-<worker>` for a live worker's row, or `pr:owner/name#n` for a PR on the Awaiting
-review row (its only answer is `recheck`: inspect the PR and get it ready again, see SKILL.md).
+An answer's item is an ask's id, `w-<worker>` for a live worker's row, or `pr:owner/name#n` for a PR: on the Awaiting
+review row (`recheck`: inspect the PR and get it ready again), or a Needs you row placed by its whose-move state
+(`discuss`, `recheck`, `request-review`, or `go` with the `head` it is for). SKILL.md says what HQ does with each.
 The answers reach HQ only through that tool output: no item text or reply ever goes into a wake prompt.
 """
 import fcntl
@@ -28,7 +29,12 @@ _ID = re.compile(r"^[a-z0-9-]{1,32}$")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_KEY = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
 _PILL = re.compile(r"^pr:([a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100})#([1-9][0-9]{0,9})$")  # the dash's prKeyText
-RECHECK = {"id": "recheck", "label": "Re-check and fix", "do": "reply"}
+# A PR's buttons on the dashboard, by option: Re-check on the Awaiting review row or a failing Needs you row, Request
+# review and Merge (a go, for the head the human saw) on a Needs you row (dash/view.go prActions).
+PR_OPTIONS = {"recheck": {"id": "recheck", "label": "Re-check and fix", "do": "reply"},
+              "request-review": {"id": "request-review", "label": "Request review", "do": "reply"},
+              "go": {"id": "go", "label": "Merge", "do": "reply"}}
+_HEAD = re.compile(r"^[0-9a-f]{7,40}$")  # the dash's headText
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+")
 
 
@@ -246,7 +252,7 @@ def fold(lines):
             continue
         ts = m.get("ts") if isinstance(m.get("ts"), (int, float)) else 0
         a = {"seq": seq, "ts": ts, "item": str(m["item"]), "status": m.get("status") or "queued"}
-        for k in ("option", "text"):
+        for k in ("option", "text", "head"):
             if isinstance(m.get(k), str):
                 a[k] = m[k]
         if m.get("discuss") is True:
@@ -287,8 +293,13 @@ def queue(now=None):
             opt = next((o for o in (item or {}).get("options", []) if o.get("id") == a.get("option")), None)
             if a.get("option") == "dismiss":
                 opt = {"id": "dismiss", "label": "×", "do": "dismiss"}
-            elif pill and a.get("option") == "recheck":
-                opt = dict(RECHECK)
+            elif pill and a.get("option") in PR_OPTIONS:
+                opt = dict(PR_OPTIONS[a["option"]])
+                if a["option"] == "go":
+                    if _HEAD.match(a.get("head") or ""):
+                        entry["head"] = a["head"]
+                    else:
+                        opt = {"id": "go-without-head", "label": "Merge", "do": "dismiss"}  # no head, no go
             entry["option"] = opt or {"id": a.get("option")}
         out.append(entry)
     return out

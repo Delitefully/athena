@@ -15,6 +15,9 @@ var prKeyText = regexp.MustCompile(`^[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}#[1-9]
 
 const pillItem = "pr:"
 
+// headText is a head commit as athena watch writes it (athena_lib/pr.py: 12 hex digits), or in full.
+var headText = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
 // stackAwaiting builds the Awaiting review row. Every PR that waits on a teammate's review is a pill there, unless the
 // human dismissed it as it is now. A PR stacked on one of them (its base is that PR's head branch, or it comes later
 // in a stack.json chain) goes behind it, in chain order, when it would otherwise be an In progress row placed by its

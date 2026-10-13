@@ -110,13 +110,17 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .fold:hover > .swap > .acts, .fold:focus-within > .swap > .acts, .acts.replying {
   clip-path: inset(-34px -8px -6px -4px); /* room for a tooltip above and the focus ring */
 }
-.item:hover:not(:has(.fold:hover)) > .body > .swap:has(.acts) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap:has(.acts) > :not(.acts),
+.item:hover:not(:has(.fold:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
 .fold:hover > .swap > :not(.acts), .fold:focus-within > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
   clip-path: inset(0 0 0 100%);
 }
+/* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,
+   on the page's ground, coming in from the right edge on hover and focus. Nothing is reserved and nothing moves. */
+.swap.keep > .acts { justify-self: end; padding-left: 12px; background: var(--bg); clip-path: inset(0 0 0 100%); }
 @media (hover: none), (max-width: 760px) {
   .swap { display: block; }
   .acts { clip-path: none !important; margin-top: 6px; }
+  .swap.keep > .acts { padding-left: 0; }
   .swap > :not(.acts) { clip-path: none !important; }
 }
 .fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); align-self: center; }
@@ -127,6 +131,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
   border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);
   font: 500 13px/1 "Instrument Sans", system-ui, sans-serif; white-space: nowrap; cursor: pointer;
 }
+a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other pills */
 .pill:hover { background: var(--wash); border-color: var(--muted); }
 .pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .pill.dismiss { width: 22px; padding: 0; justify-content: center; }

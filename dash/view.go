@@ -38,6 +38,7 @@ type Item struct {
 	Note      template.HTML // an ask's text, in athena's voice
 	Folds     []Fold        // asks about this row's PR, shown under it
 	Actions   *Actions      // the pills the row offers, or nil
+	Sent      string        // a PR row's button answer athena has queued: "merge go sent"
 
 	pr     *PR    // its PR, for the Awaiting review row
 	branch string // that PR's head branch
@@ -60,9 +61,21 @@ type Actions struct {
 	Discuss bool     // "Discuss in Athena"
 	Reply   bool     // "Reply…": a line of free text
 	Dismiss bool     // a note athena gave no options, or a PR on the Awaiting review row: "×"
-	Recheck bool     // a PR on the Awaiting review row: "Re-check and fix", one queued at a time
+	Recheck bool     // a PR on the Awaiting review row, or a Needs you row's with failing checks: "Re-check and fix", one queued at a time
 	Hides   bool     // an answer hides the ask until athena takes it up
+
+	// A Needs you row placed by its PR's whose-move state answers for that PR (Item pr:owner/name#n), with the buttons
+	// that fit why it needs the human (prActions). None of them writes to GitHub: each queues an answer for athena.
+	ForPR         bool   // Discuss shows as its icon alone beside the PR's buttons
+	RequestReview bool   // no reviewer requested: "Request review", which athena does with the repo's team
+	Go            bool   // ready, in a repo athena merges: "Merge", the human's go for the PR at Head only
+	Head          string // the head commit a go is for, as the page shows the PR
+	OpenPR        string // the PR's URL: "Open PR", a plain link, where the human merges or answers the review
+	Num           string // the PR's #n, for the link's name
 }
+
+// sentText: what a PR row says while its button's answer waits for athena; each such answer is one at a time.
+var sentText = map[string]string{"recheck": "re-check sent", "request-review": "review request sent", "go": "merge go sent"}
 
 // allows: whether a POST's answer is one these actions offer.
 func (a *Actions) allows(option, text string, discuss bool) bool {
@@ -75,6 +88,10 @@ func (a *Actions) allows(option, text string, discuss bool) bool {
 		return a.Dismiss
 	case option == "recheck":
 		return a.Recheck
+	case option == "request-review":
+		return a.RequestReview
+	case option == "go":
+		return a.Go
 	}
 	for _, o := range a.Options {
 		if o.ID == option {
@@ -262,6 +279,7 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 	stackAwaiting(&v, s.Stacks, s.Dismissed, waiting(s.Actions), now)
 	v.AwaitingCount = len(v.pills)
 	foldAsks(&v, s.Asks, waiting(s.Actions), now) // once every row is in, retired ones too
+	markSent(&v, s.Actions, now)
 	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
 	if len(v.Done) > doneMax {
@@ -413,15 +431,60 @@ func placeMove(v *View, it Item, m *Move) {
 	}
 	if it.PR != nil {
 		it.PR.Review = "" // the label says it
+		if m.Kind == "failing" || m.Kind == "pending" {
+			it.PR.Checks = "" // "checks failing" or "checks running": the label says that too
+		}
 	}
 	if m.Kind == "awaiting" && it.pr != nil && prKey(it.pr.URL) != "" {
 		v.awaiting = append(v.awaiting, it) // the Awaiting review row's, once stackAwaiting has sorted out the stacks
 		return
 	}
 	if m.Needs {
+		if it.pr != nil && prKey(it.pr.URL) != "" {
+			it.Actions = prActions(it, m)
+		}
 		v.NeedsYou = append(v.NeedsYou, it)
 	} else {
 		v.InProgress = append(v.InProgress, it)
+	}
+}
+
+// prActions: a Needs you PR row's buttons, by why it needs the human. Discuss on every one; Request review when no
+// reviewer is requested; Re-check when its checks fail; Open PR when it is the human's to merge or answer, with Merge
+// beside it only in a repo athena merges (never one in human_merge_repos) and only for a head the page can name.
+func prActions(it Item, m *Move) *Actions {
+	a := &Actions{Item: pillItem + prKey(it.pr.URL), Discuss: true, ForPR: true}
+	switch m.Kind {
+	case "unrequested":
+		a.RequestReview = true
+	case "failing":
+		a.Recheck = true
+	case "approved", "mergeable":
+		a.OpenPR, a.Num = it.pr.URL, "#"+strconv.Itoa(prNumberOf(prKey(it.pr.URL)))
+		a.Go, a.Head = m.AthenaMerges && it.pr.Head != "", it.pr.Head
+	case "changes":
+		a.OpenPR, a.Num = it.pr.URL, "#"+strconv.Itoa(prNumberOf(prKey(it.pr.URL)))
+	default:
+		a.ForPR, a.Reply = false, true
+	}
+	return a
+}
+
+// markSent: a PR row whose button answer athena has queued says so, and offers that button again only once the
+// answer is done, undone or stuck (stuckAfter).
+func markSent(v *View, actions []Action, now float64) {
+	sent := map[string]string{}
+	for _, a := range actions {
+		if a.Status == "queued" && now-a.TS < stuckAfter && sentText[a.Option] != "" {
+			sent[a.Item] = sentText[a.Option]
+		}
+	}
+	for i := range v.NeedsYou {
+		it := &v.NeedsYou[i]
+		if a := it.Actions; a != nil && a.ForPR && sent[a.Item] != "" {
+			it.Sent = sent[a.Item]
+			a.RequestReview, a.Recheck, a.Go = false, false, false
+		}
 	}
 }
 

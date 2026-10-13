@@ -176,7 +176,7 @@ function closeReply(acts) {
 main.addEventListener("click", (e) => {
   const pill = e.target.closest(".pill");
   const acts = pill?.closest(".acts");
-  if (!acts) return;
+  if (!acts || pill.matches("a")) return; // Open PR is a plain link to the PR
   const label = pill.textContent.trim();
   const apr = acts.closest(".apr");
   if (pill.hasAttribute("data-reply")) openReply(acts);
@@ -186,6 +186,10 @@ main.addEventListener("click", (e) => {
     apr.classList.add("rechecking"); // the server's page says so too, once it has the answer
     answer(acts, { option: "recheck" }, "athena will re-check it");
   } else if (pill.dataset.option === "dismiss") answer(acts, { option: "dismiss" }, "Dismissed");
+  else if (pill.dataset.option === "recheck") answer(acts, { option: "recheck" }, "athena will re-check it");
+  else if (pill.dataset.option === "request-review") answer(acts, { option: "request-review" }, "athena will request a review");
+  // A go names the head this page shows: the server takes it only while the PR is still there.
+  else if (pill.dataset.option === "go") answer(acts, { option: "go", head: pill.dataset.head }, "Merge go sent to athena");
   else answer(acts, { option: pill.dataset.option }, `“${label}” sent to athena`);
 });
 main.addEventListener("submit", (e) => {

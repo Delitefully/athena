@@ -201,6 +201,29 @@ class AsksTest(unittest.TestCase):
         self.assertEqual(json.loads(self.run_cli("queue")[1]), [])
 
 
+    def test_a_needs_you_pr_rows_buttons_name_its_pr(self):
+        answer(1, "pr:acme/web#912", option="request-review")
+        answer(2, "pr:acme/api#75", option="go", head="8d1c2b3a4f5e")
+        answer(3, "pr:acme/web#48", discuss=True)
+        got = asks.queue(now=T + asks.SETTLE)
+        self.assertEqual(got[0], {"seq": 1, "item": "pr:acme/web#912", "at": T, "pr": "acme/web#912",
+                                  "url": "https://github.com/acme/web/pull/912",
+                                  "option": {"id": "request-review", "label": "Request review", "do": "reply"}})
+        # A go is for the head the human saw, and only that one.
+        self.assertEqual((got[1]["pr"], got[1]["option"], got[1]["head"]),
+                         ("acme/api#75", {"id": "go", "label": "Merge", "do": "reply"}, "8d1c2b3a4f5e"))
+        self.assertEqual((got[2]["pr"], got[2].get("discuss"), "option" in got[2]), ("acme/web#48", True, False))
+        # A head on anything but a go never reaches HQ, and a go without a head that is a commit is no go at all:
+        # it reads as an option HQ never acts on.
+        answer(4, "pr:acme/web#912", option="request-review", head="8d1c2b3a4f5e")
+        answer(5, "pr:acme/api#75", option="go", head="main; rm -rf /")
+        answer(6, "pr:acme/api#75", option="go")
+        got = asks.queue(now=T + asks.SETTLE)
+        self.assertNotIn("head", got[3])
+        for e in got[4:]:
+            self.assertEqual((e["option"], "head" in e), ({"id": "go-without-head", "label": "Merge", "do": "dismiss"}, False))
+
+
 class DoorbellTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -230,6 +253,12 @@ class DoorbellTest(unittest.TestCase):
         bell = asks.Doorbell()
         answer(1, "pr:acme/web#906", option="recheck")
         self.assertIsNone(bell.check(now=T + 1))  # still undoable from the toast
+        self.assertEqual(bell.check(now=T + asks.SETTLE), "dash-queue 1")
+
+    def test_rings_for_a_pr_rows_button_as_for_any_answer(self):
+        bell = asks.Doorbell()
+        answer(1, "pr:acme/api#75", option="go", head="8d1c2b3a4f5e")
+        self.assertIsNone(bell.check(now=T + 1))
         self.assertEqual(bell.check(now=T + asks.SETTLE), "dash-queue 1")
 
     def test_only_a_stat_while_nothing_changed(self):

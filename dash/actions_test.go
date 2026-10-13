@@ -252,7 +252,7 @@ func TestWhatEachRowOffers(t *testing.T) {
 		t.Fatalf("a live worker: Discuss and Reply, no dismiss: %+v", w)
 	}
 	if v.actionable["w-abc-098"] != nil || v.actionable["pr-acme-web-906"] != nil || v.actionable["rr-acme-web-6170"] != nil {
-		t.Fatal("no actions on retired workers or PR rows")
+		t.Fatal("no actions on a retired worker's Done row, an In progress PR row or a review request")
 	}
 	// The ask's why shows in the row's detail line, always visible.
 	for _, it := range v.NeedsYou {

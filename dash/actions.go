@@ -35,10 +35,12 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
-// actionRequest is a POST's body: one of option, text or discuss for an item, or undo for a seq.
+// actionRequest is a POST's body: one of option, text or discuss for an item, or undo for a seq. A go (option "go")
+// also names the head commit the page showed, and is taken only while the PR is still at it.
 type actionRequest struct {
 	Item    string  `json:"item"`
 	Option  string  `json:"option"`
+	Head    string  `json:"head"`
 	Text    *string `json:"text"`
 	Discuss bool    `json:"discuss"`
 	Seq     int     `json:"seq"`
@@ -134,20 +136,27 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 	if answers != 1 || req.Seq != 0 {
 		return 0, &httpError{http.StatusBadRequest, "one answer per POST"}
 	}
+	if req.Head != "" && (req.Option != "go" || !headText.MatchString(req.Head)) {
+		return 0, &httpError{http.StatusBadRequest, "a head goes with a go only"}
+	}
 	_, view, _ := s.snapshot()
 	acts := view.actionable[req.Item]
 	if acts == nil || !acts.allows(req.Option, text, req.Discuss) {
 		return 0, &httpError{http.StatusUnprocessableEntity, "the page does not offer that answer"}
+	}
+	if req.Option == "go" && (acts.Head == "" || req.Head != acts.Head) {
+		return 0, &httpError{http.StatusConflict, "the PR moved on: look again"}
 	}
 	if p := view.pills[req.Item]; p != nil && req.Option == "dismiss" {
 		return 0, s.dismiss(p, now) // the dash's own: athena is not told
 	}
 	var seq int
 	err := s.appendAction(func(cur map[int]Action, max int) (map[string]any, error) {
-		// The page check above ran outside the lock: an ask a second tab answered meanwhile is refused here. An ask
-		// shown again because its answer is stuck takes a new one; a worker's row takes any number.
+		// The page check above ran outside the lock: an ask a second tab answered meanwhile is refused here, and so is
+		// a PR's button answer (Re-check, Request review, Merge) already queued. An ask shown again because its answer
+		// is stuck takes a new one; a worker's row, or a Discuss, takes any number.
 		for _, a := range cur {
-			if (acts.Hides || acts.Recheck) && a.Item == req.Item && a.Status == "queued" && now-a.TS < stuckAfter {
+			if (acts.Hides || sentText[req.Option] != "" && a.Option == req.Option) && a.Item == req.Item && a.Status == "queued" && now-a.TS < stuckAfter {
 				return nil, &httpError{http.StatusConflict, "already answered"}
 			}
 		}
@@ -160,6 +169,9 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 			line["text"] = text
 		default:
 			line["option"] = req.Option
+			if req.Option == "go" {
+				line["head"] = req.Head
+			}
 		}
 		return line, nil
 	})
