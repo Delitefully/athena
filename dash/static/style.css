@@ -114,13 +114,13 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .fold:hover > .swap > :not(.acts), .fold:focus-within > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
   clip-path: inset(0 0 0 100%);
 }
-/* A row in Needs you by its PR's state keeps its status line, which says why: its pills have a line of their own under
-   it, held open at rest, and the same moving edge brings them in on hover and focus. */
-.swap.keep { display: block; }
-.swap.keep > .acts { margin-top: 6px; }
+/* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,
+   on the page's ground, coming in from the right edge on hover and focus. Nothing is reserved and nothing moves. */
+.swap.keep > .acts { justify-self: end; padding-left: 12px; background: var(--bg); clip-path: inset(0 0 0 100%); }
 @media (hover: none), (max-width: 760px) {
   .swap { display: block; }
   .acts { clip-path: none !important; margin-top: 6px; }
+  .swap.keep > .acts { padding-left: 0; }
   .swap > :not(.acts) { clip-path: none !important; }
 }
 .fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); align-self: center; }
