@@ -290,6 +290,18 @@ describe('the dashboard doorbell', () => {
     expect(lines[lines.length - 1]).toBe('+3 more (athena status)')
   })
 
+  test('a re-check from the Awaiting review row is an answer like any other: its ring still goes out first', async () => {
+    // The dash queues `pr:owner/repo#n` with option recheck; the mod only ever sees the ring, never the item.
+    const { w, sent, advance } = harness()
+    w.add('abc-1 report DONE')
+    w.add('abc-2 report BLOCKED')
+    w.add('dash-queue 4')
+    await advance(3000)
+    expect(sent.length).toBe(1)
+    expect(sent[0]!.split('\n')[1]).toBe('dash-queue 4')
+    expect(sent).toEqual([p('dash-queue 4', 'abc-1 report DONE', 'abc-2 report BLOCKED')])
+  })
+
   test('a ring is never dropped as a repeat: a restarted watch rings again for what is still queued', async () => {
     const { w, sent, advance } = harness({ sent: { 'dash-queue 7': 0 } })
     w.add('dash-queue 7')

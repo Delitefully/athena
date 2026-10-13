@@ -4,7 +4,7 @@ import re
 import subprocess
 
 FIELDS = ("number,url,title,state,isDraft,reviewDecision,headRefOid,mergeable,statusCheckRollup,comments,reviews,"
-          "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName")
+          "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName,headRefName")
 
 
 def reduce_checks(rollup) -> str:
@@ -47,7 +47,7 @@ def reduce(data: dict) -> dict:
         "number": data.get("number"), "url": data.get("url"), "title": data.get("title") or "",
         "state": data.get("state"), "draft": data.get("isDraft"), "review": data.get("reviewDecision") or "",
         "head": (data.get("headRefOid") or "")[:12], "mergeable": data.get("mergeable"),
-        "base": data.get("baseRefName"), "checks": reduce_checks(data.get("statusCheckRollup")),
+        "base": data.get("baseRefName"), "branch": data.get("headRefName"), "checks": reduce_checks(data.get("statusCheckRollup")),
         "comments": len(data.get("comments") or []) + sum(1 for r in data.get("reviews") or [] if r.get("body")),
         "requested": [n for n in (_reviewer(r) for r in data.get("reviewRequests") or []) if n],
         "reviews": {r["author"]["login"]: r.get("state") for r in data.get("latestReviews") or []
@@ -140,7 +140,7 @@ def is_slug(text) -> bool:
     return isinstance(text, str) and _SLUG.fullmatch(text) is not None
 
 
-_NODE = """number url title state isDraft baseRefName mergeable reviewDecision headRefOid isInMergeQueue
+_NODE = """number url title state isDraft baseRefName headRefName mergeable reviewDecision headRefOid isInMergeQueue
 mergeStateStatus autoMergeRequest { enabledAt }
 reviewRequests(first: 20) { nodes { requestedReviewer { __typename
   ... on User { login name } ... on Team { slug name } ... on Bot { login } ... on Mannequin { login } } } }

@@ -6,6 +6,8 @@ later line with only its seq and a status moves it on: queued -> done (athena ac
 within SETTLE seconds). `athena ask done` compacts it. Both writers hold `ask.lock`.
 
 `athena watch` rings HQ with `dash-queue <seq>` once an answer settles (Doorbell); HQ then reads `athena ask queue`.
+An answer's item is an ask's id, `w-<worker>` for a live worker's row, or `pr:owner/name#n` for a PR on the Awaiting
+review row (its only answer is `recheck`: inspect the PR and get it ready again, see SKILL.md).
 The answers reach HQ only through that tool output: no item text or reply ever goes into a wake prompt.
 """
 import fcntl
@@ -25,6 +27,8 @@ OPTIONS_MAX, LABEL_MAX, TEXT_MAX, WHY_MAX = 2, 16, 600, 200  # two 16-character 
 _ID = re.compile(r"^[a-z0-9-]{1,32}$")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_KEY = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+_PILL = re.compile(r"^pr:([a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100})#([1-9][0-9]{0,9})$")  # the dash's prKeyText
+RECHECK = {"id": "recheck", "label": "Re-check and fix", "do": "reply"}
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+")
 
 
@@ -265,8 +269,12 @@ def queue(now=None):
     for a in _settled(now):
         entry = {"seq": a["seq"], "item": a["item"], "at": a["ts"]}
         item = asks.get(a["item"])
+        pill = _PILL.match(a["item"])
         if a["item"].startswith("w-"):
             entry["worker"] = a["item"][2:]
+        elif pill:
+            entry["pr"] = f"{pill.group(1)}#{pill.group(2)}"
+            entry["url"] = f"https://github.com/{pill.group(1)}/pull/{pill.group(2)}"
         elif item:
             entry["ask"] = {k: item[k] for k in ("kind", "text", "why", "pr") if item.get(k)}
         else:
@@ -279,6 +287,8 @@ def queue(now=None):
             opt = next((o for o in (item or {}).get("options", []) if o.get("id") == a.get("option")), None)
             if a.get("option") == "dismiss":
                 opt = {"id": "dismiss", "label": "×", "do": "dismiss"}
+            elif pill and a.get("option") == "recheck":
+                opt = dict(RECHECK)
             entry["option"] = opt or {"id": a.get("option")}
         out.append(entry)
     return out
