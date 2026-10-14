@@ -449,6 +449,8 @@ func parseDismissed(m map[string]any) map[string]Dismissal {
 // Ask is one item of needs-you.json: a decision or note of athena's that belongs to no worker.
 type Ask struct {
 	ID, Kind, Text, Why, PR string // Kind: question or note; PR: owner/name#n, the row it folds into
+	Body                    string // Markdown the page expands under it
+	Previews                []string
 	Options                 []Option
 }
 
@@ -457,17 +459,27 @@ type Option struct {
 	ID, Label, Icon, Do string
 }
 
+// The limits `athena ask add` holds an ask to (athena_lib/asks.py; tests/test_asks.py checks they agree).
 const (
-	optionsMax = 2
-	labelMax   = 16 // two options this long, with Discuss and Reply, fit one line of the Needs column at 1480 px
-	askTextMax = 600
-	askWhyMax  = 200
+	optionsMax     = 2
+	optionsMaxBody = 4  // an ask with a body: its panel shows them as full-size buttons
+	labelMax       = 16 // two options this long, with Discuss and Reply, fit one line of the Needs column at 1480 px
+	askTitleMax    = 120
+	askWhyMax      = 200
+	askBodyMax     = 8000
+	previewsMax    = 4
+	askTextMax     = 600 // an ask from before titles were one short sentence still shows, in full in its panel
 )
 
-var askID = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+var (
+	askID = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+	// previewEntry: a file, or a folder (its name ending in /), under <state>/previews/<id>/, as `athena ask add` names it.
+	previewEntry = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}/?$`)
+)
 
 // parseAsks reads needs-you.json, dropping what `athena ask add` would refuse rather than failing the file:
-// an item without an id or text, options past the second or with a long label, and icons not in icons.txt.
+// an item without an id or text, options past the second (the fourth with a body) or with a long label, icons not
+// in icons.txt, and previews that are not plain names. A long text is kept: Title cuts it, and the panel shows it.
 func parseAsks(m map[string]any) []Ask {
 	list, _ := m["items"].([]any)
 	var out []Ask
@@ -478,7 +490,7 @@ func parseAsks(m map[string]any) []Ask {
 			continue
 		}
 		a := Ask{ID: str(im, "id"), Kind: str(im, "kind"), Text: clip(str(im, "text"), askTextMax), Why: clip(str(im, "why"), askWhyMax),
-			PR: strings.ToLower(str(im, "pr"))}
+			PR: strings.ToLower(str(im, "pr")), Body: strings.TrimSpace(clip(str(im, "body"), askBodyMax))}
 		if k := prKey(str(im, "pr")); k != "" {
 			a.PR = k // a PR's URL works too
 		}
@@ -489,10 +501,14 @@ func parseAsks(m map[string]any) []Ask {
 		if a.Kind != "note" {
 			a.Kind = "question"
 		}
+		most := optionsMax
+		if a.Body != "" {
+			most = optionsMaxBody
+		}
 		opts, _ := im["options"].([]any)
 		for _, ov := range opts {
 			om, ok := ov.(map[string]any)
-			if !ok || len(a.Options) == optionsMax {
+			if !ok || len(a.Options) == most {
 				continue
 			}
 			o := Option{ID: str(om, "id"), Label: strings.TrimSpace(str(om, "label")), Icon: str(om, "icon"), Do: str(om, "do")}
@@ -507,9 +523,58 @@ func parseAsks(m map[string]any) []Ask {
 			}
 			a.Options = append(a.Options, o)
 		}
+		previews, _ := im["previews"].([]any)
+		for _, pv := range previews {
+			if p, ok := pv.(string); ok && previewEntry.MatchString(p) && len(a.Previews) < previewsMax {
+				a.Previews = append(a.Previews, p)
+			}
+		}
 		out = append(out, a)
 	}
 	return out
+}
+
+// Title is the ask's text as its row shows it: one sentence of at most askTitleMax characters. `athena ask add`
+// takes no other since titles were held to that; an older ask's is cut at its first sentence, and Long reports it,
+// so its panel shows the text in full.
+func (a Ask) Title() (title string, long bool) {
+	end := sentenceEnd(a.Text)
+	if end < 0 && utf8.RuneCountInString(a.Text) <= askTitleMax {
+		return a.Text, false
+	}
+	t := a.Text
+	if end >= 0 {
+		t = a.Text[:end]
+	}
+	return clip(t, askTitleMax), true
+}
+
+// One sentence, as athena_lib/asks.py one_sentence reads it: links, e.g. and the like, and a closing parenthetical
+// such as "(rec B)" are set aside, then a sentence end followed by more text starts a second sentence.
+var (
+	sentenceLinks  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+`)
+	sentenceAbbrev = regexp.MustCompile(`(?i)\b(?:e\.g|i\.e|etc|vs|cf)\.`)
+	sentenceTail   = regexp.MustCompile(`\s*\([^()]*\)[.!?]?\s*$`)
+	sentenceStop   = regexp.MustCompile(`([.!?]+["')\]\x{2019}\x{201d}]*)\s+\S`)
+)
+
+// sentenceEnd is the byte offset just past text's first sentence when more follows it, else -1.
+func sentenceEnd(text string) int {
+	masked := []byte(text) // what is set aside is masked, byte for byte, so offsets hold
+	for _, re := range []*regexp.Regexp{sentenceLinks, sentenceAbbrev} {
+		for _, loc := range re.FindAllIndex(masked, -1) {
+			for i := loc[0]; i < loc[1]; i++ {
+				masked[i] = 'x'
+			}
+		}
+	}
+	if loc := sentenceTail.FindIndex(masked); loc != nil {
+		masked = masked[:loc[0]]
+	}
+	if m := sentenceStop.FindSubmatchIndex(masked); m != nil {
+		return m[3]
+	}
+	return -1
 }
 
 func clip(s string, n int) string {

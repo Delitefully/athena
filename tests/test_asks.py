@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from tests import helpers
@@ -222,6 +223,154 @@ class AsksTest(unittest.TestCase):
         self.assertNotIn("head", got[3])
         for e in got[4:]:
             self.assertEqual((e["option"], "head" in e), ({"id": "go-without-head", "label": "Merge", "do": "dismiss"}, False))
+
+
+class AskDetailTest(unittest.TestCase):
+    """An ask's title, its Markdown body and its previews: what the dashboard's expandable panel shows."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        paths.ensure()
+        self.src = Path(self.tmp.name) / "src"
+        self.src.mkdir()
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def run_cli(self, *argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err), mock.patch("sys.stdin", io.StringIO(stdin)):
+            code = cli.main(["ask", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_body_keeps_its_lines_and_the_queue_carries_it(self):
+        body = "**Rec: B.**\n\n| Option | Cost |\n|---|---|\n| A | 2 d |\n| B | 1 d |\n\n- one\n- two\n"
+        (self.src / "body.md").write_text(body)
+        code, out, err = self.run_cli("add", "Copilot catalog hosts: list copilot.cloud.microsoft? (rec B)",
+                                      "--body-file", str(self.src / "body.md"))
+        self.assertEqual((code, out), (0, "a1\n"), err)
+        self.assertEqual(asks.show("a1")["body"], body.rstrip())
+        # From stdin, and inline.
+        self.assertEqual(self.run_cli("add", "Ship it?", "--body-file", "-", stdin="line one\n\nline two\n")[1], "a2\n")
+        self.assertEqual(asks.show("a2")["body"], "line one\n\nline two")
+        self.assertEqual(self.run_cli("add", "Ship it now?", "--body", "Short.\nTwo lines.")[1], "a3\n")
+        self.assertEqual(asks.show("a3")["body"], "Short.\nTwo lines.")
+        self.assertNotIn("body", asks.show(asks.add("No body?")))
+        answer(1, "a1", option="dismiss")
+        self.assertEqual(asks.queue(now=T + asks.SETTLE)[0]["ask"]["body"], body.rstrip())
+
+    def test_ask_body_attaches_and_replaces(self):
+        a1 = asks.add("Ship it?")
+        (self.src / "b.md").write_text("First take.\n")
+        self.assertEqual(self.run_cli("body", a1, "--file", str(self.src / "b.md"))[0], 0)
+        self.assertEqual(asks.show(a1)["body"], "First take.")
+        self.assertEqual(self.run_cli("body", a1, "--file", "-", stdin="Second take.\n\n- with a list\n")[0], 0)
+        self.assertEqual(asks.show(a1)["body"], "Second take.\n\n- with a list")
+        code, _, err = self.run_cli("body", "a9", "--file", "-", stdin="x")
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.run_cli("body", a1)[0], 2)  # --file is required
+        # An empty body clears it, unless the ask needs one for its options.
+        self.assertEqual(self.run_cli("body", a1, "--file", "-", stdin="\n")[0], 0)
+        self.assertNotIn("body", asks.show(a1))
+        a2 = asks.add("Which?", body="Rec A.", options=["A", "B", "C"])
+        with self.assertRaises(asks.AskError):
+            asks.set_body(a2, "")
+
+    def test_a_title_is_one_short_sentence(self):
+        cases = json.loads((paths.PLUGIN_ROOT / "dash" / "testdata" / "titles.json").read_text())
+        for text in cases["one"]:
+            with self.subTest(text=text):
+                self.assertTrue(asks.one_sentence(text))
+        for text in cases["many"]:
+            with self.subTest(text=text):
+                self.assertFalse(asks.one_sentence(text))
+                code, _, err = self.run_cli("add", text)
+                self.assertEqual(code, 2)
+                self.assertIn("one sentence", err)
+                self.assertIn("--body", err)
+        code, _, err = self.run_cli("add", "x" * 120 + "?")
+        self.assertEqual(code, 2)
+        self.assertIn("120", err)
+        self.assertIn("--body", err)
+        self.assertEqual(self.run_cli("add", "x" * 119 + "?")[0], 0)
+        self.assertEqual(asks.TEXT_MAX, 120)
+
+    def test_four_options_with_a_body_two_without(self):
+        opts = ["--option", "A", "--option", "B", "--option", "C"]
+        self.assertEqual(self.run_cli("add", "Which?", *opts)[0], 2)
+        self.assertEqual(self.run_cli("add", "Which?", "--body", "Rec A.", *opts, "--option", "D")[0], 0)
+        self.assertEqual(len(asks.show("a1")["options"]), 4)
+        self.assertEqual(self.run_cli("add", "Which?", "--body", "Rec A.", *opts, "--option", "D", "--option", "E")[0], 2)
+
+    def test_option_limits_match_the_dash(self):
+        go = (paths.PLUGIN_ROOT / "dash" / "state.go").read_text()
+        for name, value in (("optionsMax", asks.OPTIONS_MAX), ("optionsMaxBody", asks.OPTIONS_MAX_BODY),
+                            ("labelMax", asks.LABEL_MAX), ("askTitleMax", asks.TEXT_MAX), ("askWhyMax", asks.WHY_MAX),
+                            ("askBodyMax", asks.BODY_MAX), ("previewsMax", asks.PREVIEWS_MAX)):
+            with self.subTest(name=name):
+                self.assertRegex(go, rf"\b{name}\s*=\s*{value}\b")
+
+    def test_body_limit(self):
+        self.assertEqual(asks.BODY_MAX, 8000)
+        self.assertEqual(asks.add("Ship?", body="x" * 8000), "a1")
+        with self.assertRaises(asks.AskError):
+            asks.add("Ship?", body="x" * 8001)
+        with self.assertRaises(asks.AskError):
+            asks.set_body("a1", "x" * 8001)
+
+    def test_needs_you_json_is_private(self):
+        asks.add("Ship?")
+        self.assertEqual(asks.asks_file().stat().st_mode & 0o777, 0o600)
+        os.chmod(asks.asks_file(), 0o644)  # one written before this rule
+        asks.add("And then?")
+        self.assertEqual(asks.asks_file().stat().st_mode & 0o777, 0o600)
+        answer(1, "a1", ts=T - asks.KEEP_DONE - 100)
+        status(1, "done", ts=T - asks.KEEP_DONE - 100)
+        answer(2, "a9")
+        asks.done("a1", now=T)  # compacts actions.jsonl, rewriting it
+        self.assertEqual(asks.actions_file().stat().st_mode & 0o777, 0o600)
+
+    def test_a_preview_is_copied_into_the_state_dir(self):
+        (self.src / "mock.html").write_text("<h1>mock</h1>")
+        site = self.src / "My site"
+        (site / "css").mkdir(parents=True)
+        (site / "index.html").write_text("<link rel=stylesheet href=css/a.css>")
+        (site / "css" / "a.css").write_text("h1{}")
+        code, out, err = self.run_cli("add", "Which layout?", "--body", "Rec A.", "--preview", str(self.src / "mock.html"),
+                                      "--preview", str(site))
+        self.assertEqual((code, out), (0, "a1\n"), err)
+        self.assertEqual(asks.show("a1")["previews"], ["mock.html", "My-site/"])
+        root = asks.previews_dir() / "a1"
+        self.assertEqual((root / "mock.html").read_text(), "<h1>mock</h1>")
+        self.assertEqual((root / "My-site" / "css" / "a.css").read_text(), "h1{}")
+        for d in (asks.previews_dir(), root, root / "My-site", root / "My-site" / "css"):
+            self.assertEqual(d.stat().st_mode & 0o777, 0o700, d)
+        self.assertEqual((root / "mock.html").stat().st_mode & 0o777, 0o600)
+        # Done removes the copy with the ask; --keep keeps both.
+        asks.done("a1", keep=True)
+        self.assertTrue(root.exists())
+        asks.done("a1")
+        self.assertFalse(root.exists())
+
+    def test_a_preview_refuses_symlinks_and_size(self):
+        (self.src / "secret").write_text("token")
+        site = self.src / "site"
+        site.mkdir()
+        (site / "index.html").write_text("hi")
+        (site / "leak").symlink_to(self.src / "secret")
+        (self.src / "link.html").symlink_to(site / "index.html")
+        big = self.src / "big.html"
+        big.write_bytes(b"x" * (asks.PREVIEW_BYTES_MAX + 1))
+        for path in (site, self.src / "link.html", big, self.src / "missing.html"):
+            with self.subTest(path=path.name):
+                code, _, err = self.run_cli("add", "Which?", "--preview", str(path))
+                self.assertEqual(code, 2, err)
+        self.assertFalse(asks.asks_file().exists())
+        self.assertFalse((asks.previews_dir() / "a1").exists())
+        too_many = [a for i in range(asks.PREVIEWS_MAX + 1) for a in ("--preview", str(self.src / "secret"))]
+        self.assertEqual(self.run_cli("add", "Which?", *too_many)[0], 2)
 
 
 class DoorbellTest(unittest.TestCase):

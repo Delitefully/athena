@@ -225,6 +225,57 @@ func TestParseAsksDropsWhatAthenaAskWouldRefuse(t *testing.T) {
 	}
 }
 
+func TestAnAskWithABodyCarriesFourOptionsAndItsPreviews(t *testing.T) {
+	var m map[string]any
+	json.Unmarshal([]byte(`{"items": [
+		{"id": "a1", "text": "Which?", "body": "**Rec: B.**\n\n| A | B |\n|---|---|\n| 1 | 2 |\n", "options": [
+			{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}, {"id": "d", "label": "D"}, {"id": "e", "label": "E"}],
+		 "previews": ["mock.html", "site/", "../etc/passwd", "/abs", ".hidden", "a/b", "x.html", "y.html", 7]},
+		{"id": "a2", "text": "Which?", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}]}]}`), &m)
+	got := parseAsks(m)
+	if a := got[0]; len(a.Options) != 4 || a.Options[3].ID != "d" || a.Body != "**Rec: B.**\n\n| A | B |\n|---|---|\n| 1 | 2 |" {
+		t.Fatalf("a body allows four options: %+v", a)
+	}
+	if p := strings.Join(got[0].Previews, " "); p != "mock.html site/ x.html y.html" {
+		t.Fatalf("only plain names, at most %d: %q", previewsMax, p)
+	}
+	if len(got[1].Options) != 2 {
+		t.Fatalf("no body, two options: %+v", got[1])
+	}
+}
+
+// The title rule is athena_lib/asks.py's: both read dash/testdata/titles.json.
+func TestATitleIsOneSentenceAsAthenaAskHoldsIt(t *testing.T) {
+	data, err := os.ReadFile("testdata/titles.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases struct{ One, Many []string }
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range cases.One {
+		if title, long := (Ask{Text: s}).Title(); long || title != s {
+			t.Errorf("one sentence, as it is: %q -> %q", s, title)
+		}
+	}
+	for _, s := range cases.Many {
+		if _, long := (Ask{Text: s}).Title(); !long {
+			t.Errorf("more than one sentence: %q", s)
+		}
+	}
+	// An ask from before the rule still shows: its first sentence, its whole text in its panel.
+	for text, want := range map[string]string{
+		"Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.": "Start **ABC-111** now, or after ABC-101 merges?",
+		"Rename it to \"export v2.\" Then ship it?":                                   "Rename it to \"export v2.\"",
+		strings.Repeat("word ", 40) + "end?":                                          strings.Repeat("word ", 23) + "word…",
+	} {
+		if title, long := (Ask{Text: text}).Title(); !long || title != want {
+			t.Errorf("%q -> %q, want %q", text, title, want)
+		}
+	}
+}
+
 func TestFoldActionsBySeq(t *testing.T) {
 	got := foldActions([]map[string]any{
 		{"seq": 1.0, "ts": 10.0, "item": "a1", "option": "yes", "status": "queued"},

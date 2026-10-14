@@ -1,0 +1,25 @@
+{
+  "_": "An ask's title is one sentence (athena_lib/asks.py one_sentence, dash/state.go sentenceEnd): both read these cases.",
+  "one": [
+    "Copilot catalog hosts: list copilot.cloud.microsoft? (rec B)",
+    "Close ABC-4550 as a duplicate of ABC-4566?",
+    "Merge acme/web#906 now, or after the 2.4 release?",
+    "Bump goldmark to v1.8.6 and vendor it?",
+    "Ship the export, e.g. behind a flag?",
+    "Pin it, i.e. no floating tags, etc. (rec A)",
+    "Draft notes: https://x.test/p?v=2 (rec A)",
+    "Which first: ABC-5 or [ABC-6? It waits](https://x.test/6)",
+    "Rename it to \"export v2.\"",
+    "FYI: the quota resets at 14:00.",
+    "Release now?!"
+  ],
+  "many": [
+    "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",
+    "The release notes for 2.4 need a date: Thursday or Monday? Draft: https://github.com/acme/web/pull/50",
+    "Merge it. Then retire the worker.",
+    "Ready? Say go",
+    "It failed again! Re-run it?",
+    "Rename it to \"export v2.\" Then ship it?",
+    "Ship it? (rec B) Or wait?"
+  ]
+}

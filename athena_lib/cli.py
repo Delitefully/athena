@@ -128,13 +128,25 @@ def cmd_watch(a):
     return 0
 
 
+def _read_text(path):
+    """A file's text, or stdin's for `-`."""
+    return sys.stdin.read() if path == "-" else Path(os.path.expanduser(path)).read_text()
+
+
 def cmd_ask(a):
     if a.action == "add":
         if not a.args or len(a.args) > 1:
-            print('athena ask add "<text>" [--why ...] [--pr ...] [--option label[:icon[:do]]] ...', file=sys.stderr)
+            print('athena ask add "<one-sentence title>" [--why ...] [--pr ...] [--body ... | --body-file <path|->] '
+                  '[--option label[:icon[:do]]] ... [--preview <file|dir>] ...', file=sys.stderr)
             return 2
         kind = "note" if a.note else "question" if a.question else None
-        print(asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or []))
+        body = _read_text(a.body_file) if a.body_file else a.body or ""
+        print(asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or []))
+    elif a.action == "body":
+        if len(a.args) != 1 or not a.file:
+            print("athena ask body <id> --file <path|->  (an empty file clears it)", file=sys.stderr)
+            return 2
+        _print(asks.set_body(a.args[0], _read_text(a.file)))
     elif a.action == "done":
         if len(a.args) != 1:
             print("athena ask done <id>", file=sys.stderr)
@@ -315,16 +327,23 @@ def parser():
     s.add_argument("--tagged", action="store_true", help="JSON lines for the mod: each change marked wake or not, and the status line")
     s.set_defaults(func=cmd_watch)
 
-    s = sub.add_parser("ask", help="athena's asks on the dashboard (needs-you.json) and the human's answers: add, done, show, queue")
-    s.add_argument("action", choices=["add", "done", "show", "queue"], nargs="?", default="show")
-    s.add_argument("args", nargs="*", help="add: the text; done, show: the id (show alone lists every ask)")
+    s = sub.add_parser("ask", help="athena's asks on the dashboard (needs-you.json) and the human's answers: add, body, done, show, queue")
+    s.add_argument("action", choices=["add", "body", "done", "show", "queue"], nargs="?", default="show")
+    s.add_argument("args", nargs="*", help="add: the title, one sentence; body, done, show: the id (show alone lists every ask)")
     k = s.add_mutually_exclusive_group()
     k.add_argument("--question", action="store_true", help="add: Discuss in Athena and Reply… on the dashboard (default when it has a ?)")
     k.add_argument("--note", action="store_true", help="add: only its options, or × with none")
     s.add_argument("--why", default="", help="add: one sentence, shown under it")
     s.add_argument("--pr", help="add: owner/name#n or a PR URL: shown under that PR's row")
+    b = s.add_mutually_exclusive_group()
+    b.add_argument("--body", help=f"add: Markdown the dashboard expands under it, up to {asks.BODY_MAX} characters")
+    b.add_argument("--body-file", metavar="PATH", help="add: the body from a file, or - for stdin")
+    s.add_argument("--file", metavar="PATH", help="body: the new body from a file, or - for stdin; empty clears it")
     s.add_argument("--option", action="append", metavar="LABEL[:ICON[:DO]]",
-                   help=f"add: at most {asks.OPTIONS_MAX}; label up to {asks.LABEL_MAX} characters, icon from dash/icons.txt, do reply (default) or dismiss")
+                   help=f"add: at most {asks.OPTIONS_MAX}, {asks.OPTIONS_MAX_BODY} with a body; label up to {asks.LABEL_MAX} "
+                        "characters, icon from dash/icons.txt, do reply (default) or dismiss")
+    s.add_argument("--preview", action="append", metavar="FILE|DIR",
+                   help=f"add: local HTML the ask links to, copied into the state dir and served sandboxed; at most {asks.PREVIEWS_MAX}")
     s.add_argument("--keep", action="store_true", help="done: mark its answers done but keep the ask on the dashboard")
     s.set_defaults(func=cmd_ask)
 
