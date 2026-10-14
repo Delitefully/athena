@@ -7,17 +7,15 @@
 - [Claude Code](https://claude.com/claude-code) as `claude`, with this plugin installed ([Install](../README.md#install)). The watch mod needs Claude Code 2.1.286 or later; older versions fall back to Monitor.
 - [gh](https://cli.github.com), signed in (`gh auth login`), and a git identity (`git config --global user.name` and `user.email`): workers push branches and open PRs.
 - Go, only for the dashboard (built on first use).
-- Optional: the herdr-agent-quota herdr plugin, for the 5-hour quota gate. Without it the gate is skipped.
 
 ## `athena init`
 
-`athena init` checks what athena needs and prints each check as ✓ or ✗ with its fix: herdr (and its version), `claude` and the athena plugin, `gh` signed in, a git identity, and the optional herdr plugins. If herdr is missing it shows the install command from herdr.dev (`curl -fsSL https://herdr.dev/install.sh | sh`, or `brew install herdr`) and runs it only if you say yes. Then it asks for:
+`athena init` checks what athena needs and prints each check as ✓ or ✗ with its fix: herdr (and its version), `claude` and the athena plugin, `gh` signed in, and a git identity. If herdr is missing it shows the install command from herdr.dev (`curl -fsSL https://herdr.dev/install.sh | sh`, or `brew install herdr`) and runs it only if you say yes. Then it asks for:
 
 - your **projects folder**, where your repos live and HQ starts (default: the folder holding the repo you run it from, else `~/code`);
 - the **worktree root**, one git worktree per worker (default `<projects>/.worktrees`);
 - the **repos you merge yourself** (athena prepares them and stops), and the repos where **a push after approval needs a new approval**;
-- the workers' default **model and effort** (opus/high);
-- the herdr-agent-quota **state file**, if you have that plugin.
+- the workers' default **model and effort** (opus/high).
 
 and writes them to `config.json` in athena's state dir. Run it again any time to change a value; the flags for scripts are in [Commands](commands.md#athena-init-in-scripts).
 
@@ -33,14 +31,12 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
   "human_merge_repos": ["web"],
   "reapproval_repos": [],
   "model": "opus",
-  "effort": "high",
-  "quota_file": null
+  "effort": "high"
 }
 ```
 
 - `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
-- `quota_file`: the herdr-agent-quota plugin's `claude-statusline.json`. With none, `athena spawn` does not gate on the 5-hour quota.
-- An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`, `ATHENA_QUOTA_FILE`. `ATHENA_CONFIG` points at another file.
+- An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file.
 - Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
 
 ## Environment variables

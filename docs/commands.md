@@ -37,4 +37,4 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 
 ## `athena init` in scripts
 
-`athena init --yes --projects ~/code [--worktrees DIR] [--human-merge a,b] [--reapproval a] [--model M] [--effort E] [--quota-file F] [--install-herdr]` asks nothing (a flag, else the current config, else the default) and installs herdr only with `--install-herdr`. Run it again any time to change a value. What each value means is in [Configuration](configuration.md).
+`athena init --yes --projects ~/code [--worktrees DIR] [--human-merge a,b] [--reapproval a] [--model M] [--effort E] [--install-herdr]` asks nothing (a flag, else the current config, else the default) and installs herdr only with `--install-herdr`. Run it again any time to change a value. What each value means is in [Configuration](configuration.md).
