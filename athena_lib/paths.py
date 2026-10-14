@@ -29,12 +29,6 @@ def worktree_root() -> Path:
     return config.path("worktree_root")
 
 
-def quota_file():
-    """config `quota_file` (env ATHENA_QUOTA_FILE), or None: no quota gate."""
-    from athena_lib import config
-    return config.path("quota_file")
-
-
 def herdr_bin() -> str:
     return os.environ.get("ATHENA_HERDR") or "herdr"
 

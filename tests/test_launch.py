@@ -128,8 +128,7 @@ class FirstRunTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
         self.env.set("HERDR_ENV", "1")
-        for var in ("ATHENA_WORKTREE_ROOT", "ATHENA_QUOTA_FILE"):
-            os.environ.pop(var, None)
+        os.environ.pop("ATHENA_WORKTREE_ROOT", None)
         self.patches = [mock.patch.object(hq.board, "start_watcher"), mock.patch.object(hq.dash, "start")]
         for p in self.patches:
             p.start()

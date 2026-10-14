@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import helpers
-from athena_lib import config, paths, pr, quota, watch
+from athena_lib import config, paths, pr, watch
 
 # The shape of a real repo map's merge policy (synthetic names): owners in parentheses, prose after the list.
 REPO_MAP = ("# Repos\n- ABC: ~/src/web (acme/web)\n\n# Merge policy\n"
@@ -19,8 +19,7 @@ class ConfigTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
         # Resolve every path from the config, not from the test env's overrides.
-        for var in ("ATHENA_WORKTREE_ROOT", "ATHENA_QUOTA_FILE"):
-            os.environ.pop(var, None)
+        os.environ.pop("ATHENA_WORKTREE_ROOT", None)
         self.home = Path(self.tmp.name) / "home"
         self.home.mkdir()
         self.env.set("HOME", str(self.home))
@@ -44,17 +43,14 @@ class ConfigTest(unittest.TestCase):
         self.assertFalse(config.is_legacy())
         self.assertEqual(cfg["human_merge_repos"], [])
         self.assertEqual(cfg["reapproval_repos"], [])
-        self.assertIsNone(cfg["quota_file"])
         self.assertEqual(paths.worktree_root(), self.home / ".worktrees")
         self.assertEqual(paths.projects_dir(), self.home)
-        self.assertIsNone(paths.quota_file())
 
     def test_every_path_comes_from_the_file(self):
-        self.write({"projects_dir": "~/code", "worktree_root": "~/code/.wt", "quota_file": "~/q.json",
+        self.write({"projects_dir": "~/code", "worktree_root": "~/code/.wt",
                     "model": "sonnet", "effort": "medium", "human_merge_repos": ["web"], "reapproval_repos": []})
         self.assertEqual(paths.projects_dir(), self.home / "code")
         self.assertEqual(paths.worktree_root(), self.home / "code" / ".wt")
-        self.assertEqual(paths.quota_file(), self.home / "q.json")
         self.assertEqual(config.get("model"), "sonnet")
         self.assertEqual(config.get("effort"), "medium")
         self.assertTrue(config.listed("human_merge_repos", "/somewhere/web"))
@@ -82,24 +78,17 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(paths.worktree_root(), self.home / "src" / ".worktrees")
 
     def test_environment_variables_override_the_file(self):
-        self.write({"projects_dir": "~/code", "worktree_root": "~/code/.wt", "model": "sonnet", "effort": "low",
-                    "quota_file": "~/q.json"})
+        self.write({"projects_dir": "~/code", "worktree_root": "~/code/.wt", "model": "sonnet", "effort": "low"})
         self.env.set("ATHENA_WORKTREE_ROOT", str(Path(self.tmp.name) / "wt"))
         self.env.set("ATHENA_HQ_CWD", str(Path(self.tmp.name) / "hq"))
         self.env.set("ATHENA_MODEL", "haiku")
         self.env.set("ATHENA_EFFORT", "max")
-        self.env.set("ATHENA_QUOTA_FILE", str(Path(self.tmp.name) / "quota.json"))
         self.assertEqual(paths.worktree_root(), Path(self.tmp.name) / "wt")
         self.assertEqual(paths.projects_dir(), Path(self.tmp.name) / "hq")
         self.assertEqual(config.get("model"), "haiku")
         self.assertEqual(config.get("effort"), "max")
-        self.assertEqual(paths.quota_file(), Path(self.tmp.name) / "quota.json")
         self.assertEqual(config.source("model"), "env ATHENA_MODEL")
         self.assertEqual(config.source("human_merge_repos"), "default")
-
-    def test_without_a_quota_file_the_gate_is_skipped(self):
-        self.write({"quota_file": None})
-        self.assertEqual(quota.gate(), (True, "quota unknown (no quota_file configured); not gating"))
 
     def test_a_broken_file_is_an_error_that_names_it(self):
         paths.ensure()
@@ -166,8 +155,7 @@ class LegacyTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
-        for var in ("ATHENA_WORKTREE_ROOT", "ATHENA_QUOTA_FILE"):
-            os.environ.pop(var, None)
+        os.environ.pop("ATHENA_WORKTREE_ROOT", None)
         self.home = Path(self.tmp.name) / "home"
         self.home.mkdir()
         self.env.set("HOME", str(self.home))
@@ -185,8 +173,6 @@ class LegacyTest(unittest.TestCase):
         self.assertEqual(cfg, config.LEGACY)
         self.assertEqual(paths.projects_dir(), self.home / "Developer")
         self.assertEqual(paths.worktree_root(), self.home / "Developer" / ".worktrees")
-        self.assertEqual(paths.quota_file(),
-                         self.home / ".local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json")
         self.assertEqual((config.get("model"), config.get("effort")), ("opus", "high"))
         self.assertEqual((cfg["human_merge_repos"], cfg["reapproval_repos"]), ([], []))  # only the repo map names repos
         self.assertEqual(config.source("projects_dir"), "migrated (no config.json yet)")

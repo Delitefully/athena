@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from athena_lib import config, gitops, herdr, ledger, paths, quota, retire
+from athena_lib import config, gitops, herdr, ledger, paths, retire
 
 HARD_CAP = 6
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
@@ -20,7 +20,7 @@ class SpawnError(Exception):
     pass
 
 
-def _check_capacity(name, force, ignore_quota=False):
+def _check_capacity(name, force):
     live = ledger.live()
     if any(w["name"] == name for w in live):
         raise SpawnError(f"a worker named {name} is already live")
@@ -29,9 +29,6 @@ def _check_capacity(name, force, ignore_quota=False):
     cap = paths.max_workers()
     if len(live) >= cap and not force:
         raise SpawnError(f"{len(live)} workers are live; the cap is {cap} (use --force to go up to {HARD_CAP})")
-    allowed, why = quota.gate()
-    if not allowed and not ignore_quota:
-        raise SpawnError(f"not launching: {why}")
 
 
 def _drop_ids(text, ids):
@@ -125,7 +122,7 @@ def claude_args(name, model, effort, settings):
 
 
 def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=None, effort=None,
-          force=False, setup=True, ignore_quota=False, ultracode=False, workflow_size=None):
+          force=False, setup=True, ultracode=False, workflow_size=None):
     repo = Path(os.path.expanduser(str(repo))).resolve()
     model, effort = model or config.get("model"), effort or config.get("effort")
     if not paths.valid_name(name):
@@ -134,7 +131,7 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         raise SpawnError(f"{name!r} is reserved: athena watch prints lines that start with it")
     if workflow_size and not ultracode:
         raise SpawnError("--workflow-size needs --ultracode")
-    _check_capacity(name, force, ignore_quota)
+    _check_capacity(name, force)
     ledger.touch()
     pre = gitops.preflight(repo)
     if not pre["ok"]:

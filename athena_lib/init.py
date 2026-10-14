@@ -17,7 +17,7 @@ from athena_lib import config, paths
 
 HERDR_INSTALL = "curl -fsSL https://herdr.dev/install.sh | sh"  # https://herdr.dev/docs/install/
 HERDR_MIN = (0, 9, 1)  # the oldest herdr athena ran against end to end (tests/lab/README.md)
-OK, FAIL, OPTIONAL = "✓", "✗", "–"
+OK, FAIL = "✓", "✗"
 REQUIRED = ("herdr", "claude", "athena plugin")  # without these athena cannot start HQ
 
 
@@ -112,44 +112,16 @@ def check_git():
                   'git config --global user.name "Your Name" && git config --global user.email you@example.com')
 
 
-# herdr plugins athena can use. None is required.
-HERDR_PLUGINS = {
-    "herdr-agent-quota": "the 5-hour quota gate in athena spawn; without it the gate is skipped",
-}
-
-
-def check_herdr_plugins():
-    argv = shlex.split(paths.herdr_bin())
-    installed = set()
-    if shutil.which(argv[0]):
-        code, out = _run(argv + ["plugin", "list", "--json"])
-        try:
-            data = json.loads(out) if code == 0 else {}
-            installed = {p.get("plugin_id") for p in (data.get("result") or {}).get("plugins") or []}
-        except (ValueError, AttributeError):
-            pass
-    return [{"name": name, "mark": OK if name in installed else OPTIONAL, "optional": True,
-             "detail": why} for name, why in HERDR_PLUGINS.items()]
-
-
 def checks():
-    return [check_herdr(), check_claude(), check_plugin(), check_gh(), check_git(), *check_herdr_plugins()]
+    return [check_herdr(), check_claude(), check_plugin(), check_gh(), check_git()]
 
 
 def render(check):
     line = check.get("line") or (check["name"] + (f": {check['detail']}" if check.get("detail") else ""))
-    if check.get("optional"):
-        line = f"{check['name']} (optional): {'installed' if check['mark'] == OK else 'not installed'}; {check['detail']}"
     text = f"  {check['mark']} {line}"
     if check["mark"] == FAIL and check.get("fix"):
         text += f"\n      fix: {check['fix']}"
     return text
-
-
-def quota_guess():
-    state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-    found = Path(state) / "herdr" / "plugins" / "herdr-agent-quota" / "claude-statusline.json"
-    return str(found) if found.exists() else None
 
 
 def suggested_projects():
@@ -165,7 +137,7 @@ def starting_values():
     if config.exists() or config.is_legacy():
         values = config.load()
     else:
-        values = dict(config.DEFAULTS, projects_dir=suggested_projects(), quota_file=quota_guess())
+        values = dict(config.DEFAULTS, projects_dir=suggested_projects())
     if not values.get("worktree_root"):
         values["worktree_root"] = None
     return values
@@ -182,7 +154,6 @@ PROMPTS = [
     ("reapproval_repos", "Repos where a push after approval needs a new approval"),
     ("model", "Worker model"),
     ("effort", "Worker effort"),
-    ("quota_file", "herdr-agent-quota state file (empty: no quota gate)"),
 ]
 
 
@@ -213,8 +184,6 @@ def collect(values, flags, interactive, ask):
             continue
         if key in config.LIST_KEYS:
             values[key] = [] if answer.lower() == "none" else _split(answer)
-        elif key == "quota_file" and answer.lower() == "none":
-            values[key] = None
         else:
             values[key] = answer
     return values
@@ -229,7 +198,6 @@ def parser():
     p.add_argument("--reapproval", help="repos where a push after approval needs a new approval")
     p.add_argument("--model")
     p.add_argument("--effort")
-    p.add_argument("--quota-file")
     p.add_argument("--install-herdr", action="store_true", help="with --yes: install herdr if it is missing")
     return p
 
@@ -255,7 +223,7 @@ def main(argv=None, ask=input) -> int:
     for check in found:
         print(render(check))
     flags = {"projects_dir": a.projects, "worktree_root": a.worktrees, "human_merge_repos": a.human_merge,
-             "reapproval_repos": a.reapproval, "model": a.model, "effort": a.effort, "quota_file": a.quota_file}
+             "reapproval_repos": a.reapproval, "model": a.model, "effort": a.effort}
     if legacy:
         print("found an install from before config.json: offering its current values, so nothing changes")
     values = collect(starting_values(), flags, interactive, ask)

@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 
 ATHENA_VARS = (
     "ATHENA_STATE_DIR", "ATHENA_WORKTREE_ROOT", "ATHENA_HERDR", "ATHENA_HQ", "ATHENA_MIN_COL",
-    "ATHENA_MAX_WORKERS", "ATHENA_WORKER", "ATHENA_QUOTA_FILE", "ATHENA_HQ_PANE", "ATHENA_PLUGIN_DIR",
+    "ATHENA_MAX_WORKERS", "ATHENA_WORKER", "ATHENA_HQ_PANE", "ATHENA_PLUGIN_DIR",
     "FAKE_HERDR_SCENARIO", "FAKE_HERDR_LOG", "ATHENA_EXIT_GRACE", "ATHENA_HQ_CWD", "ATHENA_DASH_PORT",
     "ATHENA_LINEAR_WORKSPACE", "ATHENA_CONFIG", "ATHENA_MODEL", "ATHENA_EFFORT", "ATHENA_HERDR_INSTALL", "ATHENA_PYTHON",
 )
@@ -36,12 +36,11 @@ class EnvPatch:
 
 
 def isolated_env(tmp):
-    """Point state, worktrees and the quota file at a temp dir; herdr at the fake."""
+    """Point state and worktrees at a temp dir; herdr at the fake."""
     tmp = Path(tmp)
     return EnvPatch({
         "ATHENA_STATE_DIR": str(tmp / "state"),
         "ATHENA_WORKTREE_ROOT": str(tmp / "worktrees"),
-        "ATHENA_QUOTA_FILE": str(tmp / "quota.json"),
         "ATHENA_HERDR": str(ROOT / "tests" / "fake_herdr.py"),
         "FAKE_HERDR_LOG": str(tmp / "herdr.log"),
         "FAKE_HERDR_SCENARIO": str(tmp / "scenario.json"),

@@ -94,16 +94,19 @@ class SpawnTest(unittest.TestCase):
             self.run_spawn()
         self.assertEqual(self.run_spawn(force=True)["name"], "abc-1")
 
-    def test_spawn_refuses_when_quota_high(self):
+    def test_spawn_ignores_quota_state(self):
+        # An install from before the quota gate was removed: its config.json still names the
+        # herdr-agent-quota state file, and that file says the 5-hour window is 99% used.
         self.scenario()
-        with open(os.environ["ATHENA_QUOTA_FILE"], "w") as f:
-            json.dump({"fetched_at_unix": time.time(), "windows": [{"kind": "five_hour", "used_percent": 91}]}, f)
-        with self.assertRaises(spawn.SpawnError) as ctx:
-            self.run_spawn()
-        self.assertIn("quota", str(ctx.exception))
-        with self.assertRaises(spawn.SpawnError):
-            self.run_spawn(force=True)
-        self.assertEqual(self.run_spawn(ignore_quota=True)["name"], "abc-1")
+        home = Path(self.tmp.name) / "home"
+        self.env.set("HOME", str(home))
+        state = home / ".local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({"fetched_at_unix": time.time(),
+                                     "windows": [{"kind": "five_hour", "used_percent": 99}]}))
+        config.config_file().parent.mkdir(parents=True, exist_ok=True)
+        config.config_file().write_text(json.dumps({"version": 1, "quota_file": str(state)}))
+        self.assertEqual(self.run_spawn()["name"], "abc-1")
 
     def test_prompt_failure_leaves_worker_tracked(self):
         err = {"error": {"code": "agent_not_found", "message": "gone"}}
