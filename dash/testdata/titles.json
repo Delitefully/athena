@@ -11,7 +11,8 @@
     "Which first: ABC-5 or [ABC-6? It waits](https://x.test/6)",
     "Rename it to \"export v2.\"",
     "FYI: the quota resets at 14:00.",
-    "Release now?!"
+    "Release now?!",
+    "Merge web #43? https://github.com/o/web/pull/43"
   ],
   "many": [
     "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",

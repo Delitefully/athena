@@ -219,7 +219,7 @@ def _option(spec, taken):
 def one_sentence(text) -> bool:
     """Whether text is one sentence: no sentence end followed by more text, setting aside links, e.g. and the like,
     and a closing parenthetical such as "(rec B)"."""
-    t = _ABBREV.sub("x", _LINK.sub("x", text))
+    t = _ABBREV.sub("x", _LINK.sub(" ", text))  # a link is no text of its own: "Merge #43? <url>" is one sentence
     return not _SENTENCE_END.search(_PAREN_TAIL.sub("", t))
 
 

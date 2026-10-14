@@ -79,9 +79,9 @@ class AsksTest(unittest.TestCase):
 
     def test_icons_txt_matches_the_page_sprite_and_the_skill(self):
         names = asks.icons()
-        self.assertEqual(len(names), 24)
+        self.assertEqual(len(names), 25)
         sprite = (paths.PLUGIN_ROOT / "dash" / "page.html").read_text()
-        self.assertEqual(sprite.count("<symbol "), 24)
+        self.assertEqual(sprite.count("<symbol "), 25)
         skill = (paths.PLUGIN_ROOT / "skills" / "athena" / "SKILL.md").read_text()
         for n in names:
             self.assertIn(f'<symbol id="i-{n}" ', sprite)

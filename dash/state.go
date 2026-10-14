@@ -561,10 +561,13 @@ var (
 // sentenceEnd is the byte offset just past text's first sentence when more follows it, else -1.
 func sentenceEnd(text string) int {
 	masked := []byte(text) // what is set aside is masked, byte for byte, so offsets hold
-	for _, re := range []*regexp.Regexp{sentenceLinks, sentenceAbbrev} {
-		for _, loc := range re.FindAllIndex(masked, -1) {
+	for _, set := range []struct {
+		re   *regexp.Regexp
+		mask byte
+	}{{sentenceLinks, ' '}, {sentenceAbbrev, 'x'}} { // a link is no text of its own: "Merge #43? <url>" is one sentence
+		for _, loc := range set.re.FindAllIndex(masked, -1) {
 			for i := loc[0]; i < loc[1]; i++ {
-				masked[i] = 'x'
+				masked[i] = set.mask
 			}
 		}
 	}
