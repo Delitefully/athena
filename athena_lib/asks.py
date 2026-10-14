@@ -197,6 +197,8 @@ def _option(spec, taken):
     """`label[:icon[:do]]`, do being reply (the default: athena acts on it) or dismiss (nothing to do)."""
     label, icon, do = (spec.split(":") + ["", ""])[:3]
     label = label.strip()
+    if label.casefold() in ("discuss", "discuss in athena"):
+        raise AskError(f"no {label!r} option: the dashboard gives every question Discuss in Athena")
     if not label or len(label) > LABEL_MAX:
         raise AskError(f"an option's label is 1 to {LABEL_MAX} characters: {label!r}")
     do = do or "reply"

@@ -478,7 +478,8 @@ var (
 )
 
 // parseAsks reads needs-you.json, dropping what `athena ask add` would refuse rather than failing the file:
-// an item without an id or text, options past the second (the fourth with a body) or with a long label, icons not
+// an item without an id or text, options past the second (the fourth with a body) or with a long label or one that
+// duplicates Discuss in Athena, icons not
 // in icons.txt, and previews that are not plain names. A long text is kept: Title cuts it, and the panel shows it.
 func parseAsks(m map[string]any) []Ask {
 	list, _ := m["items"].([]any)
@@ -512,7 +513,8 @@ func parseAsks(m map[string]any) []Ask {
 				continue
 			}
 			o := Option{ID: str(om, "id"), Label: strings.TrimSpace(str(om, "label")), Icon: str(om, "icon"), Do: str(om, "do")}
-			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax {
+			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax ||
+				strings.EqualFold(o.Label, "Discuss") || strings.EqualFold(o.Label, "Discuss in Athena") {
 				continue
 			}
 			if !knownIcon(o.Icon) {
