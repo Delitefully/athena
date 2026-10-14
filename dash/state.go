@@ -490,7 +490,7 @@ func parseAsks(m map[string]any) []Ask {
 			continue
 		}
 		a := Ask{ID: str(im, "id"), Kind: str(im, "kind"), Text: clip(str(im, "text"), askTextMax), Why: clip(str(im, "why"), askWhyMax),
-			PR: strings.ToLower(str(im, "pr")), Body: strings.TrimSpace(clip(str(im, "body"), askBodyMax))}
+			PR: strings.ToLower(str(im, "pr")), Body: trimBody(clip(str(im, "body"), askBodyMax))}
 		if k := prKey(str(im, "pr")); k != "" {
 			a.PR = k // a PR's URL works too
 		}
@@ -551,12 +551,20 @@ func (a Ask) Title() (title string, long bool) {
 
 // One sentence, as athena_lib/asks.py one_sentence reads it: links, e.g. and the like, and a closing parenthetical
 // such as "(rec B)" are set aside, then a sentence end followed by more text starts a second sentence.
+// A sentence ends at a stop followed by more text that does not start in lower case: "Ship now... or wait?" is one.
+// Initials such as a.m., U.S. and e.g., and etc., vs. and cf., end none.
 var (
-	sentenceLinks  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+`)
-	sentenceAbbrev = regexp.MustCompile(`(?i)\b(?:e\.g|i\.e|etc|vs|cf)\.`)
+	sentenceAbbrev = regexp.MustCompile(`(?i)\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf)\.)`)
 	sentenceTail   = regexp.MustCompile(`\s*\([^()]*\)[.!?]?\s*$`)
-	sentenceStop   = regexp.MustCompile(`([.!?]+["')\]\x{2019}\x{201d}]*)\s+\S`)
+	sentenceStop   = regexp.MustCompile(`([.!?\x{2026}]+["')\]\x{2019}\x{201d}]*)\s+[^\sa-z]`)
+	leadingBlank   = regexp.MustCompile(`\A(?:[ \t]*\r?\n)+`)
 )
+
+// trimBody drops the blank lines around a body, as `athena ask add` does, keeping its first line's indent: an
+// indented code block stays one.
+func trimBody(s string) string {
+	return strings.TrimRight(leadingBlank.ReplaceAllString(s, ""), " \t\r\n")
+}
 
 // sentenceEnd is the byte offset just past text's first sentence when more follows it, else -1.
 func sentenceEnd(text string) int {
@@ -564,7 +572,7 @@ func sentenceEnd(text string) int {
 	for _, set := range []struct {
 		re   *regexp.Regexp
 		mask byte
-	}{{sentenceLinks, ' '}, {sentenceAbbrev, 'x'}} { // a link is no text of its own: "Merge #43? <url>" is one sentence
+	}{{links, ' '}, {sentenceAbbrev, 'x'}} { // a link is no text of its own: "Merge #43? <url>" is one sentence
 		for _, loc := range set.re.FindAllIndex(masked, -1) {
 			for i := loc[0]; i < loc[1]; i++ {
 				masked[i] = set.mask

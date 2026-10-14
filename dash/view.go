@@ -104,6 +104,12 @@ func (a *Actions) RowOptions() []Option {
 	return a.Options
 }
 
+// OnRow: whether the row has any pill to show. A note whose 3 or 4 options are its panel's alone has none, and its
+// label line then stays as it is on hover.
+func (a *Actions) OnRow() bool {
+	return len(a.RowOptions()) > 0 || a.Discuss || a.Reply || a.Dismiss || a.Recheck || a.RequestReview || a.Go || a.OpenPR != ""
+}
+
 // allows: whether a POST's answer is one these actions offer.
 func (a *Actions) allows(option, text string, discuss bool) bool {
 	switch {
@@ -714,9 +720,10 @@ func slug(s string) string {
 	return s
 }
 
-// links finds a markdown link to an http(s) url, or a bare url.
+// links finds a markdown link to an http(s) url, or a bare url, which never ends in punctuation: the period after
+// "see https://x.test/a." ends the sentence, not the URL. athena_lib/asks.py _LINK is the same.
 var (
-	links  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+`)
+	links  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]*[^\s<).,;:!?'"]`)
 	strong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	code   = regexp.MustCompile("`([^`]+)`")
 )

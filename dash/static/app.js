@@ -56,10 +56,11 @@ function actsAt(key) {
   return main.querySelector(`.acts${bar ? ".bar" : ":not(.bar)"}[data-item="${CSS.escape(item)}"]`);
 }
 
-// Text selected in a panel, being read or copied: a push would drop the selection.
+// Text selected in a panel, being read or copied: a push would drop the selection. Only while this window has focus:
+// a page left with a selection in it still takes pushes, so it is never stale when looked at again.
 function selecting() {
   const sel = getSelection();
-  return !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main .panel");
+  return document.hasFocus() && !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main .panel");
 }
 
 function busy() {
@@ -81,6 +82,7 @@ function render(html) {
     for (const acts of all) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
     if (!all.length) answered.delete(item); // the server's page has it too
   }
+  if (tipFor && !tipFor.isConnected) hideTip(); // its pill went with the old page
   reopen();
   for (const [key, text] of drafts) {
     const acts = actsAt(key);
@@ -267,6 +269,7 @@ main.addEventListener(
   true,
 );
 document.addEventListener("selectionchange", () => release());
+addEventListener("blur", () => setTimeout(release));
 main.addEventListener("focusout", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
   if (acts && !e.target.value.trim()) setTimeout(() => acts.isConnected && !acts.contains(document.activeElement) && closeReply(acts));
@@ -275,6 +278,46 @@ main.addEventListener("focusout", (e) => {
 main.addEventListener("pointerdown", () => (pressing = true));
 addEventListener("pointerup", () => setTimeout(() => ((pressing = false), release())));
 addEventListener("pointercancel", () => ((pressing = false), release()));
+
+// Tooltips: one element on the body, outside every clipped .swap, .acts and .panel, for the icon-only pills (their
+// aria-label) and anything with a data-tip. Above its pill, below when there is no room, shifted to stay in the window.
+const tip = document.querySelector(".tip");
+const TIPPED = ".acts.options [data-discuss], .acts.options [data-reply], .pill.dismiss, .pill.recheck, [data-tip]";
+const EDGE = 8;
+let tipFor = null;
+function showTip(el) {
+  const text = el.dataset.tip || el.getAttribute("aria-label");
+  if (!text) return hideTip();
+  tipFor = el;
+  tip.textContent = text;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  let top = r.top - t.height - 6;
+  if (top < EDGE) top = r.bottom + 6; // no room above: below
+  const width = document.documentElement.clientWidth; // the window less its scrollbar
+  const left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, EDGE), width - t.width - EDGE);
+  tip.style.transform = `translate(${Math.floor(left)}px, ${Math.round(top)}px)`;
+}
+function hideTip() {
+  tipFor = null;
+  tip.hidden = true;
+}
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  const el = e.target.closest?.(TIPPED);
+  if (el) el !== tipFor && showTip(el);
+  else if (tipFor) hideTip();
+});
+document.addEventListener("pointerout", (e) => !e.relatedTarget && hideTip()); // left the window
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest?.(TIPPED);
+  if (el?.matches(":focus-visible")) showTip(el);
+  else hideTip();
+});
+document.addEventListener("focusout", () => setTimeout(() => tipFor && !tipFor.matches(":hover, :focus-visible") && hideTip()));
+addEventListener("scroll", hideTip, true);
+addEventListener("resize", hideTip);
 
 const events = new EventSource("/events");
 const boot = document.querySelector('meta[name="athena-boot"]')?.content;

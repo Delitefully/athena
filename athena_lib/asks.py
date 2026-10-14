@@ -44,12 +44,13 @@ PR_OPTIONS = {"recheck": {"id": "recheck", "label": "Re-check and fix", "do": "r
               "request-review": {"id": "request-review", "label": "Request review", "do": "reply"},
               "go": {"id": "go", "label": "Merge", "do": "reply"}}
 _HEAD = re.compile(r"^[0-9a-f]{7,40}$")  # the dash's headText
-_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+")
-# One sentence: no sentence end followed by more text, once links, abbreviations and a closing parenthetical such as
-# "(rec B)" are set aside. dash/state.go sentenceEnd reads it the same way (dash/testdata/titles.json).
-_ABBREV = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf)\.", re.I)
+_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]*[^\s<).,;:!?'\"]")  # dash/view.go links
+# One sentence: no stop followed by more text that does not start in lower case ("Ship now... or wait?" is one), once
+# links, initials (a.m., U.S., e.g.), etc., vs., cf. and a closing parenthetical such as "(rec B)" are set aside.
+# dash/state.go sentenceEnd reads it the same way (dash/testdata/titles.json).
+_ABBREV = re.compile(r"\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf)\.)", re.I)
 _PAREN_TAIL = re.compile(r"\s*\([^()]*\)[.!?]?\s*$")
-_SENTENCE_END = re.compile(r"[.!?]+[\"')\]\u2019\u201d]*\s+\S")
+_SENTENCE_END = re.compile(r"[.!?\u2026]+[\"')\]\u2019\u201d]*\s+[^\sa-z]")
 _PREVIEW_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -252,8 +253,9 @@ def previews_root():
     return root
 
 
-def _preview_files(src, raw):
-    """A preview folder's files to copy, by path relative to it; hidden ones are left out. Refuses any symlink."""
+def _preview_files(src, raw, budget):
+    """A preview folder's files to copy, by path relative to it; hidden ones are left out. Refuses any symlink, and
+    stops as soon as the folder is past what is left of the budget [bytes, files]."""
     out = []
     for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -268,6 +270,12 @@ def _preview_files(src, raw):
             if not p.is_file():
                 raise AskError(f"--preview {raw}: {p.relative_to(src)} is not a regular file")
             out.append(p.relative_to(src))
+            budget[0] -= p.stat().st_size
+            budget[1] -= 1
+            if budget[0] < 0 or budget[1] < 0:
+                raise AskError(_PREVIEW_TOO_BIG)
+    if Path("index.html") not in out:
+        raise AskError(f"--preview {raw}: a folder opens on its index.html, and it has none")
     return out
 
 
@@ -276,31 +284,42 @@ def _plan_previews(srcs):
     (a folder's ends in /), files None for a single file."""
     if len(srcs) > PREVIEWS_MAX:
         raise AskError(f"at most {PREVIEWS_MAX} previews")
-    plan, total, count = [], 0, 0
+    plan, budget = [], [PREVIEW_BYTES_MAX, PREVIEW_FILES_MAX]
     for raw in srcs:
         src = Path(os.path.expanduser(raw))
         if src.is_symlink():
             raise AskError(f"--preview {raw} is a symlink; give the file or folder itself")
-        name = _PREVIEW_NAME.sub("-", src.name).strip("-.") or "preview"
+        name = _preview_name(src)
         if src.is_dir():
-            files = _preview_files(src, raw)
-            total += sum((src / f).stat().st_size for f in files)
-            count += len(files)
+            files = _preview_files(src, raw, budget)
             entry = name + "/"
         elif src.is_file():
             files = None
-            total += src.stat().st_size
-            count += 1
+            budget[0] -= src.stat().st_size
+            budget[1] -= 1
+            if budget[0] < 0 or budget[1] < 0:
+                raise AskError(_PREVIEW_TOO_BIG)
             entry = name
         else:
             raise AskError(f"--preview {raw}: no such file or folder")
         if any(e.rstrip("/") == name for e, _, _ in plan):
             raise AskError(f"--preview {raw}: two previews named {name}")
         plan.append((entry, src, files))
-    if total > PREVIEW_BYTES_MAX or count > PREVIEW_FILES_MAX:
-        raise AskError(f"previews are at most {PREVIEW_BYTES_MAX >> 20} MB and {PREVIEW_FILES_MAX} files; these are "
-                       f"{total / (1 << 20):.1f} MB in {count}")
     return plan
+
+
+_PREVIEW_TOO_BIG = f"previews are at most {PREVIEW_BYTES_MAX >> 20} MB and {PREVIEW_FILES_MAX} files in all"
+PREVIEW_NAME_MAX = 100  # the dash links a name of up to 128 characters (dash/state.go previewEntry)
+
+
+def _preview_name(src):
+    """The name a preview is linked by: its file or folder name in letters, digits and . _ -, its extension kept."""
+    name = _PREVIEW_NAME.sub("-", src.name).strip("-.") or "preview"
+    if len(name) > PREVIEW_NAME_MAX:
+        stem, dot, ext = name.rpartition(".")
+        ext = dot + ext if dot and len(ext) <= 10 and src.is_file() else ""
+        name = name[:PREVIEW_NAME_MAX - len(ext)].rstrip("-.") + ext
+    return name
 
 
 def _copy_file(src, dst):
@@ -316,10 +335,20 @@ def _copy_file(src, dst):
         os.close(fd)
 
 
-def _copy_previews(plan, dest):
-    if dest.exists():
-        shutil.rmtree(dest)
+def _copy_previews(plan):
+    """Copies the previews into a new hidden folder of <state>/previews, outside ask.lock (which the dash's answers
+    need too); add() renames it to the ask's id under the lock. The dash serves no hidden folder."""
+    dest = previews_root() / f".incoming-{os.getpid()}-{time.monotonic_ns()}"
     dest.mkdir(mode=0o700)
+    try:
+        _copy_into(plan, dest)
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+    return dest
+
+
+def _copy_into(plan, dest):
     for entry, src, files in plan:
         if files is None:
             _copy_file(src, dest / entry)
@@ -362,19 +391,26 @@ def add(text, kind=None, why="", pr=None, options=(), body="", previews=()):
     if plan:
         item["previews"] = [entry for entry, _, _ in plan]
     migrate()
-    with _locked():
-        data = _read()
-        item = {"id": f"a{data['next']}", **item, "created": int(time.time())}
-        try:
-            if plan:  # before the ask is saved, so the dash never links a preview still being copied
-                _copy_previews(plan, previews_root() / item["id"])
-            data["next"] += 1
-            data["items"].append(item)
-            _save(data)
-        except BaseException:
-            if plan:
+    incoming = _copy_previews(plan) if plan else None
+    try:
+        with _locked():
+            data = _read()
+            item = {"id": f"a{data['next']}", **item, "created": int(time.time())}
+            if incoming:  # in place before the ask is saved, so the dash never links a preview that is not there
                 _remove_previews(item["id"])
-            raise
+                os.rename(incoming, previews_dir() / item["id"])
+                incoming = None
+            try:
+                data["next"] += 1
+                data["items"].append(item)
+                _save(data)
+            except BaseException:
+                if plan:
+                    _remove_previews(item["id"])
+                raise
+    finally:
+        if incoming:
+            shutil.rmtree(incoming, ignore_errors=True)
     return item["id"]
 
 

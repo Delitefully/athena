@@ -1,4 +1,5 @@
 """athena ask: needs-you.json, the migration from needs-you.md, the dashboard's answer queue and its doorbell."""
+import fcntl
 import io
 import json
 import os
@@ -371,6 +372,56 @@ class AskDetailTest(unittest.TestCase):
         self.assertFalse((asks.previews_dir() / "a1").exists())
         too_many = [a for i in range(asks.PREVIEWS_MAX + 1) for a in ("--preview", str(self.src / "secret"))]
         self.assertEqual(self.run_cli("add", "Which?", *too_many)[0], 2)
+
+
+    def test_a_folder_preview_opens_on_its_index_html(self):
+        site = self.src / "site"
+        site.mkdir()
+        (site / "main.html").write_text("hi")
+        code, _, err = self.run_cli("add", "Which?", "--preview", str(site))
+        self.assertEqual(code, 2)
+        self.assertIn("index.html", err)
+
+    def test_a_long_preview_name_is_cut_keeping_its_extension(self):
+        f = self.src / ("x" * 150 + ".html")
+        f.write_text("hi")
+        a1 = asks.add("Which?", previews=[str(f)])
+        name = asks.show(a1)["previews"][0]
+        self.assertEqual((len(name), name[-5:]), (asks.PREVIEW_NAME_MAX, ".html"))
+        self.assertTrue((asks.previews_dir() / a1 / name).is_file())
+
+    def test_a_preview_past_the_file_cap_stops_early(self):
+        site = self.src / "big"
+        site.mkdir()
+        (site / "index.html").write_text("hi")
+        for i in range(2 * asks.PREVIEW_FILES_MAX):
+            (site / f"f{i}.txt").write_text("")
+        with mock.patch.object(Path, "stat", autospec=True, side_effect=Path.stat) as st:
+            with self.assertRaises(asks.AskError):
+                asks.add("Which?", previews=[str(site)])
+        # Two stats a file it looked at (is it a file, how big), and it stops at the cap: not the whole folder.
+        self.assertLessEqual(st.call_count, 2 * (asks.PREVIEW_FILES_MAX + 2))
+
+    def test_previews_are_copied_outside_the_lock(self):
+        (self.src / "mock.html").write_text("hi")
+        held = []
+        real = asks._copy_into
+
+        def copy(plan, dest):
+            fd = os.open(paths.state_dir() / "ask.lock", os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # the dash could append an answer now
+                held.append(False)
+            except BlockingIOError:
+                held.append(True)
+            finally:
+                os.close(fd)
+            return real(plan, dest)
+
+        with mock.patch("athena_lib.asks._copy_into", side_effect=copy):
+            a1 = asks.add("Which?", previews=[str(self.src / "mock.html")])
+        self.assertEqual(held, [False])
+        self.assertEqual([p.name for p in asks.previews_dir().iterdir()], [a1])  # no .incoming- left behind
 
 
 class DoorbellTest(unittest.TestCase):

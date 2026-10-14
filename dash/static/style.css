@@ -109,7 +109,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 /* An open panel has its own answers, so a pointer or focus in it leaves the row's line as it is. */
 .item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap > .acts,
 .fold:hover:not(:has(.panel:hover)) > .swap > .acts, .fold:focus-within:not(:has(.panel:focus-within)) > .swap > .acts, .acts.replying {
-  clip-path: inset(-34px -8px -6px -4px); /* room for a tooltip above and the focus ring */
+  clip-path: inset(-6px -8px -6px -4px); /* room for the focus ring; the tooltip is the body's (.tip) */
 }
 .item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
 .fold:hover:not(:has(.panel:hover)) > .swap > :not(.acts), .fold:focus-within:not(:has(.panel:focus-within)) > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
@@ -138,16 +138,17 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 .pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .pill.dismiss { width: 22px; padding: 0; justify-content: center; }
 /* Beside athena's two options, Discuss and Reply are their icons alone, so four fit one line. An icon-only pill says
-   what it does in a tooltip, on hover and on keyboard focus alike. */
+   what it does in a tooltip, on hover and on keyboard focus alike (.tip). */
 .acts.options [data-discuss], .acts.options [data-reply] { width: 22px; padding: 0; justify-content: center; }
 .acts.options .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.acts.options [data-discuss]::after, .acts.options [data-reply]::after, .pill.dismiss::after {
-  content: attr(aria-label); display: none; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
-  padding: 4px 8px; border-radius: 5px; background: var(--ink); color: var(--bg); pointer-events: none;
-  font: 500 12px/1.2 "Instrument Sans", system-ui, sans-serif; white-space: nowrap;
+/* The one tooltip: an element of the body, outside every clipped .swap, .acts and .panel, which app.js places by the pill
+   it names: above it, below when there is no room, shifted to stay in the window, and wrapped past its max-width. */
+.tip {
+  position: fixed; z-index: 3; top: 0; left: 0; max-width: min(260px, calc(100vw - 16px)); padding: 4px 8px; border-radius: 5px;
+  background: var(--ink); color: var(--bg); pointer-events: none; text-wrap: balance; overflow-wrap: anywhere;
+  font: 500 12px/1.3 "Instrument Sans", system-ui, sans-serif;
 }
-.acts.options [data-discuss]:is(:hover, :focus-visible)::after, .acts.options [data-reply]:is(:hover, :focus-visible)::after,
-.pill.dismiss:is(:hover, :focus-visible)::after { display: block; }
+.tip[hidden] { display: none; }
 .pi { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .reply { flex: 1; margin: 0; }
 .reply input {
@@ -192,18 +193,11 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 .apr-waits { font-size: 12px; }
 .apr.rechecking .apr-meta::after { content: "re-checking…"; font-size: 12px; }
 .apr.rechecking .recheck { display: none; }
-/* The pill's swap is a short crossfade, not a moving edge (the human's choice for this row), and nothing on the pill is
-   clipped, so the buttons' tooltips show in full. */
+/* The pill's swap is a short crossfade, not a moving edge (the human's choice for this row). */
 .apr .acts { gap: 3px; justify-content: flex-end; clip-path: none; opacity: 0; pointer-events: none; }
 .apr .pill { width: 20px; height: 20px; padding: 0; justify-content: center; }
 .apr:hover > .swap > .acts, .apr:focus-within > .swap > .acts { opacity: 1; pointer-events: auto; }
 .apr:hover > .swap > .apr-meta, .apr:focus-within > .swap > .apr-meta { opacity: 0; }
-.pill.recheck::after {
-  content: attr(aria-label); display: none; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
-  padding: 4px 8px; border-radius: 5px; background: var(--ink); color: var(--bg); pointer-events: none;
-  font: 500 12px/1.2 "Instrument Sans", system-ui, sans-serif; white-space: nowrap;
-}
-.pill.recheck:is(:hover, :focus-visible)::after { display: block; }
 /* The stacked edge: one outline peeking out under the pill, two for a deeper stack, narrower each time. */
 .stack > .apr::before, .stack.deep > .apr::after {
   content: ""; position: absolute; z-index: -1; top: 4px; bottom: -5px; left: 7px; right: 7px;

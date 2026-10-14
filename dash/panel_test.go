@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,7 +54,7 @@ func TestThePanelRendersUnderItsRowAndFold(t *testing.T) {
 		`<div class="acts" data-item="a1" data-hides><button type="button" class="pill" data-discuss`, // past two options: Discuss and Reply alone
 		`<details class="ask-detail" data-ask="a1"><summary><span class="detail">ABC-111 touches the same export queue as ABC-101.</span><span class="more">Details<svg class="pi chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></summary>`,
 		"<th>Option</th>", "<td>Split it</td>", "<strong>Recommendation: after ABC-101 merges.</strong>",
-		`<a class="pill" href="/preview/a1/export-screen.html" target="_blank" rel="noopener noreferrer">`,
+		`<a class="pill" href="/preview/a1/export-screen.html" target="_blank" rel="noopener noreferrer" data-tip=`,
 		`<div class="acts bar" data-item="a1" data-hides><button type="button" class="pill" data-option="now">`,
 		`data-option="split"`, `data-option="hold"`, "Discuss in Athena</button>", "Reply…</button>",
 	} {
@@ -217,5 +218,55 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Tooltips are one element of the body, placed by app.js, so no clipped .swap, .acts or .panel can cut one off: none is
+// a pill's own ::after any more, and the page has the one.
+func TestTooltipsAreTheBodysOwnNeverAPillsPseudoElement(t *testing.T) {
+	css, err := staticFS.ReadFile("static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(css), "attr(aria-label)") || !strings.Contains(string(css), ".tip {") {
+		t.Fatal("a tooltip is drawn inside its pill")
+	}
+	js, _ := staticFS.ReadFile("static/app.js")
+	if !strings.Contains(string(js), "function showTip") {
+		t.Fatal("app.js does not place the tooltip")
+	}
+	_, base := start(t, copyFixture(t))
+	_, page := get(t, base+"/", "")
+	if !strings.Contains(page, `<div class="tip" aria-hidden="true" hidden></div>`) || strings.Index(page, `class="tip"`) < strings.Index(page, "</main>") {
+		t.Fatal("the page has no tooltip outside <main>")
+	}
+	if !strings.Contains(page, `rel="noopener noreferrer" data-tip="Opens in a tab of its own, sandboxed`) {
+		t.Fatal("a preview link says nothing of its tab")
+	}
+}
+
+// A note whose 3 or 4 options are its panel's alone has no pill on its row, so hovering it never swaps in an empty line.
+func TestANoteWithItsOptionsInThePanelKeepsItsLine(t *testing.T) {
+	dir := copyFixture(t)
+	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "kind": "note", "text": "Export plan", "body": "Rec A.",
+		"options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}]}]}`)
+	_, base := start(t, dir)
+	_, page := get(t, base+"/", "")
+	row := between(page, `<li id="ask-a1" class="item note">`, `</details>`)
+	if !strings.Contains(row, `<div class="swap"><p class="meta">note</p>`) || strings.Contains(row, `<div class="acts" `) || strings.Contains(row, `<div class="acts options" `) {
+		t.Fatalf("an empty row of pills: %s", row)
+	}
+	if !strings.Contains(row, `<div class="acts bar" data-item="a1" data-hides><button type="button" class="pill" data-option="a">`) {
+		t.Fatalf("the panel lacks the options: %s", row)
+	}
+}
+
+// A body keeps its first line's indent, as `athena ask add` does: an indented code block stays one.
+func TestABodyKeepsItsFirstIndent(t *testing.T) {
+	var m map[string]any
+	json.Unmarshal([]byte(`{"items": [{"id": "a1", "text": "Rebase?", "body": "\n\n    git rebase main\n\nThen push.\n\n"}]}`), &m)
+	a := parseAsks(m)[0]
+	if a.Body != "    git rebase main\n\nThen push." || !strings.Contains(string(renderMarkdown(a.Body)), "<pre><code>git rebase main") {
+		t.Fatalf("%q", a.Body)
 	}
 }

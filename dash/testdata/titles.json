@@ -12,7 +12,11 @@
     "Rename it to \"export v2.\"",
     "FYI: the quota resets at 14:00.",
     "Release now?!",
-    "Merge web #43? https://github.com/o/web/pull/43"
+    "Merge web #43? https://github.com/o/web/pull/43",
+    "Deploy at 9 a.m. tomorrow?",
+    "Ship now... or wait for 2.4?",
+    "Ship now… or wait?",
+    "Bill U.S. customers first?"
   ],
   "many": [
     "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",
@@ -21,6 +25,8 @@
     "Ready? Say go",
     "It failed again! Re-run it?",
     "Rename it to \"export v2.\" Then ship it?",
-    "Ship it? (rec B) Or wait?"
+    "Ship it? (rec B) Or wait?",
+    "See https://x.test/a. Then merge it?",
+    "Ship now… Or wait?"
   ]
 }
