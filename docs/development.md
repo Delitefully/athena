@@ -3,7 +3,7 @@
 ## Pieces
 
 - `athena_lib/`: stdlib Python 3.9+. State in `~/.local/state/athena/` (`ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json`, `actions.jsonl`).
-- `dash/`: the dashboard server, Go standard library only, with the Instrument fonts (OFL) embedded.
+- `dash/`: the dashboard server, Go 1.22+: the standard library and goldmark (MIT, for an ask's Markdown body), vendored in `dash/vendor/` so it builds offline, with the Instrument fonts (OFL) embedded.
 - `hooks/`: Claude Code plugin hooks that write `workers/<name>.json` (a no-op outside athena workers), and `hooks/watch-mod/`, the watch mod (a no-op outside HQ).
 - `hq.md`, `worker.md`, `skills/athena/SKILL.md`: the prompts.
 - `repos/example.setup`: an example per-repo worktree setup. Your own go in `repos/<repo>.setup` next to `config.json` (looked up there first); `athena spawn` runs the one named after the repo's folder in each new worktree.

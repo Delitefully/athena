@@ -56,6 +56,10 @@ class SourceHashTest(unittest.TestCase):
         self.assertIn("main.go", files)
         self.assertIn("static/style.css", files)
         self.assertNotIn("server_test.go", files)
+        # The vendored goldmark builds the dash offline, so an edit to it rebuilds too.
+        self.assertIn("go.sum", files)
+        self.assertIn("vendor/modules.txt", files)
+        self.assertIn("vendor/github.com/yuin/goldmark/markdown.go", files)
         self.assertFalse(any(f.startswith("testdata/") for f in files))
         self.assertEqual(dash.source_hash(), dash.source_hash())
 

@@ -15,15 +15,24 @@ import fcntl
 import json
 import os
 import re
+import shutil
+import stat
 import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 from athena_lib import paths
 
 SETTLE = 6  # seconds an answer can still be undone; the queue and the doorbell see only older ones (dash/actions.go)
 KEEP_DONE = 24 * 3600  # done and cancelled answers older than this are compacted away
-OPTIONS_MAX, LABEL_MAX, TEXT_MAX, WHY_MAX = 2, 16, 600, 200  # two 16-character labels fit the Needs column (dash/state.go)
+OPTIONS_MAX, LABEL_MAX, WHY_MAX = 2, 16, 200  # two 16-character labels fit the Needs column (dash/state.go)
+# An ask's text is its title on the dashboard: one short sentence. The rest goes in its body, a Markdown panel the
+# dashboard expands under it, where up to OPTIONS_MAX_BODY options show as full-size buttons.
+TEXT_MAX, BODY_MAX, OPTIONS_MAX_BODY = 120, 8000, 4
+LEGACY_TEXT_MAX = 600  # a needs-you.md line, imported as it was
+# Previews: local HTML an ask links to, copied into <state>/previews/<id>/ and served sandboxed by the dash.
+PREVIEWS_MAX, PREVIEW_BYTES_MAX, PREVIEW_FILES_MAX = 4, 20 << 20, 500
 
 _ID = re.compile(r"^[a-z0-9-]{1,32}$")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
@@ -35,7 +44,14 @@ PR_OPTIONS = {"recheck": {"id": "recheck", "label": "Re-check and fix", "do": "r
               "request-review": {"id": "request-review", "label": "Request review", "do": "reply"},
               "go": {"id": "go", "label": "Merge", "do": "reply"}}
 _HEAD = re.compile(r"^[0-9a-f]{7,40}$")  # the dash's headText
-_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+")
+_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]*[^\s<).,;:!?'\"]")  # dash/view.go links
+# One sentence: no stop followed by more text that does not start in lower case ("Ship now... or wait?" is one), once
+# links, initials (a.m., U.S., e.g.), abbreviations (etc., vs., approx., No., Dr.) and a closing parenthetical such as "(rec B)" are set aside.
+# dash/state.go sentenceEnd reads it the same way (dash/testdata/titles.json).
+_ABBREV = re.compile(r"\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf|approx|incl|no|nr|dr|mr|mrs|ms|st|jr|sr)\.)", re.I)
+_PAREN_TAIL = re.compile(r"\s*\([^()]*\)[.!?]?\s*$")
+_SENTENCE_END = re.compile(r"[.!?\u2026]+[\"')\]\u2019\u201d]*\s+[^\sa-z]")
+_PREVIEW_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class AskError(Exception):
@@ -48,6 +64,10 @@ def asks_file():
 
 def actions_file():
     return paths.state_dir() / "actions.jsonl"
+
+
+def previews_dir():
+    return paths.state_dir() / "previews"
 
 
 def _legacy_file():
@@ -72,7 +92,9 @@ def _locked():
 
 def _write_atomic(target, text):
     tmp = target.with_name(f"{target.name}.tmp{os.getpid()}")
-    with open(tmp, "w") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # a temp file left over from a failed write keeps its old mode otherwise
+    with os.fdopen(fd, "w") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
@@ -140,7 +162,7 @@ def migrate():
         for line in _legacy_lines(text):
             if line in have:
                 continue
-            item = {"id": f"a{data['next']}", "kind": "question" if asks_question(line) else "note", "text": line[:TEXT_MAX],
+            item = {"id": f"a{data['next']}", "kind": "question" if asks_question(line) else "note", "text": line[:LEGACY_TEXT_MAX],
                     "created": int(time.time())}
             data["next"] += 1
             data["items"].append(item)
@@ -195,30 +217,226 @@ def _option(spec, taken):
     return out
 
 
-def add(text, kind=None, why="", pr=None, options=()):
-    """Add an ask; returns its id. A question gets Discuss and Reply on the dashboard, a note only its options."""
+def one_sentence(text) -> bool:
+    """Whether text is one sentence: no sentence end followed by more text, setting aside links, e.g. and the like,
+    and a closing parenthetical such as "(rec B)"."""
+    t = _ABBREV.sub("x", _LINK.sub(" ", text))  # a link is no text of its own: "Merge #43? <url>" is one sentence
+    return not _SENTENCE_END.search(_PAREN_TAIL.sub("", t))
+
+
+_BODY_HINT = "put the rest in its body (--body, --body-file <path|->, or later athena ask body <id> --file)"
+
+
+def _title(text):
     text = " ".join((text or "").split())
-    why = " ".join((why or "").split())
     if not text or len(text) > TEXT_MAX:
-        raise AskError(f"an ask is 1 to {TEXT_MAX} characters")
+        raise AskError(f"an ask's text is its title on the dashboard, 1 to {TEXT_MAX} characters: the question and its key "
+                       f"details, no more; {_BODY_HINT}")
+    if not one_sentence(text):
+        raise AskError(f"an ask's text is its title on the dashboard, one sentence: {_BODY_HINT}")
+    return text
+
+
+def _body(body):
+    """The Markdown the dashboard expands under an ask: its lines kept, CRLF read as LF, blank lines around it dropped."""
+    body = re.sub(r"\A(?:[ \t]*\n)+", "", (body or "").replace("\r\n", "\n")).rstrip()
+    if len(body) > BODY_MAX:
+        raise AskError(f"a body is at most {BODY_MAX} characters, not {len(body)}")
+    return body
+
+
+def previews_root():
+    """<state>/previews, private: only athena and the dash read it."""
+    root = previews_dir()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
+    return root
+
+
+def _preview_files(src, raw, budget):
+    """A preview folder's files to copy, by path relative to it; hidden ones are left out (and never looked at). Refuses
+    any symlink it would copy, and stops as soon as the folder is past what is left of the budget [bytes, files]."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for d in dirnames:
+            if (Path(dirpath) / d).is_symlink():
+                raise AskError(f"--preview {raw}: {(Path(dirpath) / d).relative_to(src)} is a symlink; a preview copies files only")
+        for n in sorted(f for f in filenames if not f.startswith(".")):
+            p = Path(dirpath) / n
+            if p.is_symlink():
+                raise AskError(f"--preview {raw}: {p.relative_to(src)} is a symlink; a preview copies files only")
+            if not p.is_file():
+                raise AskError(f"--preview {raw}: {p.relative_to(src)} is not a regular file")
+            out.append(p.relative_to(src))
+            budget[0] -= p.stat().st_size
+            budget[1] -= 1
+            if budget[0] < 0 or budget[1] < 0:
+                raise AskError(_PREVIEW_TOO_BIG)
+    if Path("index.html") not in out:
+        raise AskError(f"--preview {raw}: a folder opens on its index.html, and it has none")
+    return out
+
+
+def _plan_previews(srcs):
+    """Check every preview before anything is copied: [(entry, source, files)], entry being the name the dash links
+    (a folder's ends in /), files None for a single file."""
+    if len(srcs) > PREVIEWS_MAX:
+        raise AskError(f"at most {PREVIEWS_MAX} previews")
+    plan, budget = [], [PREVIEW_BYTES_MAX, PREVIEW_FILES_MAX]
+    for raw in srcs:
+        src = Path(os.path.expanduser(raw))
+        if src.is_symlink():
+            raise AskError(f"--preview {raw} is a symlink; give the file or folder itself")
+        name = _preview_name(src)
+        if src.is_dir():
+            files = _preview_files(src, raw, budget)
+            entry = name + "/"
+        elif src.is_file():
+            files = None
+            budget[0] -= src.stat().st_size
+            budget[1] -= 1
+            if budget[0] < 0 or budget[1] < 0:
+                raise AskError(_PREVIEW_TOO_BIG)
+            entry = name
+        else:
+            raise AskError(f"--preview {raw}: no such file or folder")
+        if any(e.rstrip("/") == name for e, _, _ in plan):
+            raise AskError(f"--preview {raw}: two previews named {name}")
+        plan.append((entry, src, files))
+    return plan
+
+
+_PREVIEW_TOO_BIG = f"previews are at most {PREVIEW_BYTES_MAX >> 20} MB and {PREVIEW_FILES_MAX} files in all"
+PREVIEW_NAME_MAX = 100  # the dash links a name of up to 128 characters (dash/state.go previewEntry)
+
+
+def _preview_name(src):
+    """The name a preview is linked by: its file or folder name in letters, digits and . _ -, its extension kept."""
+    name = _PREVIEW_NAME.sub("-", src.name).strip("-.") or "preview"
+    if len(name) > PREVIEW_NAME_MAX:
+        stem, dot, ext = name.rpartition(".")
+        ext = dot + ext if dot and len(ext) <= 10 and src.is_file() else ""
+        name = name[:PREVIEW_NAME_MAX - len(ext)].rstrip("-.") + ext
+    return name
+
+
+def _copy_file(src, dst):
+    """Copies src's bytes, never through a symlink (one swapped in since the check fails here), into a new 0600 file."""
+    fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise AskError(f"--preview: {src} is not a regular file")
+        out = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(out, "wb") as w, os.fdopen(os.dup(fd), "rb") as r:
+            shutil.copyfileobj(r, w)
+    finally:
+        os.close(fd)
+
+
+def _copy_previews(plan):
+    """Copies the previews into a new hidden folder of <state>/previews, outside ask.lock (which the dash's answers
+    need too); add() renames it to the ask's id under the lock. The dash serves no hidden folder."""
+    root = previews_root()
+    for old in root.glob(".incoming-*"):  # left by an add that was killed mid-copy
+        try:
+            if time.time() - old.stat().st_mtime > 3600:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:
+            pass
+    dest = root / f".incoming-{os.getpid()}-{time.monotonic_ns()}"
+    dest.mkdir(mode=0o700)
+    try:
+        _copy_into(plan, dest)
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+    return dest
+
+
+def _copy_into(plan, dest):
+    for entry, src, files in plan:
+        if files is None:
+            _copy_file(src, dest / entry)
+            continue
+        for rel in files:
+            d = dest
+            for part in (Path(entry) / rel).parent.parts:
+                d = d / part
+                d.mkdir(mode=0o700, exist_ok=True)
+            _copy_file(src / rel, dest / entry / rel)
+
+
+def _remove_previews(item_id):
+    if _ID.match(item_id or ""):
+        shutil.rmtree(previews_dir() / item_id, ignore_errors=True)
+
+
+def add(text, kind=None, why="", pr=None, options=(), body="", previews=()):
+    """Add an ask; returns its id. A question gets Discuss and Reply on the dashboard, a note only its options. Its
+    text is the title, one short sentence; body is the Markdown the dashboard expands under it, and previews are files
+    or folders of local HTML it links to, copied into the state dir."""
+    text = _title(text)
+    why = " ".join((why or "").split())
+    body = _body(body)
     if len(why) > WHY_MAX:
         raise AskError(f"--why is one sentence, at most {WHY_MAX} characters")
-    if len(options) > OPTIONS_MAX:
-        raise AskError(f"at most {OPTIONS_MAX} options: Discuss in Athena and Reply… come with every question")
+    most = OPTIONS_MAX_BODY if body else OPTIONS_MAX
+    if len(options) > most:
+        more = f"; up to {OPTIONS_MAX_BODY} with a body (--body)" if not body else ""
+        raise AskError(f"at most {most} options{more}: Discuss in Athena and Reply… come with every question")
     kind = kind or ("question" if asks_question(text) else "note")
     taken = set()
     item = {"kind": kind, "text": text, "why": why, "options": [_option(o, taken) for o in options]}
+    if body:
+        item["body"] = body
     key = _pr_key(pr)
     if key:
         item["pr"] = key
+    plan = _plan_previews(list(previews))
+    if plan:
+        item["previews"] = [entry for entry, _, _ in plan]
+    migrate()
+    incoming = _copy_previews(plan) if plan else None
+    try:
+        with _locked():
+            data = _read()
+            item = {"id": f"a{data['next']}", **item, "created": int(time.time())}
+            if incoming:  # in place before the ask is saved, so the dash never links a preview that is not there
+                _remove_previews(item["id"])
+                os.rename(incoming, previews_dir() / item["id"])
+                incoming = None
+            try:
+                data["next"] += 1
+                data["items"].append(item)
+                _save(data)
+            except BaseException:
+                if plan:
+                    _remove_previews(item["id"])
+                raise
+    finally:
+        if incoming:
+            shutil.rmtree(incoming, ignore_errors=True)
+    return item["id"]
+
+
+def set_body(item_id, body):
+    """Attach a body to an open ask, or replace or (empty) clear it. An ask with more than OPTIONS_MAX options keeps one."""
+    body = _body(body)
     migrate()
     with _locked():
         data = _read()
-        item = {"id": f"a{data['next']}", **item, "created": int(time.time())}
-        data["next"] += 1
-        data["items"].append(item)
+        item = next((i for i in data["items"] if i.get("id") == item_id), None)
+        if item is None:
+            raise AskError(f"no ask {item_id}")
+        if not body and len(item.get("options") or []) > OPTIONS_MAX:
+            raise AskError(f"{item_id} has more than {OPTIONS_MAX} options, which show only with a body")
+        if body:
+            item["body"] = body
+        else:
+            item.pop("body", None)
         _save(data)
-    return item["id"]
+    return item
 
 
 def _lines():
@@ -282,7 +500,7 @@ def queue(now=None):
             entry["pr"] = f"{pill.group(1)}#{pill.group(2)}"
             entry["url"] = f"https://github.com/{pill.group(1)}/pull/{pill.group(2)}"
         elif item:
-            entry["ask"] = {k: item[k] for k in ("kind", "text", "why", "pr") if item.get(k)}
+            entry["ask"] = {k: item[k] for k in ("kind", "text", "why", "pr", "body") if item.get(k)}
         else:
             entry["ask"] = None  # done already, or removed
         if a.get("discuss"):
@@ -343,6 +561,7 @@ def done(item_id, keep=False, now=None):
             if removed:
                 data["items"] = left
                 _save(data)
+                _remove_previews(item_id)
         _compact(now)
     return {"item": item_id, "removed": removed, "done": seqs}
 

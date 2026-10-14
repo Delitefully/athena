@@ -36,6 +36,7 @@ type Item struct {
 	When      float64
 	PR        *PRView
 	Note      template.HTML // an ask's text, in athena's voice
+	Panel     *Panel        // an ask's detail, expanded under it
 	Folds     []Fold        // asks about this row's PR, shown under it
 	Actions   *Actions      // the pills the row offers, or nil
 	Sent      string        // a PR row's button answer athena has queued: "merge go sent"
@@ -52,6 +53,24 @@ type Fold struct {
 	Label   string // "athena asks" or "note": the line its pills take the place of
 	Why     string
 	Actions *Actions
+	Panel   *Panel
+}
+
+// Panel is an ask's detail, a native <details> under its row or fold: its why line is the summary, which opens on the
+// ask's whole text (when its title cuts it), its Markdown body, its previews, and its answers as full-size buttons.
+// Its Actions are the row's own, so the server checks an answer from either the same way.
+type Panel struct {
+	Ask      string        // the ask's id: the page keeps a panel open across pushes by it
+	Why      string        // the summary's line
+	Text     template.HTML // the ask's whole text, when its title is cut (an ask from before titles were short)
+	Body     template.HTML // rendered by renderMarkdown
+	Previews []Preview
+	Actions  *Actions
+}
+
+// Preview is a link to a preview the dash serves sandboxed, opened in a tab of its own.
+type Preview struct {
+	Name, URL string
 }
 
 // Actions are what a row or fold lets the human answer from the page, each a POST to /api/action naming Item.
@@ -76,6 +95,20 @@ type Actions struct {
 
 // sentText: what a PR row says while its button's answer waits for athena; each such answer is one at a time.
 var sentText = map[string]string{"recheck": "re-check sent", "request-review": "review request sent", "go": "merge go sent"}
+
+// RowOptions are the options the row's pills show: past two they are the panel's alone, with Discuss and Reply on the row.
+func (a *Actions) RowOptions() []Option {
+	if len(a.Options) > optionsMax {
+		return nil
+	}
+	return a.Options
+}
+
+// OnRow: whether the row has any pill to show. A note whose 3 or 4 options are its panel's alone has none, and its
+// label line then stays as it is on hover.
+func (a *Actions) OnRow() bool {
+	return len(a.RowOptions()) > 0 || a.Discuss || a.Reply || a.Dismiss || a.Recheck || a.RequestReview || a.Go || a.OpenPR != ""
+}
 
 // allows: whether a POST's answer is one these actions offer.
 func (a *Actions) allows(option, text string, discuss bool) bool {
@@ -370,13 +403,37 @@ func foldAsks(v *View, asks []Ask, queued map[string]float64, now float64) {
 		if a.Kind == "question" {
 			icon, label = "ask", "athena asks"
 		}
+		title, long := a.Title()
+		ownPR := ""
 		if row != nil {
-			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(a.Text, prKey(row.PR.URL)), Label: label, Why: why, Actions: acts})
+			ownPR = prKey(row.PR.URL)
+		}
+		panel := askPanel(a, why, long, ownPR, acts)
+		if row != nil {
+			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(title, ownPR), Label: label, Why: why, Actions: acts, Panel: panel})
 			continue
 		}
-		own = append(own, Item{ID: "ask-" + a.ID, Note: inline(a.Text), Icon: icon, Label: label, Detail: why, Actions: acts})
+		own = append(own, Item{ID: "ask-" + a.ID, Note: inline(title), Icon: icon, Label: label, Detail: why, Actions: acts, Panel: panel})
 	}
 	v.NeedsYou = append(v.NeedsYou, own...)
+}
+
+// askPanel is an ask's detail, or nil for an ask with only its title and why: nothing more to show.
+func askPanel(a Ask, why string, long bool, ownPR string, acts *Actions) *Panel {
+	if a.Body == "" && !long && len(a.Previews) == 0 {
+		return nil
+	}
+	p := &Panel{Ask: a.ID, Why: why, Actions: acts}
+	if long {
+		p.Text = inlineNote(a.Text, ownPR)
+	}
+	if a.Body != "" {
+		p.Body = renderMarkdown(a.Body)
+	}
+	for _, name := range a.Previews {
+		p.Previews = append(p.Previews, Preview{Name: strings.TrimSuffix(name, "/"), URL: "/preview/" + a.ID + "/" + name})
+	}
+	return p
 }
 
 var (
@@ -663,9 +720,10 @@ func slug(s string) string {
 	return s
 }
 
-// links finds a markdown link to an http(s) url, or a bare url.
+// links finds a markdown link to an http(s) url, or a bare url, which never ends in punctuation: the period after
+// "see https://x.test/a." ends the sentence, not the URL. athena_lib/asks.py _LINK is the same.
 var (
-	links  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]+`)
+	links  = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]*[^\s<).,;:!?'"]`)
 	strong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	code   = regexp.MustCompile("`([^`]+)`")
 )

@@ -19,6 +19,7 @@
 <p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
 </header>
 <main>{{template "main" .View}}</main>
+<div class="tip" aria-hidden="true" hidden></div>
 <div class="toast" role="status" aria-live="polite" hidden><span class="toast-text"></span><button type="button" class="undo">Undo</button></div>
 <script src="/static/app.js?v={{.Boot}}"></script>
 </body>
@@ -39,15 +40,15 @@
 
 {{define "item"}}{{if .Note}}<li id="{{.ID}}" class="item note">
 <svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
-<div class="body"><p class="note-text">{{.Note}}</p><div class="swap{{if .Actions}} has-acts{{end}}"><p class="meta">{{.Label}}</p>{{template "actions" .Actions}}</div>
-{{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}</div>
+<div class="body"><p class="note-text">{{.Note}}</p><div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{end}}{{end}}"><p class="meta">{{.Label}}</p>{{template "actions" .Actions}}</div>
+{{if .Panel}}{{template "panel" .Panel}}{{else if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}</div>
 </li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body">
 <p class="line">{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}<span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span></p>
-<div class="swap{{with .Actions}} has-acts{{if .ForPR}} keep{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
+<div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{if .ForPR}} keep{{end}}{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
 {{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
-{{range .Folds}}<div class="fold" id="{{.ID}}"><p>{{.Text}}</p><div class="swap has-acts"><p class="fold-label">{{.Label}}</p>{{template "actions" .Actions}}</div>{{if .Why}}<p class="detail" title="{{.Why}}">{{.Why}}</p>{{end}}</div>{{end}}
+{{range .Folds}}<div class="fold" id="{{.ID}}"><p>{{.Text}}</p><div class="swap{{if .Actions.OnRow}} has-acts{{end}}"><p class="fold-label">{{.Label}}</p>{{template "actions" .Actions}}</div>{{if .Panel}}{{template "panel" .Panel}}{{else if .Why}}<p class="detail" title="{{.Why}}">{{.Why}}</p>{{end}}</div>{{end}}
 </div>
 </li>{{end}}{{end}}
 
@@ -115,6 +116,7 @@
 <symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/> <path d="M10 14 21 3"/> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
 <symbol id="i-at-sign" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/> <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></symbol>
 <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/> <path d="M20 3v4"/> <path d="M22 5h-4"/> <path d="M4 17v2"/> <path d="M5 18H3"/></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
 </defs></svg>{{end}}
 
 {{/* /glyphs: every row glyph beside a first line, laid out as the dash's rows, to check box, size and baseline. */}}
@@ -140,10 +142,10 @@
 </html>{{end}}
 
 {{/* The pills: real buttons that take the place of the row's label line on hover and focus (below it, always, on
-     touch and narrow screens). An icon-only pill shows its aria-label as a tooltip on hover and keyboard focus. app.js posts each to
+     touch and narrow screens). An icon-only pill shows its aria-label as a tooltip (.tip, app.js) on hover and keyboard focus. app.js posts each to
      /api/action; data-hides marks an answer that hides its ask until athena takes it up. */}}
-{{define "actions"}}{{with .}}<div class="acts{{if or .Options .ForPR}} options{{end}}" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
-{{- range .Options}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
+{{define "actions"}}{{with .}}{{if .OnRow}}<div class="acts{{if or .RowOptions .ForPR}} options{{end}}" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
+{{- range .RowOptions}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
 {{- if .RequestReview}}<button type="button" class="pill" data-option="request-review" aria-label="Request review"><svg class="pi" aria-hidden="true"><use href="#i-eye"/></svg>Request review</button>{{end}}
 {{- if .Recheck}}<button type="button" class="pill" data-option="recheck" aria-label="Re-check and fix"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Re-check</button>{{end}}
 {{- with .OpenPR}}<a class="pill" href="{{.}}" aria-label="Open PR {{$.Num}} on GitHub"><svg class="pi" aria-hidden="true"><use href="#i-git-pull-request"/></svg>Open PR</a>{{end}}
@@ -151,4 +153,22 @@
 {{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" aria-label="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end}}
 {{- if .Discuss}}<button type="button" class="pill" data-discuss aria-label="Discuss in Athena"><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg><span class="lbl">Discuss in Athena</span></button>{{end}}
 {{- if .Reply}}<button type="button" class="pill" data-reply aria-label="Reply…"><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg><span class="lbl">Reply…</span></button>{{end -}}
+</div>{{end}}{{end}}{{end}}
+
+{{/* An ask's detail: a native <details> whose summary is the ask's why line, with a "Details" hint and a chevron, so a
+     row looks as it did until opened. The summary holds text only (a button in it would toggle the panel); the panel
+     holds the ask's whole text when its title cuts it, its Markdown body (renderMarkdown), links to its previews, each
+     in a sandboxed tab of its own, and its answers as full-size buttons. app.js keeps it open across pushes. */}}
+{{define "panel"}}<details class="ask-detail" data-ask="{{.Ask}}"><summary>{{with .Why}}<span class="detail">{{.}}</span>{{end}}<span class="more">Details<svg class="pi chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></summary>
+<div class="panel">{{with .Text}}<div class="md"><p>{{.}}</p></div>{{end}}{{with .Body}}<div class="md">{{.}}</div>{{end}}
+{{- with .Previews}}<p class="previews">{{range .}}<a class="pill" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-tip="Opens in a tab of its own, sandboxed: the preview can run its script but reach nothing of the dash"><svg class="pi" aria-hidden="true"><use href="#i-external-link"/></svg>{{.Name}}</a>{{end}}</p>{{end}}
+{{- template "bar" .Actions}}</div>
+</details>{{end}}
+
+{{/* The panel's answers: the row's own actions, every option with its label and Discuss and Reply named in full. */}}
+{{define "bar"}}{{with .}}<div class="acts bar" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
+{{- range .Options}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
+{{- if .Dismiss}}<button type="button" class="pill" data-option="dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg>Dismiss</button>{{end}}
+{{- if .Discuss}}<button type="button" class="pill" data-discuss><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg>Discuss in Athena</button>{{end}}
+{{- if .Reply}}<button type="button" class="pill" data-reply><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg>Reply…</button>{{end -}}
 </div>{{end}}{{end}}

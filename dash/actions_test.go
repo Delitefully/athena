@@ -242,8 +242,11 @@ func TestAStuckAnswerBringsItsAskBack(t *testing.T) {
 func TestWhatEachRowOffers(t *testing.T) {
 	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
 	a1 := v.actionable["a1"]
-	if a1 == nil || len(a1.Options) != 2 || !a1.Discuss || !a1.Reply || a1.Dismiss || !a1.Hides {
-		t.Fatalf("a question: its options, Discuss and Reply: %+v", a1)
+	if a1 == nil || len(a1.Options) != 4 || !a1.Discuss || !a1.Reply || a1.Dismiss || !a1.Hides || a1.RowOptions() != nil {
+		t.Fatalf("a question with a body: its four options (in its panel only), Discuss and Reply: %+v", a1)
+	}
+	if a5 := v.actionable["a5"]; a5 == nil || len(a5.RowOptions()) != 2 {
+		t.Fatalf("two options show on the row: %+v", a5)
 	}
 	if n := v.actionable["a3"]; n == nil || len(n.Options) != 0 || n.Discuss || n.Reply || !n.Dismiss {
 		t.Fatalf("a note with no options: × only: %+v", n)

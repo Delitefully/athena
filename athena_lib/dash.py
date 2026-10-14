@@ -60,13 +60,16 @@ def binary() -> Path:
         return target
     go = go_bin()
     if not go:
-        raise DashError("the dashboard needs Go to build once: install it (brew install go)")
+        raise DashError("the dashboard needs Go 1.22 or later to build once: install it (brew install go)")
     tmp = bin_dir / f".{target.name}.{secrets.token_hex(6)}"  # two racing builds never share a temp file
-    proc = subprocess.run([go, "build", "-trimpath", "-o", str(tmp), "."], cwd=str(SRC), capture_output=True, text=True,
-                          env=dict(os.environ, CGO_ENABLED="0"), timeout=300)
+    # Offline, always: the vendored modules (dash/vendor) and the Go that is installed, never a download of either.
+    proc = subprocess.run([go, "build", "-trimpath", "-mod=vendor", "-o", str(tmp), "."], cwd=str(SRC), capture_output=True,
+                          text=True, env=dict(os.environ, CGO_ENABLED="0", GOTOOLCHAIN="local", GOFLAGS="", GOPROXY="off"),
+                          timeout=300)
     if proc.returncode != 0:
         tmp.unlink(missing_ok=True)
-        raise DashError(f"go build failed: {proc.stderr.strip()[-600:]}")
+        hint = " (the dashboard needs Go 1.22 or later: brew upgrade go)" if "requires go" in proc.stderr else ""
+        raise DashError(f"go build failed{hint}: {proc.stderr.strip()[-600:]}")
     os.replace(tmp, target)
     for old in bin_dir.glob("athena-dash-*"):
         if old != target:

@@ -17,14 +17,59 @@ function tick() {
 // never eats a click or a draft; the newest waiting page goes in once they are done.
 const token = document.querySelector('meta[name="athena-token"]')?.content || "";
 const answered = new Set(); // asks answered here, kept off any page rendered before the server had the answer
-const drafts = new Map(); // item -> a reply being typed, kept across pages
+const drafts = new Map(); // where (an item, and "|bar" for its panel's answers) -> a reply being typed, kept across pages
 let held = null;
 let shown = main.innerHTML;
 let collapsing = 0;
 let pressing = false;
 
+// An ask's open panel stays open across pushes and reloads of this tab: its id is kept here and in sessionStorage,
+// which may be unavailable (a private window, blocked storage), so every use of it is wrapped.
+const OPEN = "athena-open-asks";
+const opened = new Set(
+  (() => {
+    try {
+      const ids = JSON.parse(sessionStorage.getItem(OPEN) || "[]");
+      return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function keepOpened() {
+  try {
+    sessionStorage.setItem(OPEN, JSON.stringify([...opened]));
+  } catch {}
+}
+function reopen() {
+  const shown = new Set();
+  for (const d of main.querySelectorAll("details[data-ask]")) {
+    shown.add(d.dataset.ask);
+    if (!opened.has(d.dataset.ask)) continue;
+    d.classList.add("kept"); // open already: no unfolding again
+    d.open = true;
+  }
+  let gone = false;
+  for (const id of opened) if (!shown.has(id) && !answered.has(id)) gone = opened.delete(id); // done, or a new state dir
+  if (gone) keepOpened();
+}
+
+// Where a reply is typed: a row's pills, or the answers in its panel, which share the item.
+const where = (acts) => acts.dataset.item + (acts.matches(".bar") ? "|bar" : "");
+function actsAt(key) {
+  const [item, bar] = key.split("|");
+  return main.querySelector(`.acts${bar ? ".bar" : ":not(.bar)"}[data-item="${CSS.escape(item)}"]`);
+}
+
+// Text selected in a panel, being read or copied: a push would drop the selection. Only while this window has focus:
+// a page left with a selection in it still takes pushes, so it is never stale when looked at again.
+function selecting() {
+  const sel = getSelection();
+  return document.hasFocus() && !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main .panel");
+}
+
 function busy() {
-  return collapsing > 0 || pressing || (document.activeElement?.matches("main .reply input") ?? false);
+  return collapsing > 0 || pressing || selecting() || (document.activeElement?.matches("main .reply input") ?? false);
 }
 
 function render(html) {
@@ -38,14 +83,16 @@ function render(html) {
   main.innerHTML = html;
   document.title = main.querySelector("[data-title]")?.dataset.title || document.title;
   for (const item of answered) {
-    const acts = main.querySelector(`.acts[data-item="${CSS.escape(item)}"]`);
-    if (acts) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
-    else answered.delete(item); // the server's page has it too
+    const all = main.querySelectorAll(`.acts[data-item="${CSS.escape(item)}"]`); // the row's, and its panel's
+    for (const acts of all) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
+    if (!all.length) answered.delete(item); // the server's page has it too
   }
-  for (const [item, text] of drafts) {
-    const acts = main.querySelector(`.acts[data-item="${CSS.escape(item)}"]`);
+  if (tipFor && !tipFor.isConnected) hideTip(); // its pill went with the old page
+  reopen();
+  for (const [key, text] of drafts) {
+    const acts = actsAt(key);
     if (acts) openReply(acts, text, false);
-    else drafts.delete(item);
+    else drafts.delete(key);
   }
   tick();
   if (motion.matches) {
@@ -122,7 +169,7 @@ function say(text, undoable) {
 function answer(acts, body, text, hides = acts.hasAttribute("data-hides")) {
   const item = acts.dataset.item;
   const row = hides ? acts.closest(".fold") || acts.closest(".apr") || acts.closest("li") : null;
-  drafts.delete(item);
+  drafts.delete(where(acts));
   if (row) {
     answered.add(item);
     collapse(row);
@@ -166,7 +213,7 @@ function openReply(acts, text = "", focus = true) {
   if (focus) input.focus();
 }
 function closeReply(acts) {
-  drafts.delete(acts.dataset.item);
+  drafts.delete(where(acts));
   acts.innerHTML = acts.dataset.pills || "";
   acts.classList.remove("replying");
   delete acts.dataset.pills;
@@ -209,8 +256,25 @@ main.addEventListener("keydown", (e) => {
 });
 main.addEventListener("input", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
-  if (acts) drafts.set(acts.dataset.item, e.target.value);
+  if (acts) drafts.set(where(acts), e.target.value);
 });
+// toggle does not bubble: listen in the capture phase. A panel the human closes unfolds again when reopened.
+main.addEventListener(
+  "toggle",
+  (e) => {
+    const d = e.target;
+    if (!d.matches?.("details[data-ask]")) return;
+    if (d.open) opened.add(d.dataset.ask);
+    else {
+      opened.delete(d.dataset.ask);
+      d.classList.remove("kept");
+    }
+    keepOpened();
+  },
+  true,
+);
+document.addEventListener("selectionchange", () => release());
+addEventListener("blur", () => setTimeout(release));
 main.addEventListener("focusout", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
   if (acts && !e.target.value.trim()) setTimeout(() => acts.isConnected && !acts.contains(document.activeElement) && closeReply(acts));
@@ -220,6 +284,46 @@ main.addEventListener("pointerdown", () => (pressing = true));
 addEventListener("pointerup", () => setTimeout(() => ((pressing = false), release())));
 addEventListener("pointercancel", () => ((pressing = false), release()));
 
+// Tooltips: one element on the body, outside every clipped .swap, .acts and .panel, for the icon-only pills (their
+// aria-label) and anything with a data-tip. Above its pill, below when there is no room, shifted to stay in the window.
+const tip = document.querySelector(".tip");
+const TIPPED = ".acts.options [data-discuss], .acts.options [data-reply], .pill.dismiss, .pill.recheck, [data-tip]";
+const EDGE = 8;
+let tipFor = null;
+function showTip(el) {
+  const text = el.dataset.tip || el.getAttribute("aria-label");
+  if (!text) return hideTip();
+  tipFor = el;
+  tip.textContent = text;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  let top = r.top - t.height - 6;
+  if (top < EDGE) top = r.bottom + 6; // no room above: below
+  const width = document.documentElement.clientWidth; // the window less its scrollbar
+  const left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, EDGE), width - t.width - EDGE);
+  tip.style.transform = `translate(${Math.floor(left)}px, ${Math.round(top)}px)`;
+}
+function hideTip() {
+  tipFor = null;
+  tip.hidden = true;
+}
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  const el = e.target.closest?.(TIPPED);
+  if (el) el !== tipFor && showTip(el);
+  else if (tipFor) hideTip();
+});
+document.addEventListener("pointerout", (e) => !e.relatedTarget && hideTip()); // left the window
+document.addEventListener("focusin", (e) => {
+  const el = e.target.closest?.(TIPPED);
+  if (el?.matches(":focus-visible")) showTip(el);
+  else hideTip();
+});
+document.addEventListener("focusout", () => setTimeout(() => tipFor && !tipFor.matches(":hover, :focus-visible") && hideTip()));
+addEventListener("scroll", hideTip, true);
+addEventListener("resize", hideTip);
+
 const events = new EventSource("/events");
 const boot = document.querySelector('meta[name="athena-boot"]')?.content;
 // A restarted dash has a new token and maybe new files: a page from before it reloads, once per start.
@@ -228,4 +332,5 @@ events.addEventListener("main", (e) => render(e.data));
 events.onopen = () => document.body.classList.remove("offline");
 events.onerror = () => document.body.classList.add("offline");
 setInterval(tick, 30000);
+reopen();
 tick();
