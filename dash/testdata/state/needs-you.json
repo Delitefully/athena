@@ -4,8 +4,9 @@
     {
       "id": "a1",
       "kind": "question",
-      "text": "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",
+      "text": "Start **ABC-111** now, or after ABC-101 merges? (rec: after)",
       "why": "ABC-111 touches the same export queue as ABC-101.",
+      "body": "**Recommendation: after ABC-101 merges.** Both change `export/queue.go`; starting now means rebasing about 400 lines once ABC-101 lands.\n\n| Option | Starts | Risk | Cost |\n|---|---|---|---|\n| Start now | today | conflicts in `queue.go` | a rebase, about 1 h |\n| After ABC-101 | in about 2 days | none | waits on its review |\n| Split it | today | low | the schema part now, the rest after |\n| Hold | next week | none | the export date slips a week |\n\n- ABC-101 is [acme/web#48](https://github.com/acme/web/pull/48): approved, waiting on the merge.\n- The new export screen is in the preview below.\n\n**Next:** on your answer athena briefs a worker for ABC-111 with that start point.",
       "options": [
         {
           "id": "now",
@@ -18,7 +19,22 @@
           "label": "After ABC-101",
           "icon": "clock",
           "do": "reply"
+        },
+        {
+          "id": "split",
+          "label": "Split it",
+          "icon": "git-pull-request",
+          "do": "reply"
+        },
+        {
+          "id": "hold",
+          "label": "Hold",
+          "icon": "pause",
+          "do": "dismiss"
         }
+      ],
+      "previews": [
+        "export-screen.html"
       ],
       "created": 1791498000
     },
@@ -32,6 +48,7 @@
       "id": "a3",
       "kind": "note",
       "text": "Approve and merge ABC-108: https://github.com/acme/web/pull/48",
+      "body": "ABC-108 is approved and its checks are green; it is the last piece before the 2.4 release branch is cut.\n\n- Merge style: squash, as acme/web merges.\n- Release notes: no entry, it is internal.\n- After it: ABC-111 can start (a1).",
       "created": 1791498200
     },
     {

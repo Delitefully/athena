@@ -192,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/events", s.events)
 	mux.HandleFunc("/glyphs", s.glyphs)
 	mux.HandleFunc("/api/action", s.action)
+	mux.HandleFunc("/preview/", s.preview)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()
 		w.Header().Set("Content-Type", "application/json")

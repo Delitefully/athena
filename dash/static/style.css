@@ -106,12 +106,13 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
 .swap.has-acts { min-height: 22px; }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
-.item:hover:not(:has(.fold:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap > .acts,
-.fold:hover > .swap > .acts, .fold:focus-within > .swap > .acts, .acts.replying {
+/* An open panel has its own answers, so a pointer or focus in it leaves the row's line as it is. */
+.item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap > .acts,
+.fold:hover:not(:has(.panel:hover)) > .swap > .acts, .fold:focus-within:not(:has(.panel:focus-within)) > .swap > .acts, .acts.replying {
   clip-path: inset(-34px -8px -6px -4px); /* room for a tooltip above and the focus ring */
 }
-.item:hover:not(:has(.fold:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
-.fold:hover > .swap > :not(.acts), .fold:focus-within > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
+.item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
+.fold:hover:not(:has(.panel:hover)) > .swap > :not(.acts), .fold:focus-within:not(:has(.panel:focus-within)) > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
   clip-path: inset(0 0 0 100%);
 }
 /* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,
@@ -120,6 +121,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 @media (hover: none), (max-width: 760px) {
   .swap { display: block; }
   .acts { clip-path: none !important; margin-top: 6px; }
+  .acts.bar { margin-top: 14px; }
   .swap.keep > .acts { padding-left: 0; }
   .swap > :not(.acts) { clip-path: none !important; }
 }
@@ -224,6 +226,57 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
   .stack > .apr::before, .stack.deep > .apr::after { visibility: hidden; }
 }
 
+/* An ask's detail: a native <details>. Closed, its summary is the row's why line as before, with a small "Details" and a
+   chevron at its end; open, the why line wraps in full and the panel follows: the ask's context in Markdown, links to its
+   previews, and its answers as full-size buttons. */
+.ask-detail > summary {
+  display: flex; align-items: baseline; gap: 12px; margin-top: 5px; cursor: pointer; list-style: none;
+  font-size: 13px; color: var(--muted); border-radius: 3px;
+}
+.ask-detail > summary::-webkit-details-marker { display: none; }
+.ask-detail > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ask-detail > summary > .detail { flex: 1; min-width: 0; margin: 0 !important; }
+.ask-detail[open] > summary > .detail { white-space: normal; color: var(--ink); }
+.more { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.needs .more { color: var(--thread); }
+.ask-detail > summary:hover .more { text-decoration: underline 1px; text-underline-offset: 3px; }
+.chev { width: 14px; height: 14px; }
+.ask-detail[open] .chev { transform: rotate(180deg); }
+.panel {
+  margin-top: 10px; padding: 14px 16px 16px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--wash); color: var(--ink); font-size: 13.5px; line-height: 1.5; cursor: auto;
+}
+.md { overflow-wrap: anywhere; }
+.md + .md { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md table, .md pre, .md blockquote { margin: 0 0 10px; }
+.md ul { list-style: disc; padding-left: 20px; }
+.md ol { list-style: decimal; padding-left: 22px; }
+.md li + li { margin-top: 2px; }
+.md h1, .md h2, .md h3, .md h4 { all: unset; display: block; margin: 12px 0 6px; font-weight: 700; font-size: 13.5px; }
+.md a { font-weight: 600; }
+.md strong { font-weight: 700; }
+.md code { background: var(--rule); border-radius: 3px; padding: 0 4px; font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.md pre { overflow-x: auto; padding: 8px 10px; border-radius: 5px; background: var(--rule); }
+.md pre code { padding: 0; background: none; }
+.md blockquote { padding-left: 10px; border-left: 2px solid var(--rule); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--rule); margin: 12px 0; }
+/* A table scrolls sideways within the panel rather than widening the column. */
+.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
+.md th, .md td { padding: 5px 14px 5px 0; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
+.md th[align=right], .md td[align=right] { text-align: right; }
+.md th[align=center], .md td[align=center] { text-align: center; }
+.md th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+.md tr:last-child td { border-bottom: 0; }
+.previews { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0 !important; }
+/* The panel's answers: always shown, full size, every option with its label, Discuss and Reply named. */
+.acts.bar { clip-path: none; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.bar .pill { height: 28px; padding: 0 12px; border-radius: 14px; gap: 6px; font-size: 13.5px; background: var(--bg); }
+.bar .pill:hover { background: var(--bg); border-color: var(--ink); }
+.bar .pi { width: 14px; height: 14px; }
+.bar .reply input { height: 28px; border-radius: 14px; font-size: 13.5px; }
+
 .notices { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; color: var(--muted); }
 .notices p { margin: 0 0 2px; }
 
@@ -233,6 +286,8 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
   .enter { animation: reveal .7s var(--arrive) both; }
   .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
   .apr .acts, .apr > .swap > .apr-meta { transition: opacity .14s ease; }
+  .chev { transition: transform .2s var(--arrive); }
+  .ask-detail[open]:not(.kept) > .panel { animation: unfold .32s var(--arrive) both; } /* not again on each push */
   .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
   .stack:is(:hover, :focus-within) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
   .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }
@@ -244,3 +299,4 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 }
 @keyframes draw { from { transform: scaleX(0); } }
 @keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes unfold { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 -4px 0); } } /* a moving edge, top down */

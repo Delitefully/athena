@@ -24,3 +24,4 @@ link
 external-link
 at-sign
 sparkles
+chevron-down

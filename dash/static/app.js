@@ -17,14 +17,53 @@ function tick() {
 // never eats a click or a draft; the newest waiting page goes in once they are done.
 const token = document.querySelector('meta[name="athena-token"]')?.content || "";
 const answered = new Set(); // asks answered here, kept off any page rendered before the server had the answer
-const drafts = new Map(); // item -> a reply being typed, kept across pages
+const drafts = new Map(); // where (an item, and "|bar" for its panel's answers) -> a reply being typed, kept across pages
 let held = null;
 let shown = main.innerHTML;
 let collapsing = 0;
 let pressing = false;
 
+// An ask's open panel stays open across pushes and reloads of this tab: its id is kept here and in sessionStorage,
+// which may be unavailable (a private window, blocked storage), so every use of it is wrapped.
+const OPEN = "athena-open-asks";
+const opened = new Set(
+  (() => {
+    try {
+      const ids = JSON.parse(sessionStorage.getItem(OPEN) || "[]");
+      return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function keepOpened() {
+  try {
+    sessionStorage.setItem(OPEN, JSON.stringify([...opened]));
+  } catch {}
+}
+function reopen() {
+  for (const d of main.querySelectorAll("details[data-ask]")) {
+    if (!opened.has(d.dataset.ask)) continue;
+    d.classList.add("kept"); // open already: no unfolding again
+    d.open = true;
+  }
+}
+
+// Where a reply is typed: a row's pills, or the answers in its panel, which share the item.
+const where = (acts) => acts.dataset.item + (acts.matches(".bar") ? "|bar" : "");
+function actsAt(key) {
+  const [item, bar] = key.split("|");
+  return main.querySelector(`.acts${bar ? ".bar" : ":not(.bar)"}[data-item="${CSS.escape(item)}"]`);
+}
+
+// Text selected in a panel, being read or copied: a push would drop the selection.
+function selecting() {
+  const sel = getSelection();
+  return !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main .panel");
+}
+
 function busy() {
-  return collapsing > 0 || pressing || (document.activeElement?.matches("main .reply input") ?? false);
+  return collapsing > 0 || pressing || selecting() || (document.activeElement?.matches("main .reply input") ?? false);
 }
 
 function render(html) {
@@ -38,14 +77,15 @@ function render(html) {
   main.innerHTML = html;
   document.title = main.querySelector("[data-title]")?.dataset.title || document.title;
   for (const item of answered) {
-    const acts = main.querySelector(`.acts[data-item="${CSS.escape(item)}"]`);
-    if (acts) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
-    else answered.delete(item); // the server's page has it too
+    const all = main.querySelectorAll(`.acts[data-item="${CSS.escape(item)}"]`); // the row's, and its panel's
+    for (const acts of all) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
+    if (!all.length) answered.delete(item); // the server's page has it too
   }
-  for (const [item, text] of drafts) {
-    const acts = main.querySelector(`.acts[data-item="${CSS.escape(item)}"]`);
+  reopen();
+  for (const [key, text] of drafts) {
+    const acts = actsAt(key);
     if (acts) openReply(acts, text, false);
-    else drafts.delete(item);
+    else drafts.delete(key);
   }
   tick();
   if (motion.matches) {
@@ -122,7 +162,7 @@ function say(text, undoable) {
 function answer(acts, body, text, hides = acts.hasAttribute("data-hides")) {
   const item = acts.dataset.item;
   const row = hides ? acts.closest(".fold") || acts.closest(".apr") || acts.closest("li") : null;
-  drafts.delete(item);
+  drafts.delete(where(acts));
   if (row) {
     answered.add(item);
     collapse(row);
@@ -166,7 +206,7 @@ function openReply(acts, text = "", focus = true) {
   if (focus) input.focus();
 }
 function closeReply(acts) {
-  drafts.delete(acts.dataset.item);
+  drafts.delete(where(acts));
   acts.innerHTML = acts.dataset.pills || "";
   acts.classList.remove("replying");
   delete acts.dataset.pills;
@@ -209,8 +249,24 @@ main.addEventListener("keydown", (e) => {
 });
 main.addEventListener("input", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
-  if (acts) drafts.set(acts.dataset.item, e.target.value);
+  if (acts) drafts.set(where(acts), e.target.value);
 });
+// toggle does not bubble: listen in the capture phase. A panel the human closes unfolds again when reopened.
+main.addEventListener(
+  "toggle",
+  (e) => {
+    const d = e.target;
+    if (!d.matches?.("details[data-ask]")) return;
+    if (d.open) opened.add(d.dataset.ask);
+    else {
+      opened.delete(d.dataset.ask);
+      d.classList.remove("kept");
+    }
+    keepOpened();
+  },
+  true,
+);
+document.addEventListener("selectionchange", () => release());
 main.addEventListener("focusout", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
   if (acts && !e.target.value.trim()) setTimeout(() => acts.isConnected && !acts.contains(document.activeElement) && closeReply(acts));
@@ -228,4 +284,5 @@ events.addEventListener("main", (e) => render(e.data));
 events.onopen = () => document.body.classList.remove("offline");
 events.onerror = () => document.body.classList.add("offline");
 setInterval(tick, 30000);
+reopen();
 tick();
