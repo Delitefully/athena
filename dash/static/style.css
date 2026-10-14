@@ -256,12 +256,14 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 .md pre code { padding: 0; background: none; }
 .md blockquote { padding-left: 10px; border-left: 2px solid var(--rule); color: var(--muted); }
 .md hr { border: 0; border-top: 1px solid var(--rule); margin: 12px 0; }
-/* A table scrolls sideways within the panel rather than widening the column. */
+/* A table scrolls sideways within the panel rather than widening the column. Its cells break between words only (not
+   .md's anywhere, which lets a column shrink to a character a line), and code in a cell not at all. */
 .md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
-.md th, .md td { padding: 5px 14px 5px 0; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
+.md th, .md td { padding: 5px 14px 5px 0; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; overflow-wrap: normal; }
+.md :is(th, td) code { white-space: nowrap; }
 .md th[align=right], .md td[align=right] { text-align: right; }
 .md th[align=center], .md td[align=center] { text-align: center; }
-.md th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+.md th { font-weight: 600; color: var(--muted); }
 .md tr:last-child td { border-bottom: 0; }
 .previews { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0 !important; }
 /* The panel's answers: always shown, full size, every option with its label, Discuss and Reply named. */
