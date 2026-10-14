@@ -37,6 +37,7 @@ PREVIEWS_MAX, PREVIEW_BYTES_MAX, PREVIEW_FILES_MAX = 4, 20 << 20, 500
 _ID = re.compile(r"^[a-z0-9-]{1,32}$")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_KEY = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+DISCUSS_LABEL = r"(?i)^discuss(\s+in\s+athena)?$"  # a question has Discuss in Athena already (dash/state.go discussLabel)
 _PILL = re.compile(r"^pr:([a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100})#([1-9][0-9]{0,9})$")  # the dash's prKeyText
 # A PR's buttons on the dashboard, by option: Re-check on the Awaiting review row or a failing Needs you row, Request
 # review and Merge (a go, for the head the human saw) on a Needs you row (dash/view.go prActions).
@@ -197,8 +198,6 @@ def _option(spec, taken):
     """`label[:icon[:do]]`, do being reply (the default: athena acts on it) or dismiss (nothing to do)."""
     label, icon, do = (spec.split(":") + ["", ""])[:3]
     label = label.strip()
-    if label.casefold() in ("discuss", "discuss in athena"):
-        raise AskError(f"no {label!r} option: the dashboard gives every question Discuss in Athena")
     if not label or len(label) > LABEL_MAX:
         raise AskError(f"an option's label is 1 to {LABEL_MAX} characters: {label!r}")
     do = do or "reply"
@@ -388,6 +387,10 @@ def add(text, kind=None, why="", pr=None, options=(), body="", previews=()):
         more = f"; up to {OPTIONS_MAX_BODY} with a body (--body)" if not body else ""
         raise AskError(f"at most {most} options{more}: Discuss in Athena and Reply… come with every question")
     kind = kind or ("question" if asks_question(text) else "note")
+    for spec in options:
+        label = spec.split(":")[0].strip()
+        if kind == "question" and re.match(DISCUSS_LABEL, label):
+            raise AskError(f"no {label!r} option: the dashboard gives every question Discuss in Athena")
     taken = set()
     item = {"kind": kind, "text": text, "why": why, "options": [_option(o, taken) for o in options]}
     if body:

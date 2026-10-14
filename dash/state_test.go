@@ -226,15 +226,19 @@ func TestParseAsksDropsWhatAthenaAskWouldRefuse(t *testing.T) {
 }
 
 // Every question has Discuss in Athena of its own, so an option labelled Discuss (an ask from before athena ask refused
-// one) is dropped rather than shown as a second Discuss pill, and frees its slot.
+// one) is dropped rather than shown as a second Discuss pill, and frees its slot. A note has none, so it keeps its own.
 func TestParseAsksDropsAnOptionThatDuplicatesDiscuss(t *testing.T) {
 	var m map[string]any
 	json.Unmarshal([]byte(`{"items": [{"id": "a59", "text": "Take the recs?", "options": [
 		{"id": "discuss", "label": "Discuss"}, {"id": "take", "label": "Take recs"},
-		{"id": "discuss-2", "label": " discuss in ATHENA "}, {"id": "later", "label": "Later"}]}]}`), &m)
+		{"id": "discuss-2", "label": " discuss  in ATHENA "}, {"id": "later", "label": "Later"}]},
+		{"id": "a61", "kind": "note", "text": "Shipping at 3pm", "options": [{"id": "discuss", "label": "Discuss"}]}]}`), &m)
 	got := parseAsks(m)
-	if len(got) != 1 || len(got[0].Options) != 2 || got[0].Options[0].ID != "take" || got[0].Options[1].ID != "later" {
-		t.Fatalf("a Discuss option is shown: %+v", got)
+	if len(got) != 2 || len(got[0].Options) != 2 || got[0].Options[0].ID != "take" || got[0].Options[1].ID != "later" {
+		t.Fatalf("a question's Discuss option is shown: %+v", got)
+	}
+	if len(got[1].Options) != 1 || got[1].Options[0].ID != "discuss" {
+		t.Fatalf("a note loses its Discuss option: %+v", got[1])
 	}
 }
 
