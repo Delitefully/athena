@@ -106,13 +106,13 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
 .swap.has-acts { min-height: 22px; }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
-/* An open panel has its own answers, so a pointer or focus in it leaves the row's line as it is. */
-.item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap > .acts,
-.fold:hover:not(:has(.panel:hover)) > .swap > .acts, .fold:focus-within:not(:has(.panel:focus-within)) > .swap > .acts, .acts.replying {
+/* An ask's detail (its summary and its panel, which has its own answers): a pointer or focus there leaves the row's line as it is. */
+.item:hover:not(:has(.fold:hover, .ask-detail:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within, .ask-detail:focus-within)) > .body > .swap > .acts,
+.fold:hover:not(:has(.ask-detail:hover)) > .swap > .acts, .fold:focus-within:not(:has(.ask-detail:focus-within)) > .swap > .acts, .acts.replying {
   clip-path: inset(-6px -8px -6px -4px); /* room for the focus ring; the tooltip is the body's (.tip) */
 }
-.item:hover:not(:has(.fold:hover, .panel:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within, .panel:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
-.fold:hover:not(:has(.panel:hover)) > .swap > :not(.acts), .fold:focus-within:not(:has(.panel:focus-within)) > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
+.item:hover:not(:has(.fold:hover, .ask-detail:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within, .ask-detail:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
+.fold:hover:not(:has(.ask-detail:hover)) > .swap > :not(.acts), .fold:focus-within:not(:has(.ask-detail:focus-within)) > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
   clip-path: inset(0 0 0 100%);
 }
 /* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,

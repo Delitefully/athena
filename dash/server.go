@@ -221,7 +221,13 @@ func (s *Server) localOnly(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:")
+		// Scripts only from /static/: never a file under /preview/, which is athena's copy of whatever a preview holds.
+		// A CSP host source cannot name an IPv6 literal, so [::1] keeps 'self'.
+		scripts := "http://" + r.Host + "/static/"
+		if r.Host[0] == '[' {
+			scripts = "'self'"
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src "+scripts+"; img-src 'self' data:")
 		next.ServeHTTP(w, r)
 	})
 }

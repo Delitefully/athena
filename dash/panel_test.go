@@ -270,3 +270,21 @@ func TestABodyKeepsItsFirstIndent(t *testing.T) {
 		t.Fatalf("%q", a.Body)
 	}
 }
+
+// An older ask's title is never cut inside a link: the row would link a cut URL.
+func TestALongTitleIsNeverCutInsideALink(t *testing.T) {
+	text := strings.Repeat("word ", 20) + "see [the PR](https://github.com/acme/web/pull/1234) and decide now"
+	title, long := (Ask{Text: text}).Title()
+	if !long || title != strings.TrimSpace(strings.Repeat("word ", 20))+" see…" {
+		t.Fatalf("%q", title)
+	}
+}
+
+// The page runs scripts from /static/ only: a preview's own .js is never one of the page's.
+func TestThePageRunsScriptsFromStaticOnly(t *testing.T) {
+	_, base := start(t, copyFixture(t))
+	resp, _ := get(t, base+"/", "")
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src "+base+"/static/;") {
+		t.Fatalf("CSP %q", csp)
+	}
+}

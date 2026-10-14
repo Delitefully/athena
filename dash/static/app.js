@@ -42,11 +42,16 @@ function keepOpened() {
   } catch {}
 }
 function reopen() {
+  const shown = new Set();
   for (const d of main.querySelectorAll("details[data-ask]")) {
+    shown.add(d.dataset.ask);
     if (!opened.has(d.dataset.ask)) continue;
     d.classList.add("kept"); // open already: no unfolding again
     d.open = true;
   }
+  let gone = false;
+  for (const id of opened) if (!shown.has(id) && !answered.has(id)) gone = opened.delete(id); // done, or a new state dir
+  if (gone) keepOpened();
 }
 
 // Where a reply is typed: a row's pills, or the answers in its panel, which share the item.

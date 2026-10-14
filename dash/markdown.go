@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -23,8 +24,28 @@ var md = goldmark.New(
 	goldmark.WithParserOptions(parser.WithASTTransformers(util.Prioritized(safeLinks{}, 0))),
 )
 
+// rendered keeps the last bodies' HTML: a page is built on every state change and every minute, its bodies rarely change.
+var rendered = struct {
+	sync.Mutex
+	html map[string]template.HTML
+}{html: map[string]template.HTML{}}
+
 // renderMarkdown is an ask's body as HTML. A body goldmark cannot render shows as escaped text.
 func renderMarkdown(s string) template.HTML {
+	rendered.Lock()
+	defer rendered.Unlock()
+	if h, ok := rendered.html[s]; ok {
+		return h
+	}
+	if len(rendered.html) >= 64 {
+		rendered.html = map[string]template.HTML{}
+	}
+	h := convert(s)
+	rendered.html[s] = h
+	return h
+}
+
+func convert(s string) template.HTML {
 	var buf bytes.Buffer
 	if err := md.Convert([]byte(s), &buf); err != nil {
 		return template.HTML("<p>" + template.HTMLEscapeString(s) + "</p>")

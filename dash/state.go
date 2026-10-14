@@ -546,15 +546,24 @@ func (a Ask) Title() (title string, long bool) {
 	if end >= 0 {
 		t = a.Text[:end]
 	}
-	return clip(t, askTitleMax), true
+	if r := []rune(t); len(r) > askTitleMax {
+		cut := len(string(r[:askTitleMax-1])) // in bytes
+		for _, loc := range links.FindAllStringIndex(t, -1) {
+			if loc[0] < cut && cut < loc[1] {
+				cut = loc[0] // never inside a link: the row would link a cut URL
+			}
+		}
+		return strings.TrimRight(t[:cut], " ") + "…", true
+	}
+	return t, true
 }
 
 // One sentence, as athena_lib/asks.py one_sentence reads it: links, e.g. and the like, and a closing parenthetical
 // such as "(rec B)" are set aside, then a sentence end followed by more text starts a second sentence.
 // A sentence ends at a stop followed by more text that does not start in lower case: "Ship now... or wait?" is one.
-// Initials such as a.m., U.S. and e.g., and etc., vs. and cf., end none.
+// Initials such as a.m., U.S. and e.g., and abbreviations such as etc., vs., approx., No. and Dr., end none.
 var (
-	sentenceAbbrev = regexp.MustCompile(`(?i)\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf)\.)`)
+	sentenceAbbrev = regexp.MustCompile(`(?i)\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf|approx|incl|no|nr|dr|mr|mrs|ms|st|jr|sr)\.)`)
 	sentenceTail   = regexp.MustCompile(`\s*\([^()]*\)[.!?]?\s*$`)
 	sentenceStop   = regexp.MustCompile(`([.!?\x{2026}]+["')\]\x{2019}\x{201d}]*)\s+[^\sa-z]`)
 	leadingBlank   = regexp.MustCompile(`\A(?:[ \t]*\r?\n)+`)

@@ -46,9 +46,9 @@ PR_OPTIONS = {"recheck": {"id": "recheck", "label": "Re-check and fix", "do": "r
 _HEAD = re.compile(r"^[0-9a-f]{7,40}$")  # the dash's headText
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|https?://[^\s<)]*[^\s<).,;:!?'\"]")  # dash/view.go links
 # One sentence: no stop followed by more text that does not start in lower case ("Ship now... or wait?" is one), once
-# links, initials (a.m., U.S., e.g.), etc., vs., cf. and a closing parenthetical such as "(rec B)" are set aside.
+# links, initials (a.m., U.S., e.g.), abbreviations (etc., vs., approx., No., Dr.) and a closing parenthetical such as "(rec B)" are set aside.
 # dash/state.go sentenceEnd reads it the same way (dash/testdata/titles.json).
-_ABBREV = re.compile(r"\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf)\.)", re.I)
+_ABBREV = re.compile(r"\b(?:(?:[a-z]\.){2,}|(?:etc|vs|cf|approx|incl|no|nr|dr|mr|mrs|ms|st|jr|sr)\.)", re.I)
 _PAREN_TAIL = re.compile(r"\s*\([^()]*\)[.!?]?\s*$")
 _SENTENCE_END = re.compile(r"[.!?\u2026]+[\"')\]\u2019\u201d]*\s+[^\sa-z]")
 _PREVIEW_NAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -254,19 +254,18 @@ def previews_root():
 
 
 def _preview_files(src, raw, budget):
-    """A preview folder's files to copy, by path relative to it; hidden ones are left out. Refuses any symlink, and
-    stops as soon as the folder is past what is left of the budget [bytes, files]."""
+    """A preview folder's files to copy, by path relative to it; hidden ones are left out (and never looked at). Refuses
+    any symlink it would copy, and stops as soon as the folder is past what is left of the budget [bytes, files]."""
     out = []
     for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        for n in dirnames + sorted(filenames):
+        for d in dirnames:
+            if (Path(dirpath) / d).is_symlink():
+                raise AskError(f"--preview {raw}: {(Path(dirpath) / d).relative_to(src)} is a symlink; a preview copies files only")
+        for n in sorted(f for f in filenames if not f.startswith(".")):
             p = Path(dirpath) / n
             if p.is_symlink():
                 raise AskError(f"--preview {raw}: {p.relative_to(src)} is a symlink; a preview copies files only")
-        for n in sorted(filenames):
-            p = Path(dirpath) / n
-            if n.startswith("."):
-                continue
             if not p.is_file():
                 raise AskError(f"--preview {raw}: {p.relative_to(src)} is not a regular file")
             out.append(p.relative_to(src))
@@ -338,7 +337,14 @@ def _copy_file(src, dst):
 def _copy_previews(plan):
     """Copies the previews into a new hidden folder of <state>/previews, outside ask.lock (which the dash's answers
     need too); add() renames it to the ask's id under the lock. The dash serves no hidden folder."""
-    dest = previews_root() / f".incoming-{os.getpid()}-{time.monotonic_ns()}"
+    root = previews_root()
+    for old in root.glob(".incoming-*"):  # left by an add that was killed mid-copy
+        try:
+            if time.time() - old.stat().st_mtime > 3600:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:
+            pass
+    dest = root / f".incoming-{os.getpid()}-{time.monotonic_ns()}"
     dest.mkdir(mode=0o700)
     try:
         _copy_into(plan, dest)

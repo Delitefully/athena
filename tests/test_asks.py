@@ -4,6 +4,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -399,8 +400,26 @@ class AskDetailTest(unittest.TestCase):
         with mock.patch.object(Path, "stat", autospec=True, side_effect=Path.stat) as st:
             with self.assertRaises(asks.AskError):
                 asks.add("Which?", previews=[str(site)])
-        # Two stats a file it looked at (is it a file, how big), and it stops at the cap: not the whole folder.
-        self.assertLessEqual(st.call_count, 2 * (asks.PREVIEW_FILES_MAX + 2))
+        # Up to three stats a file it looked at (a symlink? a file? how big?), and it stops at the cap: not the whole folder.
+        self.assertLessEqual(st.call_count, 3 * (asks.PREVIEW_FILES_MAX + 2))
+
+    def test_a_hidden_symlink_is_left_out_not_refused(self):
+        site = self.src / "site"
+        site.mkdir()
+        (site / "index.html").write_text("hi")
+        (site / ".env").symlink_to(self.src)  # never copied, so never a reason to refuse
+        a1 = asks.add("Which?", previews=[str(site)])
+        self.assertEqual(sorted(p.name for p in (asks.previews_dir() / a1 / "site").iterdir()), ["index.html"])
+
+    def test_a_copy_left_by_a_killed_add_is_swept(self):
+        (self.src / "mock.html").write_text("hi")
+        stale = asks.previews_root() / ".incoming-1-1"
+        stale.mkdir()
+        os.utime(stale, (time.time() - 7200, time.time() - 7200))
+        fresh = asks.previews_root() / ".incoming-2-2"  # another add's, still copying
+        fresh.mkdir()
+        asks.add("Which?", previews=[str(self.src / "mock.html")])
+        self.assertEqual((stale.exists(), fresh.exists()), (False, True))
 
     def test_previews_are_copied_outside_the_lock(self):
         (self.src / "mock.html").write_text("hi")

@@ -16,7 +16,10 @@
     "Deploy at 9 a.m. tomorrow?",
     "Ship now... or wait for 2.4?",
     "Ship now… or wait?",
-    "Bill U.S. customers first?"
+    "Bill U.S. customers first?",
+    "Ship it approx. 3 days early?",
+    "Ping Dr. Smith about ABC-12?",
+    "Bump it to No. 5 on the list?"
   ],
   "many": [
     "Start **ABC-111** now, or after ABC-101 merges? The 5-hour quota is at 81%.",
