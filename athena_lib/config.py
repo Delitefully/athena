@@ -21,7 +21,6 @@ DEFAULTS = {
     "reapproval_repos": [],  # repos where a push after approval needs a new approval
     "model": "opus",
     "effort": "high",
-    "quota_file": None,  # the herdr-agent-quota plugin's state file; None skips the 5-hour quota gate
 }
 
 # Migration only: the values an install from before config.json ran with.
@@ -32,7 +31,6 @@ LEGACY = {
     "reapproval_repos": [],
     "model": "opus",
     "effort": "high",
-    "quota_file": "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json",
 }
 
 ENV = {
@@ -40,10 +38,9 @@ ENV = {
     "worktree_root": "ATHENA_WORKTREE_ROOT",
     "model": "ATHENA_MODEL",
     "effort": "ATHENA_EFFORT",
-    "quota_file": "ATHENA_QUOTA_FILE",
 }
 
-PATH_KEYS = ("projects_dir", "worktree_root", "quota_file")
+PATH_KEYS = ("projects_dir", "worktree_root")
 LIST_KEYS = ("human_merge_repos", "reapproval_repos")
 
 

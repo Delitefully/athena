@@ -59,7 +59,7 @@ athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <ABC-
 
 With `--ultracode`, the spawn output and the ledger carry `ultracode: true` (and `workflow_size`), and `athena status` marks the worker `UC` (`UC:<size>`).
 
-`athena spawn` refuses when the main checkout is not clean and on main, when 4 workers are live (6 with `--force`), or when the 5-hour quota is 85% used (`--ignore-quota` only when the human says so). To report the quota, read `used_percent` the way `athena_lib/quota.py` does (`python3 -c "from athena_lib import quota; print(quota.five_hour_used())"` in the athena repo) and say "N% used". Never quote the bars in `herdr agent list` (`5h ▰▰▰▰▰▰▰▰▰▱ 91%`): they show what is left, so 91% there means 9% used. Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
+`athena spawn` refuses when the main checkout is not clean and on main, or when 4 workers are live (6 with `--force`). Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 
 Exit code 3 means the worker is live but pending: its Claude stopped at a startup prompt (for example "Is this a project you trust?"), so its goal is not sent yet. Tell the human the space and the prompt from the message; they answer it in its column, never you. `athena watch` sends the goal once the worker is ready (`athena resume <w>` sends it by hand). `athena status` shows it as `goal pending (startup prompt)`; `athena retire <w>` works on it. Any other launch failure removes its space, or `athena status` lists it with the `athena retire` command to run.
 

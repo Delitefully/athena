@@ -17,7 +17,6 @@ into any worker at any time.
 - [Claude Code](https://claude.com/claude-code) as `claude`, 2.1.286 or later for the watch mod.
 - [gh](https://cli.github.com), signed in (`gh auth login`), and a git identity: workers push branches and open PRs.
 - Go, only for the dashboard (built on first use).
-- Optional: the herdr-agent-quota herdr plugin, for the 5-hour quota gate.
 
 ## Install
 

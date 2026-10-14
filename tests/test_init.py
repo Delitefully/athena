@@ -32,7 +32,7 @@ class InitBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
-        for var in ("ATHENA_WORKTREE_ROOT", "ATHENA_QUOTA_FILE", "ATHENA_HERDR"):
+        for var in ("ATHENA_WORKTREE_ROOT", "ATHENA_HERDR"):
             os.environ.pop(var, None)
         self.home = Path(self.tmp.name) / "home"
         self.home.mkdir()
@@ -74,30 +74,28 @@ class FreshInstallTest(InitBase):
         data = json.loads(config.config_file().read_text())
         self.assertEqual(data, {"version": 1, "projects_dir": "~/code", "worktree_root": "~/code/.worktrees",
                                 "human_merge_repos": [], "reapproval_repos": [], "model": "opus",
-                                "effort": "high", "quota_file": None})
+                                "effort": "high"})
         self.assertTrue((self.home / "code").is_dir())
         self.assertEqual(paths.projects_dir(), self.home / "code")
         self.assertEqual(paths.worktree_root(), self.home / "code" / ".worktrees")
         self.assertEqual(paths.worktree_path(self.home / "code" / "web", "you/abc-1-x"),
                          self.home / "code" / ".worktrees" / "web" / "abc-1-x")
-        self.assertIsNone(paths.quota_file())
         self.assertIn("✓ herdr 0.9.3", out)
         self.assertIn("✓ athena plugin", out)
 
     def test_flags_set_every_value(self):
         code, out, _ = self.init("--yes", "--projects", "~/src", "--worktrees", "~/wt", "--human-merge", "web, api",
-                                 "--reapproval", "web", "--model", "sonnet", "--effort", "medium",
-                                 "--quota-file", "~/q.json")
+                                 "--reapproval", "web", "--model", "sonnet", "--effort", "medium")
         self.assertEqual(code, 0, out)
         cfg = config.load()
         self.assertEqual((cfg["worktree_root"], cfg["human_merge_repos"], cfg["reapproval_repos"]),
                          ("~/wt", ["web", "api"], ["web"]))
-        self.assertEqual((cfg["model"], cfg["effort"], cfg["quota_file"]), ("sonnet", "medium", "~/q.json"))
+        self.assertEqual((cfg["model"], cfg["effort"]), ("sonnet", "medium"))
 
     def test_interactive_prompts_offer_sensible_defaults(self):
         # Enter takes each default: the projects folder is ~/code outside a git repo, never ~/Developer.
         with mock.patch.object(init.os, "getcwd", return_value=str(self.home)):
-            code, out, asked = self.init(answers=[""] * 7)
+            code, out, asked = self.init(answers=[""] * 6)
         self.assertEqual(code, 0, out)
         self.assertIn("[~/code]", asked[0])
         self.assertIn("[~/code/.worktrees]", asked[1])
@@ -111,13 +109,14 @@ class FreshInstallTest(InitBase):
         with mock.patch.object(init.os, "getcwd", return_value=str(repo)):
             self.assertEqual(init.suggested_projects(), "~/src")
 
-    def test_a_detected_quota_file_is_offered(self):
-        quota = self.home / ".local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json"
-        quota.parent.mkdir(parents=True)
-        quota.write_text("{}")
-        self.init("--yes", "--projects", "~/code")
-        self.assertEqual(config.load()["quota_file"],
-                         "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json")
+    def test_a_key_athena_no_longer_has_is_dropped_on_rewrite(self):
+        paths.ensure()
+        config.config_file().write_text(json.dumps({"version": 1, "projects_dir": "~/code", "quota_file": "~/q.json"}))
+        self.assertNotIn("quota_file", config.load())
+        self.init("--yes")
+        data = json.loads(config.config_file().read_text())
+        self.assertEqual(data["projects_dir"], "~/code")
+        self.assertNotIn("quota_file", data)
 
     def test_an_existing_config_is_kept_unless_a_flag_changes_it(self):
         self.init("--yes", "--projects", "~/code", "--human-merge", "web")
@@ -153,7 +152,7 @@ class ChecksTest(InitBase):
     def test_the_install_runs_only_after_a_yes(self):
         tool(self.bin, "claude", CLAUDE_OK)
         marker = self.fake_installer()
-        code, out, asked = self.init("--projects", "~/code", answers=["n"] + [""] * 6)
+        code, out, asked = self.init("--projects", "~/code", answers=["n"] + [""] * 5)
         self.assertFalse(marker.exists())
         self.assertIn("Install herdr now", asked[0])
         self.assertEqual(code, 1)
@@ -161,7 +160,7 @@ class ChecksTest(InitBase):
     def test_a_yes_installs_herdr_and_checks_it_again(self):
         tool(self.bin, "claude", CLAUDE_OK)
         marker = self.fake_installer()
-        code, out, asked = self.init("--projects", "~/code", answers=["y"] + [""] * 6)
+        code, out, asked = self.init("--projects", "~/code", answers=["y"] + [""] * 5)
         self.assertTrue(marker.exists())
         self.assertIn("✓ herdr 0.9.3", out)
         self.assertEqual(code, 0, out)
@@ -193,7 +192,7 @@ class ChecksTest(InitBase):
         code, out, _ = self.init("--yes")
         self.assertIn("✓ athena plugin: loaded from /somewhere", out)
 
-    def test_gh_git_and_herdr_plugins(self):
+    def test_gh_and_git(self):
         tool(self.bin, "herdr", HERDR_OK)
         tool(self.bin, "claude", CLAUDE_OK)
         tool(self.bin, "gh", 'exit 1')
@@ -203,7 +202,6 @@ class ChecksTest(InitBase):
         self.assertIn("gh auth login", out)
         self.assertIn("✗ git identity", out)
         self.assertIn('git config --global user.name', out)
-        self.assertIn("– herdr-agent-quota (optional)", out)
         self.assertEqual(code, 0, out)  # gh and git are needed for PRs, not to start athena
 
 
@@ -229,7 +227,7 @@ class MigrationTest(InitBase):
                                                                                      "urgency": 1, "git": {}}):
             cli.main(["status"])
         return (out.getvalue(), paths.worktree_path(self.home / "Developer" / "web", "you/abc-2-y"),
-                paths.projects_dir(), paths.quota_file(), config.get("model"), config.get("effort"),
+                paths.projects_dir(), config.get("model"), config.get("effort"),
                 config.load()["human_merge_repos"], config.load()["reapproval_repos"])
 
     def test_the_migrated_config_equals_todays_values(self):
@@ -243,12 +241,11 @@ class MigrationTest(InitBase):
         self.assertEqual(data["worktree_root"], "~/Developer/.worktrees")
         self.assertEqual((data["human_merge_repos"], data["reapproval_repos"]), (["web", "api"], ["web"]))
         self.assertEqual((data["model"], data["effort"]), ("opus", "high"))
-        self.assertEqual(data["quota_file"], "~/.local/state/herdr/plugins/herdr-agent-quota/claude-statusline.json")
         self.assertEqual(self.snapshot(), before)
         self.assertIn("abc-1", before[0])
 
     def test_interactive_init_offers_todays_values(self):
-        code, out, asked = self.init(answers=[""] * 7)
+        code, out, asked = self.init(answers=[""] * 6)
         self.assertEqual(code, 0, out)
         self.assertIn("[~/Developer]", asked[0])
         self.assertIn("[web, api]", asked[2])
