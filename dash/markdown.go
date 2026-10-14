@@ -80,7 +80,8 @@ func (safeLinks) Transform(doc *ast.Document, reader text.Reader, _ parser.Conte
 		}
 		switch v := n.(type) {
 		case *ast.Link:
-			if !allowedURL(string(v.Destination)) {
+			// As goldmark renders it, entities decoded: "ftp&#58;//" is ftp:// by then (renderer/html renderLink).
+			if !allowedURL(string(util.URLEscape(v.Destination, true))) {
 				drop = append(drop, n)
 			}
 		case *ast.AutoLink:

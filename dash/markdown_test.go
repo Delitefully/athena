@@ -91,3 +91,24 @@ func TestABodyRendersParagraphsListsTablesAndLinks(t *testing.T) {
 		}
 	}
 }
+
+// goldmark decodes entities in a destination when it renders the link, so the allowlist checks the decoded form:
+// "ftp&#58;//" is ftp://, and a data: image is refused even though goldmark itself would let one by.
+func TestTheAllowlistSeesEntityEncodedSchemes(t *testing.T) {
+	for _, v := range []string{
+		"[a](ftp&#58;//x.test/a)",
+		"[a](vscode&#58;//file/x)",
+		"[a](vscode&colon;//file/x)",
+		"[a](tel&#x3a;+15555550100)",
+		"[a](data&#58;image/png;base64,AAAA)",
+		"[a][r]\n\n[r]: vscode&#58;//x",
+		"[a][r]\n\n[r]: data&#58;image/png;base64,AAAA",
+	} {
+		if out := string(renderMarkdown(v)); strings.Contains(out, "<a") {
+			t.Errorf("%q rendered a link: %s", v, out)
+		}
+	}
+	if out := string(renderMarkdown("[a](https&#58;//acme.test/x)")); !strings.Contains(out, `<a href="https://acme.test/x">a</a>`) {
+		t.Errorf("an encoded https link is still one: %s", out)
+	}
+}
