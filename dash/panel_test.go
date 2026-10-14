@@ -290,26 +290,34 @@ func TestThePageRunsScriptsFromStaticOnly(t *testing.T) {
 }
 
 // A body's table lays out by whole words: a cell's narrowest is its longest word, never one character a line, headers
-// wrap like any cell, and one too wide for the panel scrolls sideways inside it.
+// wrap like any cell, and one too wide for the panel scrolls sideways inside it. Every .md rule that reaches a table is
+// read, so a later one cannot bring the squeeze back.
 func TestABodysTableBreaksOnlyBetweenWords(t *testing.T) {
 	css, err := staticFS.ReadFile("static/style.css")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule := func(sel string) string {
-		m := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(sel) + ` \{([^}]*)\}`).FindStringSubmatch(string(css))
-		if m == nil {
-			t.Fatalf("no %s rule", sel)
+	cells := regexp.MustCompile(`\b(th|td|tr|thead|tbody|table)\b`)
+	var normal, block bool
+	for _, m := range regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`).FindAllStringSubmatch(string(css), -1) {
+		sel, body := m[1], m[2]
+		if i := strings.LastIndex(sel, "*/"); i >= 0 {
+			sel = sel[i+2:] // a comment before the rule
 		}
-		return m[1]
+		sel = strings.TrimSpace(sel)
+		if !strings.Contains(sel, ".md") || !cells.MatchString(sel) {
+			continue
+		}
+		if strings.Contains(body, "nowrap") || strings.Contains(body, "overflow-wrap: anywhere") || strings.Contains(body, "word-break") {
+			t.Errorf("%s lets a table cell break inside a word or not at all: %s", sel, body)
+		}
+		normal = normal || sel == ".md th, .md td" && strings.Contains(body, "overflow-wrap: normal")
+		block = block || sel == ".md table" && strings.Contains(body, "display: block") && strings.Contains(body, "overflow-x: auto")
 	}
-	if !strings.Contains(rule(".md th, .md td"), "overflow-wrap: normal") {
+	if !normal {
 		t.Error(".md's overflow-wrap: anywhere reaches table cells and squeezes a column to a character a line")
 	}
-	if strings.Contains(rule(".md th"), "nowrap") {
-		t.Error("a header that cannot wrap takes the width its column's words need")
-	}
-	if t2 := rule(".md table"); !strings.Contains(t2, "display: block") || !strings.Contains(t2, "overflow-x: auto") {
+	if !block {
 		t.Error("a table too wide for the panel no longer scrolls inside it")
 	}
 }
