@@ -475,11 +475,13 @@ var (
 	askID = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 	// previewEntry: a file, or a folder (its name ending in /), under <state>/previews/<id>/, as `athena ask add` names it.
 	previewEntry = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}/?$`)
+	// discussLabel: an option that would show beside a question's own Discuss in Athena (asks.py has the same pattern).
+	discussLabel = regexp.MustCompile(`(?i)^discuss(\s+in\s+athena)?$`)
 )
 
 // parseAsks reads needs-you.json, dropping what `athena ask add` would refuse rather than failing the file:
-// an item without an id or text, options past the second (the fourth with a body) or with a long label, icons not
-// in icons.txt, and previews that are not plain names. A long text is kept: Title cuts it, and the panel shows it.
+// an item without an id or text, options past the second (the fourth with a body) or with a long label, a question's
+// option labelled Discuss (it has Discuss in Athena already), icons not in icons.txt, and previews that are not plain names. A long text is kept: Title cuts it, and the panel shows it.
 func parseAsks(m map[string]any) []Ask {
 	list, _ := m["items"].([]any)
 	var out []Ask
@@ -512,7 +514,8 @@ func parseAsks(m map[string]any) []Ask {
 				continue
 			}
 			o := Option{ID: str(om, "id"), Label: strings.TrimSpace(str(om, "label")), Icon: str(om, "icon"), Do: str(om, "do")}
-			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax {
+			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax ||
+				a.Kind == "question" && discussLabel.MatchString(o.Label) {
 				continue
 			}
 			if !knownIcon(o.Icon) {

@@ -288,3 +288,28 @@ func TestThePageRunsScriptsFromStaticOnly(t *testing.T) {
 		t.Fatalf("CSP %q", csp)
 	}
 }
+
+// A body's table lays out by whole words: a cell's narrowest is its longest word, never one character a line, headers
+// wrap like any cell, and one too wide for the panel scrolls sideways inside it.
+func TestABodysTableBreaksOnlyBetweenWords(t *testing.T) {
+	css, err := staticFS.ReadFile("static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := func(sel string) string {
+		m := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(sel) + ` \{([^}]*)\}`).FindStringSubmatch(string(css))
+		if m == nil {
+			t.Fatalf("no %s rule", sel)
+		}
+		return m[1]
+	}
+	if !strings.Contains(rule(".md th, .md td"), "overflow-wrap: normal") {
+		t.Error(".md's overflow-wrap: anywhere reaches table cells and squeezes a column to a character a line")
+	}
+	if strings.Contains(rule(".md th"), "nowrap") {
+		t.Error("a header that cannot wrap takes the width its column's words need")
+	}
+	if t2 := rule(".md table"); !strings.Contains(t2, "display: block") || !strings.Contains(t2, "overflow-x: auto") {
+		t.Error("a table too wide for the panel no longer scrolls inside it")
+	}
+}

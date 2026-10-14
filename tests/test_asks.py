@@ -62,6 +62,16 @@ class AsksTest(unittest.TestCase):
         asks.done("a2")
         self.assertEqual(asks.add("Next?"), "a3")
 
+    def test_a_question_refuses_an_option_that_duplicates_discuss(self):
+        for label in ("Discuss", " discuss  in athena "):
+            with self.subTest(label=label):
+                code, _, err = self.run_cli("add", "Take the recs?", "--option", label)
+                self.assertEqual(code, 2, err)
+                self.assertIn("Discuss in Athena", err)
+        self.assertFalse(asks.asks_file().exists())
+        # A note has no Discuss in Athena, so its own Discuss option stays.
+        self.assertEqual(self.run_cli("add", "Shipping at 3pm", "--note", "--option", "Discuss")[:2], (0, "a1\n"))
+
     def test_add_refuses_what_the_dashboard_cannot_show(self):
         for argv in (["add", "x?", "--option", "a", "--option", "b", "--option", "c"],
                      ["add", "x?", "--option", "A label past sixteen"],
@@ -313,6 +323,7 @@ class AskDetailTest(unittest.TestCase):
                             ("askBodyMax", asks.BODY_MAX), ("previewsMax", asks.PREVIEWS_MAX)):
             with self.subTest(name=name):
                 self.assertRegex(go, rf"\b{name}\s*=\s*{value}\b")
+        self.assertIn(f"discussLabel = regexp.MustCompile(`{asks.DISCUSS_LABEL}`)", go)
 
     def test_body_limit(self):
         self.assertEqual(asks.BODY_MAX, 8000)
