@@ -36,6 +36,11 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 ```
 
 - `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
+- `athena watch`'s doorbells ([How it works](how-it-works.md#doorbells-ci-and-slack)) read four optional keys, which `athena init` does not ask for and `config.json` holds only once you add them by hand:
+  - `ci_repos` (default `[]`): repos whose default branch the watch checks for failed CI runs even with no live worker on them, each a path (`~/Developer/web`) or an `owner/name`. Repos with a live worker are always checked.
+  - `slack_channels` (default `[]`): Slack channel ids the Slack doorbell polls. It always reads your DMs and group DMs.
+  - `slack_ext_channels` (default `true`): also poll every `ext-` channel you are a member of.
+  - `slack_allow_bots` (default `[]`): bot or app ids whose messages count; no other bot's do.
 - An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file.
 - Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
 

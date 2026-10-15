@@ -124,6 +124,8 @@ def cmd_dash(a):
 def cmd_watch(a):
     # HQ's settings set FORCE_HYPERLINK for Claude Code's own drawing; the gh, git and herdr the watch runs get none.
     os.environ.pop("FORCE_HYPERLINK", None)
+    if a.slack_once:
+        return watch.slack_once(window=a.window)
     watch.run(interval=a.interval, tagged=a.tagged)
     return 0
 
@@ -325,6 +327,10 @@ def parser():
     s = sub.add_parser("watch", help="print one line per change (the athena-watch mod runs it in HQ; Monitor is the fallback)")
     s.add_argument("--interval", type=float, default=20)
     s.add_argument("--tagged", action="store_true", help="JSON lines for the mod: each change marked wake or not, and the status line")
+    s.add_argument("--slack-once", action="store_true",
+                   help="poll the Slack doorbell once and print its slack-new lines (ids and counts), then exit")
+    s.add_argument("--window", type=float, default=0,
+                   help="with --slack-once: a conversation seen for the first time counts back this many seconds")
     s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("ask", help="athena's asks on the dashboard (needs-you.json) and the human's answers: add, body, done, show, queue")

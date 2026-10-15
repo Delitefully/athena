@@ -42,8 +42,13 @@ const MAX_LINE = 200
  *     pr47 checks pending->failure
  */
 export function promptText(lines: readonly string[], at?: string): string {
-  const shown = lines.slice(0, MAX_LINES).map(l => (l.length > MAX_LINE ? l.slice(0, MAX_LINE - 1) + '…' : l))
-  const more = lines.length - shown.length
+  // A doorbell's ring is never cut: the watch does not ring for it again, and athena status does not show it.
+  const isRing = (l: string) => DOORBELL.test(l) || SLACK.test(l)
+  const rings = lines.filter(isRing)
+  const others = lines.filter(l => !isRing(l))
+  const kept = others.slice(0, Math.max(MAX_LINES - rings.length, 0))
+  const shown = [...rings, ...kept.map(l => (l.length > MAX_LINE ? l.slice(0, MAX_LINE - 1) + '…' : l))]
+  const more = others.length - kept.length
   if (more > 0) shown.push(`+${more} more (athena status)`)
   return `athena watch${at ? ` ${at}` : ''}:\n${shown.join('\n')}`
 }
@@ -88,6 +93,20 @@ const EXIT = '(?:code -?\\d{1,3}|signal SIG[A-Z0-9]{1,10})'
 const DOORBELL_RE = 'dash-queue \\d{1,9}'
 const DOORBELL = new RegExp(`^${DOORBELL_RE}$`)
 
+/**
+ * The Slack doorbell: new messages in a channel or DM the watch polls, by its id and a count, never their text or
+ * who wrote them. `slack-new` is no worker's name either (athena spawn refuses it).
+ */
+const SLACK_RE = 'slack-new ([A-Z][A-Z0-9]{5,20}) (\\d{1,6})'
+const SLACK = new RegExp(`^${SLACK_RE}$`)
+const SLACK_MAX = 999999
+
+/** A CI workflow's name in the words a wake may carry: runs of anything else fold to `-`, at most 32 characters. */
+export function safeWorkflow(name: string): string {
+  const safe = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+/, '').slice(0, 32).replace(/-+$/, '')
+  return safe || 'workflow'
+}
+
 /** Lines allowed as they are, each regex anchored. */
 const EXACT = [
   `${NAME} report ${REPORT}`,
@@ -102,6 +121,7 @@ const EXACT = [
   `${NAME} goal sent`,
   `watch error: exited \\(${EXIT}\\); restarting`,
   DOORBELL_RE,
+  SLACK_RE,
 ].map(r => new RegExp(`^${r}$`))
 
 /** Lines that carry free text, reduced to their allowlisted part. */
@@ -110,6 +130,10 @@ const REDUCED: [RegExp, (m: RegExpExecArray) => string][] = [
   [
     /^stack [\w.-]+\/[\w.-]+#(\d{1,7}): \S.* -> (OPEN|MERGED|CLOSED) base=\S+(?: DRAFT)? (MERGEABLE|CONFLICTING|UNKNOWN)$/,
     m => (m[2] === 'OPEN' ? `stack #${m[1]}: OPEN ${m[3]}` : `stack #${m[1]}: ${m[2]}`),
+  ],
+  [
+    /^([A-Za-z0-9._-]{1,64}) main ci failed (.{1,200}?) (\d{1,12})( \(attempt \d{1,3}\))?$/,
+    m => `${m[1]} main ci failed ${safeWorkflow(m[2]!)} ${m[3]}${m[4] ?? ''}`,
   ],
   [new RegExp(`^(${NAME}) goal not sent: .+$`), m => `${m[1]} goal not sent`],
   [
@@ -178,11 +202,10 @@ export class Waker {
 
   add(raw: string): void {
     const safe = allowLine(raw)
-    if (safe && DOORBELL.test(safe)) {
-      // Every ring is new (its seq only grows, and a restarted watch rings again for what is still queued), so the
-      // ten-minute memory never drops one; the newest stands for the rest, since HQ reads the whole queue. It goes
-      // first, so a busy turn's pile past MAX_LINES never cuts it: the watch will not ring for that seq again.
-      this.pending = [safe, ...this.pending.filter(l => !DOORBELL.test(l))]
+    if (safe && (DOORBELL.test(safe) || SLACK.test(safe))) {
+      // A doorbell's ring is always new (the dashboard's seq only grows; Slack's are new messages, and the watch
+      // keeps what it counted across restarts), so the ten-minute memory never drops one.
+      this.place(safe)
       this.schedule()
       return
     }
@@ -192,8 +215,32 @@ export class Waker {
     const last = this.told.get(key)
     if (last !== undefined && this.opts.now() - last < this.repeatMs) return
     if (!this.keys.includes(key)) this.keys.push(key)
-    if (!this.pending.includes(line)) this.pending.push(line)
+    this.place(line)
     this.schedule()
+  }
+
+  /**
+   * Puts a line in the pending batch. The dashboard's ring goes first and the newest stands for the rest, since HQ
+   * reads the whole queue; Slack's rings go right after it, one per channel, their counts added up; any other line
+   * goes at the end, once.
+   */
+  private place(line: string): void {
+    if (DOORBELL.test(line)) {
+      this.pending = [line, ...this.pending.filter(l => !DOORBELL.test(l))]
+      return
+    }
+    const slack = SLACK.exec(line)
+    if (slack) {
+      const [, channel, count] = slack
+      const same = this.pending.find(l => SLACK.exec(l)?.[1] === channel)
+      const total = Math.min(Number(count) + (same ? Number(SLACK.exec(same)![2]) : 0), SLACK_MAX)
+      const rest = this.pending.filter(l => l !== same)
+      const at = rest.findIndex(l => !DOORBELL.test(l) && !SLACK.test(l))
+      const merged = `slack-new ${channel} ${total}`
+      this.pending = at < 0 ? [...rest, merged] : [...rest.slice(0, at), merged, ...rest.slice(at)]
+      return
+    }
+    if (!this.pending.includes(line)) this.pending.push(line)
   }
 
   /**
@@ -254,7 +301,9 @@ export class Waker {
       .submit(promptText(lines, this.opts.stamp?.()))
       .catch(() => {
         this.mark(keys, undefined)
-        this.pending = [...lines, ...this.pending.filter(l => !lines.includes(l))]
+        const later = this.pending
+        this.pending = []
+        for (const l of [...lines, ...later]) this.place(l)
         this.keys = [...keys, ...this.keys.filter(k => !keys.includes(k))]
       })
       .finally(() => {

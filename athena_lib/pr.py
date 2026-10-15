@@ -216,6 +216,40 @@ def has_ci(slug):
     return False if "404" in proc.stderr or "Not Found" in proc.stderr else None
 
 
+def default_branch(slug):
+    """A GitHub repo's default branch, or None when gh cannot say."""
+    if not is_slug(slug):
+        return None
+    try:
+        proc = subprocess.run(["gh", "api", f"repos/{slug}", "--jq", ".default_branch"],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    branch = proc.stdout.strip() if proc.returncode == 0 else ""
+    return branch if re.fullmatch(r"[\w./-]{1,100}", branch) else None
+
+
+def failed_runs(slug, branch, limit=20):
+    """The latest failed workflow runs on `branch`, newest first: [{"id", "attempt", "workflow", "created"}], or
+    None when gh cannot say (rate limit, network). A pull request's run is left out: its head branch can be a
+    fork's `main`."""
+    if not is_slug(slug):
+        return None
+    try:
+        proc = subprocess.run(["gh", "run", "list", "-R", slug, "--branch", branch, "--status", "failure",
+                               "--limit", str(limit), "--json", "databaseId,attempt,event,workflowName,createdAt"],
+                              capture_output=True, text=True, timeout=30)
+        rows = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [{"id": r["databaseId"], "attempt": r["attempt"] if isinstance(r.get("attempt"), int) else 1,
+             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt")}
+            for r in rows if isinstance(r, dict) and isinstance(r.get("databaseId"), int)
+            and not str(r.get("event") or "").startswith("pull_request")]
+
+
 _TITLE_MAX = 120
 
 
