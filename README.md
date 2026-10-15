@@ -50,7 +50,7 @@ and `athena` brings you back.
 
 ## Learn more
 
-- [How it works](docs/how-it-works.md): the supervision loop, the watch mod and what it may say.
+- [How it works](docs/how-it-works.md): the supervision loop, the watch mod, what it may say and what it keeps quiet (`logs/watch-suppressed.log`).
 - [Commands](docs/commands.md): every `athena` command and flag.
 - [Configuration](docs/configuration.md): `athena init`, `config.json`, environment variables, state files.
 - [Dashboard](docs/dashboard.md): what each row means, and how the page is built.
