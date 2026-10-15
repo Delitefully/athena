@@ -66,8 +66,8 @@ class ClassifyTest(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(watch.classify(line), "status")
 
-    def test_gone_after_retire_is_routine(self):
-        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-1"}), "status")
+    def test_gone_after_retire_is_quiet(self):
+        self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-1"}), "quiet")
         self.assertEqual(watch.classify("abc-1 gone from the ledger", retired={"abc-2"}), "wake")
 
     def test_unknown_lines_wake(self):
@@ -463,12 +463,13 @@ class TaggedTest(unittest.TestCase):
                                                                 "links": {}, "repos": {}}}])
 
     def test_tagged_gone_after_retire_stays_quiet(self):
+        # Not printed at all: a quiet line goes to logs/watch-suppressed.log, not to the mod.
         ledger.append("spawn", "a")
         ledger.append("retire", "a")
         ledger.append("spawn", "b")
         rows, _ = self._emit(["a gone from the ledger", "b gone from the ledger"], {"workers": {}}, tagged=True)
-        self.assertEqual(rows[:2], [{"line": "a gone from the ledger", "wake": False},
-                                    {"line": "b gone from the ledger", "wake": True}])
+        self.assertEqual(rows[:1], [{"line": "b gone from the ledger", "wake": True}])
+        self.assertIn("a gone from the ledger", (paths.state_dir() / "logs" / "watch-suppressed.log").read_text())
 
     def test_tagged_error(self):
         out = io.StringIO()

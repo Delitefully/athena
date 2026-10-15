@@ -3,7 +3,8 @@
 
 Point the mod at it with ATHENA_WATCH_CMD=<this file>, then append raw watch lines to $FAKE_WATCH_LINES
 (one per line, as `athena watch` prints them; `exit` makes it exit). Each is classified by the real `watch.classify` and printed as
-`--tagged` output, with the status line rebuilt from the `<w> state a->b` lines seen so far. A `<w> pr opened <url>`
+`--tagged` output (one the quiet rules keep back, such as a `main moved` with no worker here, goes to
+logs/watch-suppressed.log instead), with the status line rebuilt from the `<w> state a->b` lines seen so far. A `<w> pr opened <url>`
 line gives the worker an open PR; `<w> repo <owner/name>` (not printed) stands in for its repo's origin remote. The
 board carries the dashboard's URL while `athena dash` runs for this state dir.
 """
