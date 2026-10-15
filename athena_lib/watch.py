@@ -685,7 +685,7 @@ def slack_once(window=0) -> int:
     knock(doorbell)
     if doorbell.error:
         return 1
-    print(f"slack doorbell: {doorbell.known()} conversations known", file=sys.stderr, flush=True)
+    print(f"slack doorbell: {doorbell.summary()}", file=sys.stderr, flush=True)
     return 0
 
 

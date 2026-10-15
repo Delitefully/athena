@@ -94,10 +94,10 @@ const DOORBELL_RE = 'dash-queue \\d{1,9}'
 const DOORBELL = new RegExp(`^${DOORBELL_RE}$`)
 
 /**
- * The Slack doorbell: new messages in a channel or DM the watch polls, by its id and a count, never their text or
- * who wrote them. `slack-new` is no worker's name either (athena spawn refuses it).
+ * The Slack doorbell: new messages in a channel or DM the watch polls, by its id and a count (` dm` for a DM or group
+ * DM), never their text or who wrote them. `slack-new` is no worker's name either (athena spawn refuses it).
  */
-const SLACK_RE = 'slack-new ([A-Z][A-Z0-9]{5,20}) (\\d{1,6})'
+const SLACK_RE = 'slack-new ([A-Z][A-Z0-9]{5,20}) (\\d{1,6})( dm)?'
 const SLACK = new RegExp(`^${SLACK_RE}$`)
 const SLACK_MAX = 999999
 
@@ -171,6 +171,8 @@ export type WakerOptions = {
   batchMs?: number
   /** A line told within this window is not told again: the same worker and event wakes HQ once. */
   repeatMs?: number
+  /** A Slack channel (not a DM) wakes HQ at most once in this window; its rings meanwhile add up into the next. */
+  slackMs?: number
   /** What was told, and when, from before a reload or an HQ restart. */
   sent?: Readonly<Record<string, number>>
   /** Called with what was told in the window each time it changes, to keep it across a reload. */
@@ -191,12 +193,16 @@ export class Waker {
   private isBusy = false
   private isSending = false
   private told: Map<string, number>
+  /** Per Slack channel waiting out its window: the count rung meanwhile, and the timer that lets it go. */
+  private held = new Map<string, { count: number; timer: Timer }>()
   private readonly batchMs: number
   private readonly repeatMs: number
+  private readonly slackMs: number
 
   constructor(private readonly opts: WakerOptions) {
     this.batchMs = opts.batchMs ?? 3000
     this.repeatMs = opts.repeatMs ?? 10 * 60 * 1000
+    this.slackMs = opts.slackMs ?? 5 * 60 * 1000
     this.told = new Map(Object.entries(opts.sent ?? {}))
   }
 
@@ -204,7 +210,19 @@ export class Waker {
     const safe = allowLine(raw)
     if (safe && (DOORBELL.test(safe) || SLACK.test(safe))) {
       // A doorbell's ring is always new (the dashboard's seq only grows; Slack's are new messages, and the watch
-      // keeps what it counted across restarts), so the ten-minute memory never drops one.
+      // keeps what it counted across restarts), so the ten-minute memory never drops one. A DM wakes HQ at once; a
+      // channel at most once in slackMs, the rest of its count held for its next wake.
+      const slack = SLACK.exec(safe)
+      if (slack && !slack[3]) {
+        const [, channel, count] = slack
+        const last = this.told.get(`slack ${channel}`)
+        const wait = last === undefined ? 0 : last + this.slackMs - this.opts.now()
+        if (wait > 0) {
+          this.hold(channel!, Number(count), wait)
+          return
+        }
+        if (!this.keys.includes(`slack ${channel}`)) this.keys.push(`slack ${channel}`)
+      }
       this.place(safe)
       this.schedule()
       return
@@ -219,6 +237,20 @@ export class Waker {
     this.schedule()
   }
 
+  private hold(channel: string, count: number, wait: number): void {
+    const held = this.held.get(channel)
+    if (held) {
+      held.count = Math.min(held.count + count, SLACK_MAX)
+      return
+    }
+    const timer = this.opts.after(wait, () => {
+      const done = this.held.get(channel)
+      this.held.delete(channel)
+      if (done) this.add(`slack-new ${channel} ${done.count}`)
+    })
+    this.held.set(channel, { count, timer })
+  }
+
   /**
    * Puts a line in the pending batch. The dashboard's ring goes first and the newest stands for the rest, since HQ
    * reads the whole queue; Slack's rings go right after it, one per channel, their counts added up; any other line
@@ -231,13 +263,16 @@ export class Waker {
     }
     const slack = SLACK.exec(line)
     if (slack) {
-      const [, channel, count] = slack
+      const [, channel, count, dm] = slack
       const same = this.pending.find(l => SLACK.exec(l)?.[1] === channel)
       const total = Math.min(Number(count) + (same ? Number(SLACK.exec(same)![2]) : 0), SLACK_MAX)
-      const rest = this.pending.filter(l => l !== same)
-      const at = rest.findIndex(l => !DOORBELL.test(l) && !SLACK.test(l))
-      const merged = `slack-new ${channel} ${total}`
-      this.pending = at < 0 ? [...rest, merged] : [...rest.slice(0, at), merged, ...rest.slice(at)]
+      const merged = `slack-new ${channel} ${total}${dm ?? ''}`
+      if (same) {
+        this.pending = this.pending.map(l => (l === same ? merged : l))
+        return
+      }
+      const at = this.pending.findIndex(l => !DOORBELL.test(l) && !SLACK.test(l))
+      this.pending = at < 0 ? [...this.pending, merged] : [...this.pending.slice(0, at), merged, ...this.pending.slice(at)]
       return
     }
     if (!this.pending.includes(line)) this.pending.push(line)
@@ -304,6 +339,15 @@ export class Waker {
         const later = this.pending
         this.pending = []
         for (const l of [...lines, ...later]) this.place(l)
+        // Not told after all: what a channel held back since goes with it now.
+        for (const key of keys) {
+          const channel = key.startsWith('slack ') ? key.slice(6) : undefined
+          const held = channel ? this.held.get(channel) : undefined
+          if (!held) continue
+          held.timer.cancel()
+          this.held.delete(channel!)
+          this.place(`slack-new ${channel} ${held.count}`)
+        }
         this.keys = [...keys, ...this.keys.filter(k => !keys.includes(k))]
       })
       .finally(() => {

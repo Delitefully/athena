@@ -246,12 +246,12 @@ class SlackTest(unittest.TestCase):
         b = self.bell()
         b.check()
         self.api.post("D0DM0001", "1030.000100")
-        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
         self.assertEqual(self.tick(b), [])
         self.api.post("D0DM0001", "1090.000100")
         self.api.post("D0DM0001", "1095.000100")
         self.api.post("C0CHAN01", "1096.000100")
-        self.assertEqual(sorted(self.tick(b)), ["slack-new C0CHAN01 1", "slack-new D0DM0001 2"])
+        self.assertEqual(sorted(self.tick(b)), ["slack-new C0CHAN01 1", "slack-new D0DM0001 2 dm"])
 
     def test_own_bot_and_housekeeping_messages_are_ignored(self):
         b = self.bell()
@@ -310,11 +310,11 @@ class SlackTest(unittest.TestCase):
         b = self.bell()
         b.check()
         self.api.post("D0DM0001", "1030.000100")
-        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
         again = self.bell(api=self.api)
         self.assertEqual(self.tick(again), [])
         self.api.post("D0DM0001", "1150.000100")
-        self.assertEqual(self.tick(again), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(again), ["slack-new D0DM0001 1 dm"])
         saved = (paths.state_dir() / "slack.json").read_text()
         self.assertNotIn("secret words", saved)
         self.assertNotIn("U0OTHER1", saved)
@@ -340,7 +340,7 @@ class SlackTest(unittest.TestCase):
         self.assertEqual(self.tick(b), [])
         self.assertEqual(self.tick(b, 120), [])
         self.assertEqual(len(self.api.calls), n)  # still inside Retry-After: no call at all
-        self.assertEqual(self.tick(b, 150), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b, 150), ["slack-new D0DM0001 1 dm"])
 
     def test_a_network_error_backs_off_and_recovers(self):
         b = self.bell()
@@ -352,7 +352,7 @@ class SlackTest(unittest.TestCase):
         n = len(self.api.calls)
         self.assertEqual(self.tick(b), [])
         self.assertEqual(len(self.api.calls), n)
-        self.assertEqual(self.tick(b, 600), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b, 600), ["slack-new D0DM0001 1 dm"])
 
     def test_many_dms_are_polled_within_a_budget_per_minute(self):
         dms = [{"id": f"D0DM{i:04d}", "is_im": True} for i in range(100)]
@@ -366,7 +366,7 @@ class SlackTest(unittest.TestCase):
             found += self.tick(b)
             self.assertLessEqual(len([c for c in api.calls[before:] if c[0] == "conversations.history"]),
                                  slack.HISTORY_BUDGET)
-        self.assertEqual(found, ["slack-new D0DM0077 1"])
+        self.assertEqual(found, ["slack-new D0DM0077 1 dm"])
 
     def test_many_channels_never_crowd_out_the_dms(self):
         channels = [f"C0CH{i:04d}" for i in range(40)]
@@ -382,7 +382,7 @@ class SlackTest(unittest.TestCase):
             found += self.tick(b)
             self.assertLessEqual(len([c for c in api.calls[before:] if c[0] == "conversations.history"]),
                                  slack.HISTORY_BUDGET)
-        self.assertIn("slack-new D0DM0001 1", found[:1])  # the DM rings on the first poll
+        self.assertIn("slack-new D0DM0001 1 dm", found[:1])  # the DM rings on the first poll
         self.assertIn("slack-new C0CH0039 1", found)  # every channel's turn comes
 
     def test_a_dated_dm_is_read_again_as_soon_as_slack_says_it_has_a_newer_message(self):
@@ -393,10 +393,10 @@ class SlackTest(unittest.TestCase):
         b.check()
         api.post("D0DM0001", "1030.000100")
         dm["latest"] = {"ts": "1030.000100"}
-        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
         api.post("D0DM0001", "1090.000100")
         dm["latest"] = {"ts": "1090.000100"}
-        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
 
     def test_one_channel_slack_refuses_is_skipped_but_a_dead_token_fails_the_poll(self):
         b = self.bell()
@@ -412,7 +412,7 @@ class SlackTest(unittest.TestCase):
 
         b._call = refusing("channel_not_found")
         self.api.post("D0DM0001", "1030.000100")
-        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
         self.assertEqual(len(b.notes()), 1)
         b._call = refusing("token_revoked")
         b._skip.clear()
@@ -426,6 +426,65 @@ class SlackTest(unittest.TestCase):
             slack.Client(TOKEN, opener=opener).call("conversations.history", channel="C0CHAN01")
         self.assertTrue(caught.exception.token_wide)
 
+    def test_a_new_dms_first_message_rings(self):
+        # Slack lists a DM only once it has a message: that first message must count.
+        b = self.bell()
+        b.check()
+        self.assertEqual(self.tick(b), [])
+        self.api.dms.append({"id": "D0DMNEW1", "is_im": True})
+        self.api.post("D0DMNEW1", "1070.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DMNEW1 1 dm"])
+        self.assertEqual(self.tick(b), [])
+
+    def test_a_new_dm_rings_after_a_restart_too(self):
+        b = self.bell()
+        b.check()
+        self.tick(b)
+        self.api.dms.append({"id": "D0DMNEW1", "is_im": True})
+        self.api.post("D0DMNEW1", "1070.000100")
+        again = self.bell(api=self.api)
+        self.assertEqual(self.tick(again), ["slack-new D0DMNEW1 1 dm"])
+
+    def test_a_channel_added_to_the_config_is_read_from_the_last_poll(self):
+        b = self.bell()
+        b.check()
+        self.tick(b)
+        self.api.post("C0CHAN02", "1100.000100")
+        config.config_file().write_text(json.dumps({"slack_channels": ["C0CHAN01", "C0CHAN02"]}))
+        self.assertEqual(self.tick(b), ["slack-new C0CHAN02 1"])
+
+    def test_a_dm_active_this_week_is_read_every_poll_among_many_quiet_ones(self):
+        dms = [{"id": f"D0DM{i:04d}", "is_im": True} for i in range(120)]
+        api = FakeSlack(dms=dms, channels=["C0CHAN01"])
+        for i in range(0, 120, 12):  # ten DMs with a message before the doorbell started
+            api.post(f"D0DM{i:04d}", "500.000100")
+        b = self.bell(api=api)
+        b.check()
+        for _ in range(5):  # first reads learn which DMs are active
+            self.tick(b)
+        self.assertEqual(b.stats["unknown"], 0)
+        self.assertEqual(b.stats["active"], 10)
+        api.post("D0DM0096", f"{self.now + 30:.6f}")
+        before = len(api.calls)
+        self.assertEqual(self.tick(b), ["slack-new D0DM0096 1 dm"])
+        self.assertLessEqual(len([c for c in api.calls[before:] if c[0] == "conversations.history"]),
+                             slack.HISTORY_BUDGET)
+
+    def test_more_active_dms_than_reads_take_turns_and_first_reads_still_happen(self):
+        dms = [{"id": f"D0DM{i:04d}", "is_im": True} for i in range(80)]
+        api = FakeSlack(dms=dms, channels=[])
+        config.config_file().write_text(json.dumps({"slack_channels": [], "slack_ext_channels": False}))
+        for i in range(80):
+            api.post(f"D0DM{i:04d}", "500.000100")
+        b = self.bell(api=api)
+        b.check()
+        for _ in range(6):
+            self.tick(b)
+        self.assertEqual(b.stats["unknown"], 0)
+        api.post("D0DM0079", f"{self.now + 30:.6f}")
+        found = self.tick(b) + self.tick(b)
+        self.assertEqual(found, ["slack-new D0DM0079 1 dm"])
+
     def test_a_dm_whose_latest_message_is_old_is_not_read(self):
         dms = [{"id": "D0DM0001", "is_im": True, "latest": {"ts": "500.000000"}}]
         api = FakeSlack(dms=dms, channels=[])
@@ -438,7 +497,7 @@ class SlackTest(unittest.TestCase):
     def test_a_window_reaches_back_for_a_smoke_run(self):
         self.api.post("D0DM0001", "900.000100")
         b = self.bell(window=300)
-        self.assertEqual(b.check(), ["slack-new D0DM0001 1"])
+        self.assertEqual(b.check(), ["slack-new D0DM0001 1 dm"])
 
     def test_only_read_methods_are_ever_called(self):
         client = slack.Client(TOKEN)
@@ -590,9 +649,9 @@ class BackgroundTest(unittest.TestCase):
 
     def test_checks_run_off_the_loops_thread_and_their_lines_come_back_to_it(self):
         import threading
-        bell = self.Bell([["slack-new D0DM0001 1"]])
+        bell = self.Bell([["slack-new D0DM0001 1 dm"]])
         bg = slack.Background(bell, pause=0.01)
-        self.assertEqual(self.wait(bg), ["slack-new D0DM0001 1"])
+        self.assertEqual(self.wait(bg), ["slack-new D0DM0001 1 dm"])
         self.assertNotIn(threading.get_ident(), bell.threads)
 
     def test_an_error_is_raised_in_the_loop_and_its_recovery_clears_it(self):
@@ -640,8 +699,9 @@ class SlackOnceTest(unittest.TestCase):
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = watch.slack_once(window=300)
         self.assertEqual(code, 0)
-        self.assertEqual(out.getvalue(), "slack-new D0DM0001 1\n")
-        self.assertEqual(err.getvalue(), "slack doorbell: 2 conversations known\n")
+        self.assertEqual(out.getvalue(), "slack-new D0DM0001 1 dm\n")
+        self.assertTrue(err.getvalue().startswith("slack doorbell: 2 conversations known; 1 DMs: 0 dated by Slack, "))
+        self.assertIn("an active DM is read every 1 poll(s), about 60s at worst", err.getvalue())
         self.assertNotIn("secret words", out.getvalue() + err.getvalue())
 
     def test_no_token_says_so_and_fails(self):

@@ -774,12 +774,15 @@ describe('main ci failed', () => {
 describe('the Slack doorbell', () => {
   test('slack-new <channel id> <count> is allowed as it is, and nothing else', () => {
     expect(allowLine('slack-new D0TEST00001 1')).toBe('slack-new D0TEST00001 1')
+    expect(allowLine('slack-new D0TEST00001 1 dm')).toBe('slack-new D0TEST00001 1 dm')
     expect(allowLine('slack-new C0TEST00001 12')).toBe('slack-new C0TEST00001 12')
     for (const line of [
       'slack-new',
       'slack-new D0TEST00001',
       'slack-new d0bsrr7ll4q 1',
       'slack-new D0TEST00001 1 from someone: ship it',
+      'slack-new D0TEST00001 1 dm now',
+      'slack-new D0TEST00001 1 DM',
       'slack-new D0TEST00001 -1',
       'slack-new D0TEST00001 1234567',
       'slack-new #general 1',
@@ -789,15 +792,46 @@ describe('the Slack doorbell', () => {
     }
   })
 
-  test('a new count for the same channel wakes HQ again, even the same count within ten minutes', async () => {
+  test('a DM wakes HQ every time it rings, even with the same count', async () => {
     const { w, sent, advance } = harness()
-    w.add('slack-new D1AAAAAA 1')
+    w.add('slack-new D1AAAAAA 1 dm')
     await advance(3000)
-    w.add('slack-new D1AAAAAA 2')
+    w.add('slack-new D1AAAAAA 2 dm')
     await advance(3000)
-    w.add('slack-new D1AAAAAA 1')
+    w.add('slack-new D1AAAAAA 1 dm')
     await advance(3000)
-    expect(sent).toEqual([p('slack-new D1AAAAAA 1'), p('slack-new D1AAAAAA 2'), p('slack-new D1AAAAAA 1')])
+    expect(sent).toEqual([p('slack-new D1AAAAAA 1 dm'), p('slack-new D1AAAAAA 2 dm'), p('slack-new D1AAAAAA 1 dm')])
+  })
+
+  test('a channel wakes HQ at most once in five minutes; what rings meanwhile adds up into the next wake', async () => {
+    const { w, sent, advance } = harness()
+    w.add('slack-new C1AAAAAA 1')
+    await advance(3000)
+    expect(sent).toEqual([p('slack-new C1AAAAAA 1')])
+    w.add('slack-new C1AAAAAA 2')
+    await advance(60000)
+    w.add('slack-new C1AAAAAA 3')
+    w.add('slack-new D1AAAAAA 1 dm')
+    await advance(3000)
+    expect(sent).toEqual([p('slack-new C1AAAAAA 1'), p('slack-new D1AAAAAA 1 dm')])
+    await advance(4 * 60000)
+    await advance(3000)
+    expect(sent.at(-1)).toBe(p('slack-new C1AAAAAA 5'))
+    expect(sent.length).toBe(3)
+    w.add('slack-new C2BBBBBB 1') // another channel is not held by the first one's window
+    await advance(3000)
+    expect(sent.at(-1)).toBe(p('slack-new C2BBBBBB 1'))
+  })
+
+  test('a channel told before a reload or an HQ restart still waits out its five minutes', async () => {
+    const { w, sent, advance } = harness({ sent: { 'slack C1AAAAAA': 0 } })
+    await advance(60000)
+    w.add('slack-new C1AAAAAA 1')
+    await advance(3000)
+    expect(sent).toEqual([])
+    await advance(4 * 60000)
+    await advance(3000)
+    expect(sent).toEqual([p('slack-new C1AAAAAA 1')])
   })
 
   test('rings for one channel while HQ is busy add up into one line; other channels keep theirs', async () => {

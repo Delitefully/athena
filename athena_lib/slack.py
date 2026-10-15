@@ -36,10 +36,13 @@ READ_METHODS = frozenset({"auth.test", "conversations.list", "users.conversation
 EVERY = 60  # seconds between polls
 BACKOFF_MAX = 900  # the longest wait after errors in a row
 LIST_EVERY = 600  # how often the ext- channel list is read again (the DM list, for its `latest`, every poll)
-HISTORY_BUDGET = 25  # conversations.history calls a poll may make (Tier 3 allows about 50 a minute)
+HISTORY_BUDGET = 40  # conversations.history calls a poll may make (Tier 3 allows 50 and more a minute)
 CHANNEL_SHARE = 12  # of which channels get at most this many (more channels take turns), so DMs always get the rest
-RECENT = 5  # the DMs active most recently are read every poll; the rest take turns
-HISTORY_LIMIT = 200
+ACTIVE = 7 * 24 * 3600  # a DM with a message this recent is read every poll; quieter ones take turns
+PROBE_FLOOR = 10  # first reads a poll makes at least while some DMs' last activity is unknown
+KEEP_QUIET = 2  # reads a poll keeps for the quiet DMs' turns, however many DMs are active
+PROBE_LIMIT = 20  # a DM's first read, which learns when it was last active, looks at this many of its messages
+HISTORY_LIMIT = 200  # new messages a read counts at most: plenty for a minute, and a ring past it still rings
 THREAD_MAX = 10  # threads followed at once, the newest
 THREAD_FOLLOW = 2 * 24 * 3600
 SKIP_FOR = 3600  # a channel Slack refuses (not_in_channel, channel_not_found) is left alone this long
@@ -198,6 +201,8 @@ class Doorbell:
         self._dms, self._ext, self._listed_at = [], [], None
         self._cursor = 0
         self._channel_cursor = 0
+        self._active_cursor = 0
+        self.stats = {}
         self._skip = {}  # channel -> until when Slack's refusal is respected
         self._notes = []
         self._state = None
@@ -218,6 +223,17 @@ class Doorbell:
 
     def redact(self, text) -> str:
         return self._client.redact(text) if self._client else str(text)
+
+    def summary(self) -> str:
+        """Counts only, for a smoke run: what the last poll knew of the DMs, and how often an active one is read."""
+        st = self.stats
+        if not st:
+            return f"{self.known()} conversations known"
+        room = max(st["active_room"], 1)
+        polls = -(-st["active"] // room) if st["active"] else 1
+        return (f"{self.known()} conversations known; {st['dms']} DMs: {st['dated']} dated by Slack, "
+                f"{st['active']} active this week, {st['unknown']} not read yet; {st['reads']} reads this poll; "
+                f"an active DM is read every {polls} poll(s), about {polls * self.every:.0f}s at worst")
 
     def known(self) -> int:
         """How many conversations it has a last-seen ts for."""
@@ -259,7 +275,11 @@ class Doorbell:
         data = data if isinstance(data, dict) else {}
         def part(key):
             return data.get(key) if isinstance(data.get(key), dict) else {}
-        return {"seen": {ch: ts for ch, ts in part("seen").items() if isinstance(ts, str) and _ts(ts) is not None},
+        def stamps(key):
+            return {ch: ts for ch, ts in part(key).items() if isinstance(ts, str) and _ts(ts) is not None}
+        polled = data.get("polled")
+        return {"polled": polled if isinstance(polled, str) and _ts(polled) is not None else None,
+                "seen": stamps("seen"), "active": stamps("active"),
                 "threads": {ch: {t: last for t, last in ts.items() if isinstance(last, str) and _ts(last) is not None}
                             for ch, ts in part("threads").items() if isinstance(ts, dict)},
                 "unrung": {ch: n for ch, n in part("unrung").items() if isinstance(n, int) and n > 0}}
@@ -280,9 +300,11 @@ class Doorbell:
             self._read_conversations(now, cfg)
             self._read_threads(now, cfg)
             unrung = self._state["unrung"]
-            lines = [f"slack-new {ch} {min(int(n), COUNT_MAX)}" for ch, n in sorted(unrung.items())
-                     if CHANNEL_ID.match(ch) and isinstance(n, int) and n > 0]
+            dms = {d for d, _ in self._dms}
+            lines = [f"slack-new {ch} {min(int(n), COUNT_MAX)}{' dm' if ch in dms else ''}"
+                     for ch, n in sorted(unrung.items()) if CHANNEL_ID.match(ch) and isinstance(n, int) and n > 0]
             self._state["unrung"] = {}
+            self._state["polled"] = _fmt(now)  # a conversation first seen next poll is read from here
             return lines
         finally:
             if self._state is not None:
@@ -323,28 +345,51 @@ class Doorbell:
         return turn, start + len(turn)
 
     def _targets(self, now, cfg) -> list:
-        """The conversations this poll reads, within HISTORY_BUDGET: the channels (up to CHANNEL_SHARE, more take
-        turns), the DMs Slack says have a newer message, the DMs active most recently, then the other DMs in turn.
-        A conversation seen for the first time starts at now (or the window) and is read from the next poll."""
-        seen = self._state["seen"]
-        baseline = _fmt(now - self.window)
+        """(conversation, how) for each read this poll, within HISTORY_BUDGET: the channels (up to CHANNEL_SHARE,
+        more take turns); then the DMs Slack dates with a newer message, every DM active in the last week, a first
+        read ("probe") of each DM whose last activity is not known yet, and the quieter DMs in turn.
+
+        A conversation seen for the first time is read from the last completed poll, so a new DM's first message
+        counts; only the very first poll (no `polled` yet) starts everything at now, or the window, and reads none."""
+        seen, active = self._state["seen"], self._state["active"]
+        polled = self._state.get("polled")
+        start = polled or _fmt(now - self.window)
         channels = list(dict.fromkeys(cfg["channels"] + self._ext))
         fresh = set()
         for ch in channels + [d for d, _ in self._dms]:
             if ch not in seen:
-                seen[ch] = baseline
+                seen[ch] = start
                 fresh.add(ch)
-        skip = fresh if not self.window else set()
+        skip = fresh if polled is None and not self.window else set()
         skip |= {ch for ch, until in self._skip.items() if now < until}
         readable = [ch for ch in channels if ch not in skip]
-        order, self._channel_cursor = self._turn(readable, self._channel_cursor, CHANNEL_SHARE)
+        chans, self._channel_cursor = self._turn(readable, self._channel_cursor, CHANNEL_SHARE)
+        order = [(ch, "read") for ch in chans]
         dms = [(d, latest) for d, latest in self._dms if d not in skip and d not in channels]
-        dated = sorted((d for d, latest in dms if latest is not None and _ts(latest) > _ts(seen[d])),
-                       key=lambda d: (-_ts(seen[d]), d))
-        unknown = sorted((d for d, latest in dms if latest is None), key=lambda d: (-_ts(seen[d]), d))
-        order += (dated + unknown[:RECENT])[:HISTORY_BUDGET - len(order)]
-        turn, self._cursor = self._turn(sorted(unknown[RECENT:]), self._cursor, HISTORY_BUDGET - len(order))
-        return order + turn
+        for d, latest in dms:
+            if latest is not None and (d not in active or _ts(latest) > _ts(active[d])):
+                active[d] = latest  # Slack's own date for it
+        week = max(_ts(_fmt(now - ACTIVE)), 0)  # "0": a DM with no message at all is never active
+        dated = [d for d, latest in dms if latest is not None and _ts(latest) > _ts(seen[d])]
+        undated = [d for d, latest in dms if latest is None]
+        recent = sorted((d for d in undated if d in active and _ts(active[d]) > week), key=lambda d: (-_ts(active[d]), d))
+        probes = [d for d in undated if d not in active]
+        quiet = sorted(d for d in undated if d in active and _ts(active[d]) <= week)
+        room = HISTORY_BUDGET - len(order)
+        order += [(d, "read") for d in dated[:room]]
+        # First reads (once per DM) take what the active DMs leave, at least PROBE_FLOOR; the active DMs take the
+        # rest in turn; a couple of reads stay for the quiet DMs.
+        room = HISTORY_BUDGET - len(order) - min(len(quiet), KEEP_QUIET)
+        first = probes[:max(room - len(recent), min(PROBE_FLOOR, room), 0)]
+        busy, self._active_cursor = self._turn(recent, self._active_cursor, room - len(first))
+        order += [(d, "read") for d in busy] + [(d, "probe") for d in first]
+        turn, self._cursor = self._turn(quiet, self._cursor, HISTORY_BUDGET - len(order))
+        order += [(d, "read") for d in turn]
+        self.stats = {"dms": len(self._dms), "dated": sum(1 for _, latest in self._dms if latest is not None),
+                      "active": len(recent) + sum(1 for d, latest in dms if latest is not None and d in active
+                                                  and _ts(active[d]) > week),
+                      "unknown": len(probes), "active_room": room, "reads": len(order)}
+        return order
 
     def _counts(self, m, cfg) -> bool:
         subtype = m.get("subtype")
@@ -364,16 +409,23 @@ class Doorbell:
 
     def _read_conversations(self, now, cfg):
         seen, unrung, threads = self._state["seen"], self._state["unrung"], self._state["threads"]
-        for ch in self._targets(now, cfg):
+        active = self._state["active"]
+        for ch, how in self._targets(now, cfg):
             oldest = seen[ch]
             try:
-                data = self._call("conversations.history", channel=ch, oldest=oldest, limit=HISTORY_LIMIT)
+                if how == "probe":  # its newest messages, whatever their age: when it was last active
+                    data = self._call("conversations.history", channel=ch, limit=PROBE_LIMIT)
+                else:
+                    data = self._call("conversations.history", channel=ch, oldest=oldest, limit=HISTORY_LIMIT)
             except SlackError as exc:
                 self._refused(ch, exc, now)
                 continue
             newest, n = _ts(oldest), 0
+            last = None
             for m in data.get("messages") or []:
                 ts = _ts(m.get("ts")) if isinstance(m, dict) else None
+                if ts is not None:
+                    last = ts if last is None else max(last, ts)
                 if ts is None or ts <= _ts(oldest):
                     continue
                 newest = max(newest, ts)
@@ -381,6 +433,10 @@ class Doorbell:
                 if m.get("user") == self._me and m.get("thread_ts", m.get("ts")) == m.get("ts"):
                     threads.setdefault(ch, {})[m["ts"]] = m["ts"]
             seen[ch] = str(newest)
+            if last is not None and (ch not in active or last > _ts(active[ch])):
+                active[ch] = str(last)
+            elif how == "probe":
+                active.setdefault(ch, "0")  # no message at all: quiet
             if n:
                 unrung[ch] = unrung.get(ch, 0) + n
 
