@@ -10,8 +10,9 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
-from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, spawn, status
+from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, slack, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -215,6 +216,115 @@ def follow(cur, prev=None) -> None:
     cur["review_requests"] = [r for r in found if f"{r['repo']}#{r['number']}" not in known]
 
 
+def safe_workflow(name) -> str:
+    """A CI workflow's name in the words a wake may carry (the mod's safeWorkflow): runs of anything but letters,
+    digits, `.`, `_` and `-` fold to `-`, at most 32 characters."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "")).lstrip("-")[:32].rstrip("-")
+    return safe or "workflow"
+
+
+def _ci_file():
+    return paths.state_dir() / "ci-failed.json"
+
+
+_CI_KEEP = 200  # run ids remembered per repo
+_CI_FRESH = 24 * 3600  # an unseen failure older than this (the watch was off) is recorded, not told
+
+
+def _age(created) -> float:
+    try:
+        when = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return time.time() - when.timestamp()
+
+
+_DEFAULT_BRANCHES = {}  # owner/name -> (branch, when asked), for a ci_repos slug with no local checkout
+
+
+def _slug_default_branch(slug):
+    branch, asked = _DEFAULT_BRANCHES.get(slug.lower(), (None, None))
+    if asked is not None and time.time() - asked < _CI_TTL:
+        return branch
+    found = pr.default_branch(slug)
+    if found or branch is None:
+        _DEFAULT_BRANCHES[slug.lower()] = (found or branch, time.time())
+    return found or branch
+
+
+def ci_targets(repos) -> list:
+    """The repos ci_failures checks: those of the live workers (`repos`, local paths), then config `ci_repos` (a
+    path, `~/...` or `/...`, or an `owner/name`), each repo once."""
+    try:
+        extra = config.get("ci_repos") or []
+    except config.ConfigError:
+        extra = []
+    out, slugs = [], set()
+    for entry in list(repos) + [e for e in extra if isinstance(e, str)]:
+        if entry.startswith(("/", "~")):
+            entry = os.path.expanduser(entry)
+            slug = repo_slug(entry)
+        elif is_slug(entry):
+            slug = entry
+        else:
+            continue
+        key = (slug or entry).lower()
+        if key not in slugs:
+            slugs.add(key)
+            out.append(entry)
+    return out
+
+
+def _run_key(run) -> str:
+    """A failed run as ci-failed.json remembers it: a rerun keeps its id, so its attempt goes with it."""
+    return f"{run['id']}.{run['attempt']}"
+
+
+def ci_failures(repos) -> list:
+    """`<repo> main ci failed <workflow> <run-id>` once per failed run on each repo's default branch (a local path, or
+    an owner/name from ci_targets: `<repo>` is its last part), and again with
+    ` (attempt <n>)` when a rerun fails too. The runs told live in ci-failed.json in the state dir, so a restarted
+    watch tells none twice; a repo looked at for the first time records its failures without telling them."""
+    try:
+        seen = json.loads(_ci_file().read_text())
+    except (OSError, ValueError):
+        seen = {}
+    seen = seen if isinstance(seen, dict) else {}
+    lines, changed = [], False
+    for repo in dict.fromkeys(repos):
+        local = repo.startswith("/")
+        slug = repo_slug(repo) if local else repo if is_slug(repo) else None
+        branch = (gitops.default_branch(repo) if local else _slug_default_branch(slug)) if slug else None
+        if not branch:
+            continue
+        runs = pr.failed_runs(slug, branch)
+        if runs is None:
+            continue
+        key = slug.lower()
+        known = seen.get(key) if isinstance(seen.get(key), list) else None
+        if known is None:
+            seen[key] = [_run_key(r) for r in runs][:_CI_KEEP]
+            changed = True
+            continue
+        for r in reversed(runs):  # oldest first
+            if _run_key(r) in known:
+                continue
+            known.append(_run_key(r))
+            changed = True
+            if _age(r["created"]) <= _CI_FRESH:
+                again = f" (attempt {r['attempt']})" if r["attempt"] > 1 else ""
+                lines.append(f"{os.path.basename(repo)} main ci failed {safe_workflow(r['workflow'])} {r['id']}{again}")
+        seen[key] = known[-_CI_KEEP:]
+    if changed:
+        paths.ensure()
+        tmp = _ci_file().with_suffix(".json.tmp%d" % os.getpid())
+        tmp.write_text(json.dumps(seen, indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, _ci_file())
+    return lines
+
+
 _WAKE_REVIEWS = ("CHANGES_REQUESTED", "APPROVED")
 _ROUTINE = [
     re.compile(r"^watching: "),
@@ -230,6 +340,8 @@ _WAKE = [
     re.compile(r"^\S+ checks \S+->"),
     re.compile(r"^\S+ review comments \+\d+$"),
     re.compile(r"^\S+ main moved "),
+    re.compile(r"^\S+ main ci failed "),
+    re.compile(r"^slack-new "),
     re.compile(r"^\S+ goal (not sent|unconfirmed)"),
     re.compile(r"^\S+ new worker "),
     re.compile(r"^watch error"),
@@ -473,6 +585,7 @@ def step(prev, fetch=False, with_pr=True):
     cur["dash"] = _dash_url()
     if fetch:
         follow(cur, prev)
+        lines += ci_failures(ci_targets(cur["mains"]))
     else:
         last = prev or {}
         cur["stacks"], cur["prs"] = dict(last.get("stacks") or {}), dict(last.get("prs") or {})
@@ -529,10 +642,61 @@ def ring(bell, tagged=False):
         print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
 
 
+def knock_start(doorbell):
+    """Start the Slack doorbell; when it is off (no token), say so once on stderr, which wakes no one."""
+    try:
+        off = doorbell.start()
+    except Exception as exc:  # the doorbell is extra: the watch carries on without it
+        doorbell.off = True
+        off = f"slack doorbell off: {doorbell.redact(exc)}"
+    if off:
+        print(off, file=sys.stderr, flush=True)
+
+
+def knock(doorbell, tagged=False):
+    """Print the Slack doorbell's `slack-new <channel> <n>` lines when a poll is due: ids and counts, never text. A
+    network error backs off quietly on stderr; anything else Slack says is a watch error, told once until it reads
+    again."""
+    try:
+        lines = doorbell.check()
+    except Exception as exc:
+        text = doorbell.redact(exc)
+        if text != doorbell.error:
+            doorbell.error = text
+            if getattr(exc, "network", False):
+                print(f"slack doorbell: {text}; backing off", file=sys.stderr, flush=True)
+            else:
+                report_error(f"slack doorbell: {text}", tagged=tagged)
+        return
+    doorbell.error = None
+    for note in doorbell.notes():
+        print(doorbell.redact(note), file=sys.stderr, flush=True)
+    for line in lines:
+        print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
+
+
+def slack_once(window=0) -> int:
+    """One Slack doorbell poll, for a smoke run: its `slack-new` lines on stdout, and on stderr how many
+    conversations it knows. Use a scratch ATHENA_STATE_DIR: the poll writes slack.json there."""
+    doorbell = slack.Doorbell(window=window)
+    knock_start(doorbell)
+    if doorbell.off:
+        return 1
+    knock(doorbell)
+    if doorbell.error:
+        return 1
+    print(f"slack doorbell: {doorbell.summary()}", file=sys.stderr, flush=True)
+    return 0
+
+
 def run(interval=20, fetch_every=120, tagged=False):
     prev, shown = None, None
     last_fetch = 0.0
     bell = asks.Doorbell()
+    slackbell = slack.Doorbell()
+    knock_start(slackbell)
+    if not slackbell.off:
+        slackbell = slack.Background(slackbell)  # its HTTP calls never hold up the dash-queue ring or a tick
     try:
         asks.migrate()  # needs-you.md, once, into needs-you.json
     except (OSError, ValueError) as exc:
@@ -555,6 +719,8 @@ def run(interval=20, fetch_every=120, tagged=False):
         deadline = time.time() + interval
         while True:
             ring(bell, tagged=tagged)
+            if not slackbell.off:
+                knock(slackbell, tagged=tagged)
             left = deadline - time.time()
             if left <= 0:
                 break

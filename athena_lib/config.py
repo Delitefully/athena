@@ -21,6 +21,12 @@ DEFAULTS = {
     "reapproval_repos": [],  # repos where a push after approval needs a new approval
     "model": "opus",
     "effort": "high",
+    # athena watch's Slack doorbell (athena_lib/slack.py), on only where the athena-slack Keychain item exists. It
+    # always reads the human's DMs and group DMs; these add channels.
+    "slack_channels": [],  # channel ids it polls
+    "slack_ext_channels": True,  # also every `ext-` channel the human is a member of
+    "slack_allow_bots": [],  # bot or app ids whose messages count; other bots never do
+    "ci_repos": [],  # repos (paths, or owner/name) whose main athena watch checks for failed CI with no live worker
 }
 
 # Migration only: the values an install from before config.json ran with.
@@ -41,6 +47,7 @@ ENV = {
 }
 
 PATH_KEYS = ("projects_dir", "worktree_root")
+OPTIONAL_KEYS = ("slack_channels", "slack_ext_channels", "slack_allow_bots", "ci_repos")  # written only when set
 LIST_KEYS = ("human_merge_repos", "reapproval_repos")
 
 
@@ -127,7 +134,7 @@ def get(key):
     var = ENV.get(key)
     if var and os.environ.get(var):
         return os.environ[var]
-    return load()[key]
+    return load().get(key, DEFAULTS[key])  # LEGACY lacks the keys newer than config.json (the Slack doorbell's)
 
 
 def source(key) -> str:
@@ -167,6 +174,8 @@ def write(values) -> Path:
     data = {"version": VERSION}
     for key, default in DEFAULTS.items():
         value = values.get(key, default)
+        if key in OPTIONAL_KEYS and value == default:
+            continue
         data[key] = _tilde(value) if key in PATH_KEYS else value
     target = config_file()
     target.parent.mkdir(parents=True, exist_ok=True)
