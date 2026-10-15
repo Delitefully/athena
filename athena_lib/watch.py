@@ -2,7 +2,8 @@
 
 Quiet when nothing changes. Also keeps athena workspace labels from being renamed by other plugins, and watches the
 stacked PRs listed in stack.json. Plain output is for Monitor; `--tagged` output is for the athena-watch mod in HQ,
-which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line.
+which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line. Lines it calls
+quiet (notices HQ never acts on) are printed in neither mode: they go to logs/watch-suppressed.log.
 """
 import json
 import os
