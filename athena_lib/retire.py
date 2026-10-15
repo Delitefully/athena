@@ -191,30 +191,38 @@ def retire(name, force=False, keep_worktree=False) -> dict:
             if wip:
                 result["wip_backup"] = f"refs/athena-backup/{name}/{int(time.time())}-wip"
                 gitops.git(repo, "update-ref", result["wip_backup"], wip)
-    # Marked before its Claude stops, so athena watch knows the exit it is about to see was asked for.
+    # Marked before its Claude stops, so athena watch knows the exit it is about to see was asked for. Cleared
+    # however the retire stops short of its `retire` event (a refusal, a GitError), so a later exit is news again.
     ledger.append("update", name, retiring=time.time())
-    if worker.get("goal_pending"):
-        # Its Claude may sit at a startup prompt: typing /exit there could answer it. Closing the pane stops it.
-        if workspace_owned(worker.get("workspace"), path) and worker.get("pane"):
-            try:
-                herdr.call("pane", "close", worker["pane"], timeout=15)
-            except herdr.HerdrError:
-                pass
-    elif not stop_claude(worker) and not force and exists and not keep_worktree:
-        # Only refuse when its checkout is about to be removed under a running Claude.
-        ledger.append("update", name, cleanup_error="claude did not exit", retiring=None)
-        raise RetireError(f"{name}'s Claude did not exit and its pane is not one athena can close; {name} stays "
-                          f"tracked. Exit it by hand, then retry, or retire with --force.")
-    if not keep_worktree:
-        result.update(remove_worktree(worker, force=force))
-        if result.get("herdr_error"):
-            if not force:
-                ledger.append("update", name, cleanup_error=result["herdr_error"], retiring=None)
-                raise RetireError(f"herdr did not remove {name}'s space {worker.get('workspace')} "
-                                  f"({result['herdr_error']}); {name} stays tracked. Retry with `athena retire {name}`, "
-                                  f"or `athena retire {name} --keep-worktree`, then close the space by hand")
-            result["space_left_open"] = worker.get("workspace")
-    dashstate.record_retire(worker)
-    ledger.append("retire", name, backup=result["backup"], wip_backup=result["wip_backup"], removed=result["removed"],
-                  cleanup_error=result.get("herdr_error"))
+    retired = False
+    try:
+        if worker.get("goal_pending"):
+            # Its Claude may sit at a startup prompt: typing /exit there could answer it. Closing the pane stops it.
+            if workspace_owned(worker.get("workspace"), path) and worker.get("pane"):
+                try:
+                    herdr.call("pane", "close", worker["pane"], timeout=15)
+                except herdr.HerdrError:
+                    pass
+        elif not stop_claude(worker) and not force and exists and not keep_worktree:
+            # Only refuse when its checkout is about to be removed under a running Claude.
+            ledger.append("update", name, cleanup_error="claude did not exit")
+            raise RetireError(f"{name}'s Claude did not exit and its pane is not one athena can close; {name} stays "
+                              f"tracked. Exit it by hand, then retry, or retire with --force.")
+        if not keep_worktree:
+            result.update(remove_worktree(worker, force=force))
+            if result.get("herdr_error"):
+                if not force:
+                    ledger.append("update", name, cleanup_error=result["herdr_error"])
+                    raise RetireError(f"herdr did not remove {name}'s space {worker.get('workspace')} "
+                                      f"({result['herdr_error']}); {name} stays tracked. Retry with "
+                                      f"`athena retire {name}`, or `athena retire {name} --keep-worktree`, then close "
+                                      "the space by hand")
+                result["space_left_open"] = worker.get("workspace")
+        dashstate.record_retire(worker)
+        ledger.append("retire", name, backup=result["backup"], wip_backup=result["wip_backup"],
+                      removed=result["removed"], cleanup_error=result.get("herdr_error"))
+        retired = True
+    finally:
+        if not retired:
+            ledger.append("update", name, retiring=None)
     return result

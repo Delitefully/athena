@@ -36,6 +36,7 @@ class BotCommentsTest(unittest.TestCase):
     def test_bots_by_login_suffix_type_and_flag(self):
         for author in ({"login": "github-actions"}, {"login": "GitHub-Advanced-Security"}, {"login": "Copilot"},
                        {"login": "copilot-pull-request-reviewer"}, {"login": "renovate[bot]"},
+                       {"login": "linear-code"}, {"login": "sun-merge-queue"}, {"login": "Sun-Merge-Queue"},
                        {"login": "someapp", "type": "Bot"}, {"login": "someapp", "is_bot": True},
                        {"login": "someapp", "__typename": "Bot"}):
             with self.subTest(author=author):
@@ -57,6 +58,12 @@ class BotCommentsTest(unittest.TestCase):
                             {"author": {"login": "carol"}, "body": ""}]}
         r = pr.reduce(data)
         self.assertEqual((r["comments"], r["comments_all"], r["author"]), (2, 6, "me"))
+
+    def test_platform_bots_never_count(self):
+        data = {"author": {"login": "me"},
+                "comments": [{"author": {"login": "linear-code"}, "authorAssociation": "NONE"},
+                             {"author": {"login": "sun-merge-queue"}, "authorAssociation": "MEMBER"}]}
+        self.assertEqual((pr.reduce(data)["comments"], pr.reduce(data)["comments_all"]), (0, 2))
 
 
 class CommentsRuleTest(Isolated):

@@ -109,6 +109,15 @@ class RetireTest(unittest.TestCase):
         self.assertLessEqual(events[1]["retiring"], events[2]["ts"])
         self.assertNotIn("retire", [e["event"] for e in events[:2]])
 
+    def test_retire_clears_its_mark_when_removing_the_worktree_fails(self):
+        from unittest import mock
+        from athena_lib import gitops
+        with mock.patch.object(retire, "remove_worktree", side_effect=gitops.GitError("worktree remove failed")):
+            with self.assertRaises(gitops.GitError):
+                retire.retire("abc-1", force=True)
+        self.assertEqual(ledger.workers()["abc-1"]["state"], "live")
+        self.assertIsNone(ledger.workers()["abc-1"]["retiring"])  # its next exit is news to HQ again
+
     def test_retire_refused_before_stopping_never_marks_retiring(self):
         (self.wt / "b.txt").write_text("b\n")
         with self.assertRaises(retire.RetireError):

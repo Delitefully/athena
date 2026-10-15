@@ -6,8 +6,9 @@ import subprocess
 FIELDS = ("number,url,title,state,isDraft,reviewDecision,headRefOid,mergeable,statusCheckRollup,comments,reviews,"
           "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName,headRefName,author")
 
-# Accounts whose comments never count as review comments: gh names them without the `[bot]` suffix REST uses.
-BOTS = {"github-actions", "github-advanced-security", "copilot"}
+# Accounts whose comments never count as review comments: gh names them without the `[bot]` suffix REST uses. The
+# last two are platform bots that post as ordinary accounts.
+BOTS = {"github-actions", "github-advanced-security", "copilot", "linear-code", "sun-merge-queue"}
 
 
 def is_bot(author, association=None) -> bool:
