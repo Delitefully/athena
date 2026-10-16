@@ -26,7 +26,11 @@ DEFAULTS = {
     "slack_channels": [],  # channel ids it polls
     "slack_ext_channels": True,  # also every `ext-` channel the human is a member of
     "slack_allow_bots": [],  # bot or app ids whose messages count; other bots never do
+    "slack_dm_active_minutes": 15,  # a DM the human wrote in this recently goes to the suppressed log; 0: off
     "ci_repos": [],  # repos (paths, or owner/name) whose main athena watch checks for failed CI with no live worker
+    # When `<repo> main moved` wakes HQ: "active" (a working or blocked worker, or an unapproved open PR, in that
+    # repo), "always" or "never". What it does not tell goes to logs/watch-suppressed.log.
+    "watch_main_moved": "active",
 }
 
 # Migration only: the values an install from before config.json ran with.
@@ -47,7 +51,8 @@ ENV = {
 }
 
 PATH_KEYS = ("projects_dir", "worktree_root")
-OPTIONAL_KEYS = ("slack_channels", "slack_ext_channels", "slack_allow_bots", "ci_repos")  # written only when set
+OPTIONAL_KEYS = ("slack_channels", "slack_ext_channels", "slack_allow_bots", "slack_dm_active_minutes", "ci_repos",
+                 "watch_main_moved")  # written only when set
 LIST_KEYS = ("human_merge_repos", "reapproval_repos")
 
 

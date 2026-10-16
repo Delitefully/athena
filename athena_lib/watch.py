@@ -2,7 +2,9 @@
 
 Quiet when nothing changes. Also keeps athena workspace labels from being renamed by other plugins, and watches the
 stacked PRs listed in stack.json. Plain output is for Monitor; `--tagged` output is for the athena-watch mod in HQ,
-which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line.
+which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line. Lines it calls
+quiet (notices HQ never acts on, such as the Slack doorbell's `slack-new <dm> <n> dm active` for a DM the human is
+replying in) are printed in neither mode: they go to logs/watch-suppressed.log.
 """
 import json
 import os
@@ -31,18 +33,20 @@ def diff(prev: dict, cur: dict) -> list:
             continue
         if before.get("state") != now.get("state"):
             lines.append(f"{name} state {before.get('state')}->{now.get('state')}{detail}")
-        rep_now = (now.get("report") or {}).get("status")
-        rep_before = (before.get("report") or {}).get("status")
-        if rep_now and rep_now != rep_before:
-            lines.append(f"{name} report {rep_now}")
+        rep_now, rep_before = now.get("report") or {}, before.get("report") or {}
+        if rep_now.get("status") and _told_as(rep_now) != _told_as(rep_before):
+            lines.append(f"{name} report {rep_now['status']}")  # a new status, or a new head
         bp, np_ = before.get("pr") or {}, now.get("pr") or {}
         if np_ and not bp:
             lines.append(f"{name} pr opened {np_.get('url')}")
         if bp and np_:
             if bp.get("checks") != np_.get("checks"):
                 lines.append(f"{name} checks {bp.get('checks')}->{np_.get('checks')}")
-            if (np_.get("comments") or 0) > (bp.get("comments") or 0):
-                lines.append(f"{name} review comments +{np_['comments'] - (bp.get('comments') or 0)}")
+            # `comments` counts humans other than the author; a burst with none is said whole, for the quiet log.
+            human = (np_.get("comments") or 0) - (bp.get("comments") or 0)
+            every = _all_comments(np_) - _all_comments(bp)
+            if human > 0 or every > 0:
+                lines.append(f"{name} review comments +{human if human > 0 else every}")
             if np_.get("review") and np_.get("review") != bp.get("review"):
                 lines.append(f"{name} review {np_['review']}")
             if np_.get("state") != bp.get("state"):
@@ -59,6 +63,15 @@ def diff(prev: dict, cur: dict) -> list:
         if old and now != old:
             lines.append(f"stack {key}: {old} -> {now}")
     return lines
+
+
+def _told_as(report):
+    """What makes two reports the same: their status and head."""
+    return ((report or {}).get("status"), (report or {}).get("head"))
+
+
+def _all_comments(p):
+    return p.get("comments_all", p.get("comments")) or 0
 
 
 def _stack_file():
@@ -349,18 +362,116 @@ _WAKE = [
 
 
 _DOORBELL = re.compile(r"^dash-queue \d{1,9}$")
+_SLACK_ACTIVE = re.compile(r"^slack-new \S+ \d+ dm active$")  # the doorbell's mark: the human is replying there
 
 
-def classify(line: str, retired=frozenset()) -> str:
-    """"wake" for a line HQ must act on, "status" for routine progress the status line shows.
+SUPPRESSED_MAX = 1024 * 1024  # watch-suppressed.log rotates to .1 at this size
+_RETIRING_FOR = 30 * 60  # how long a `retiring` mark explains an exit, should retire die before clearing it
+_MAIN_MOVED = ("active", "always", "never")
+_ACTIVE = ("working", "blocked", "needs context")  # _group's words for a worker that may still rebase
+_ALWAYS_TOLD = ("BLOCKED", "NEEDS_CONTEXT")
 
-    A line no rule knows wakes, so nothing new that athena watch says is lost.
+
+class Context:
+    """What the quiet rules read about one tick: the snapshots before and after it, then the ledger and config, each
+    read once and only when a line asks."""
+
+    def __init__(self, prev=None, cur=None):
+        self.prev, self.cur = prev or {}, cur or {}
+        self._ledger = None
+
+    def worker(self, snap, name) -> dict:
+        return (snap.get("workers") or {}).get(name) or {}
+
+    def ledger(self) -> dict:
+        if self._ledger is None:
+            self._ledger = ledger.workers()
+        return self._ledger
+
+    def retired(self, name) -> bool:
+        """Retired, or being retired right now: `athena retire` marks `retiring` before it stops the Claude."""
+        w = self.ledger().get(name) or {}
+        since = w.get("retiring")
+        fresh = isinstance(since, (int, float)) and time.time() - since < _RETIRING_FOR
+        return w.get("state") == "retired" or w.get("state") == "live" and fresh
+
+    def main_moved(self) -> str:
+        try:
+            mode = config.get("watch_main_moved")
+        except config.ConfigError:
+            return "active"
+        return mode if mode in _MAIN_MOVED else "active"
+
+    def repo_active(self, name) -> bool:
+        """A live worker in repo `name` (its folder) works or is blocked, or has an open PR not yet approved."""
+        repos = self.cur.get("repos") or {}
+        for worker, w in (self.cur.get("workers") or {}).items():
+            if not repos.get(worker) or os.path.basename(repos[worker]) != name:
+                continue
+            p = w.get("pr") or {}
+            if _group(w) in _ACTIVE or p.get("state") == "OPEN" and p.get("review") != "APPROVED":
+                return True
+        return False
+
+
+def _quiet(line, ctx):
+    """Why HQ need not hear `line` this tick, or None. Only lines HQ never acted on are kept back."""
+    m = re.match(r"^(\S+) main moved ", line)
+    if m:
+        mode = ctx.main_moved()
+        if mode == "never":
+            return "watch_main_moved is never"
+        if mode == "active" and not ctx.repo_active(m.group(1)):
+            return f"no active worker or open PR in {m.group(1)}"
+        return None
+    m = re.match(r"^(\S+) review comments \+\d+$", line)
+    if m:
+        before = ctx.worker(ctx.prev, m.group(1)).get("pr") or {}
+        now = ctx.worker(ctx.cur, m.group(1)).get("pr") or {}
+        if "comments_all" in now and (now.get("comments") or 0) <= (before.get("comments") or 0):
+            return "bot or author comments only"
+        return None
+    m = re.match(r"^(\S+) (?:state \S+->exited(?: \(.*\))?|gone from the ledger)$", line)
+    if m:
+        return "retired via athena retire" if ctx.retired(m.group(1)) else None
+    m = re.match(r"^(\S+) report (\S+)$", line)
+    if m and m.group(2).upper() not in _ALWAYS_TOLD:
+        before, now = ctx.worker(ctx.prev, m.group(1)), ctx.worker(ctx.cur, m.group(1))
+        last = before.get("report") or before.get("last_report")
+        if last and now.get("report") and _told_as(last) == _told_as(now["report"]):
+            return "same report as last told"
+    return None
+
+
+def verdict(line: str, retired=frozenset(), ctx=None):
+    """(kind, reason) for a watch line: "wake" for a line HQ must act on, "status" for routine progress the status
+    line shows, "quiet" (with why) for one HQ never acts on, which goes to the suppressed log instead.
+
+    Without a Context nothing is quiet but a retired worker leaving the ledger. A line no rule knows wakes, so nothing
+    new that athena watch says is lost.
     """
     if _DOORBELL.match(line):
-        return "wake"  # the human answered on the dashboard: HQ reads `athena ask queue`
+        return "wake", None  # the human answered on the dashboard: HQ reads `athena ask queue`
+    if _SLACK_ACTIVE.match(line):
+        return "quiet", "human active in DM"
     name = line.split(" ", 1)[0]
+    if line.endswith(" gone from the ledger") and name in retired:
+        return "quiet", "retired via athena retire"
+    why = _quiet(line, ctx) if ctx is not None else None
+    if why:
+        return "quiet", why
+    return _routine(line), None
+
+
+def classify(line: str, retired=frozenset(), ctx=None) -> str:
+    """"wake", "status" or "quiet": verdict without its reason."""
+    return verdict(line, retired, ctx)[0]
+
+
+def _routine(line: str) -> str:
+    """"wake" or "status" by the line's words alone."""
     if line.endswith(" gone from the ledger"):
-        return "status" if name in retired else "wake"
+        return "wake"
     m = re.match(r"^\S+ review (\S+)$", line)
     if m and m.group(1) != "comments":
         return "wake" if m.group(1) in _WAKE_REVIEWS else "status"
@@ -521,19 +632,35 @@ def summary(snap) -> str:
     return " · ".join(parts)
 
 
-def _retired() -> set:
-    return {n for n, w in ledger.workers().items() if w.get("state") == "retired"}
+def suppress(line, reason):
+    """Keep a notice HQ is not told in logs/watch-suppressed.log, one line each: when, the line, and why. Rotates to
+    `.1` at SUPPRESSED_MAX, keeping one. A log it cannot write is said on stderr; the watch carries on."""
+    try:
+        target = paths.ensure("logs") / "watch-suppressed.log"
+        if target.exists() and target.stat().st_size >= SUPPRESSED_MAX:
+            os.replace(target, target.with_name(target.name + ".1"))
+        stamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        with open(target, "a") as f:
+            f.write(f"{stamp} {' '.join(str(line).split())} ({reason})\n")
+    except OSError as exc:
+        print(f"watch-suppressed.log not written: {exc}", file=sys.stderr, flush=True)
 
 
-def emit(lines, snap, tagged=False, last_status=None):
-    """Print a tick's lines; tagged, as JSON with the status line after them when it changed. Returns the status."""
-    if not tagged:
-        for line in lines:
-            print(line, flush=True)
-        return last_status
-    retired = _retired() if any(l.endswith(" gone from the ledger") for l in lines) else frozenset()
+def emit(lines, snap, tagged=False, last_status=None, prev=None):
+    """Print a tick's lines (`prev` is the snapshot before it); tagged, as JSON with the status line after them when it
+    changed. A quiet line is not printed at all, so it neither wakes HQ nor settles the mod's memory: it goes to the
+    suppressed log. Returns the status."""
+    ctx = Context(prev, snap)
     for line in lines:
-        print(json.dumps({"line": line, "wake": classify(line, retired) == "wake"}), flush=True)
+        kind, why = verdict(line, ctx=ctx)
+        if kind == "quiet":
+            suppress(line, why)
+        elif tagged:
+            print(json.dumps({"line": line, "wake": kind == "wake"}), flush=True)
+        else:
+            print(line, flush=True)
+    if not tagged:
+        return last_status
     record = json.dumps({"status": summary(snap), "board": board(snap)})
     if record != last_status:
         print(record, flush=True)
@@ -548,7 +675,7 @@ def report_error(exc, tagged=False):
 
 
 def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
-    workers, mains = {}, {}
+    workers, mains, repos = {}, {}, {}
     before = (prev or {}).get("workers", {})
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
@@ -559,12 +686,14 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
             pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None)}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
                               "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None}
+        if repo:
+            repos[w["name"]] = repo  # for the main-moved rule; never in watch.json
         if repo and repo not in mains:
             if fetch:
                 gitops.git(repo, "fetch", "--quiet", "origin", check=False)
             default = gitops.default_branch(repo)
             mains[repo] = gitops.git(repo, "rev-parse", f"origin/{default}", check=False)
-    return {"workers": workers, "mains": mains}
+    return {"workers": workers, "mains": mains, "repos": repos}
 
 
 def step(prev, fetch=False, with_pr=True):
@@ -656,7 +785,7 @@ def knock_start(doorbell):
 def knock(doorbell, tagged=False):
     """Print the Slack doorbell's `slack-new <channel> <n>` lines when a poll is due: ids and counts, never text. A
     network error backs off quietly on stderr; anything else Slack says is a watch error, told once until it reads
-    again."""
+    again. A DM the human is replying in (` dm active`) goes to the suppressed log instead."""
     try:
         lines = doorbell.check()
     except Exception as exc:
@@ -672,7 +801,11 @@ def knock(doorbell, tagged=False):
     for note in doorbell.notes():
         print(doorbell.redact(note), file=sys.stderr, flush=True)
     for line in lines:
-        print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
+        kind, why = verdict(line)
+        if kind == "quiet":
+            suppress(line, why)
+        else:
+            print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
 
 
 def slack_once(window=0) -> int:
@@ -706,12 +839,12 @@ def run(interval=20, fetch_every=120, tagged=False):
         if fetch:
             last_fetch = time.time()
         try:
-            first = prev is None
+            before = prev
             prev, lines = tick(prev, fetch=fetch)
-            if first:
+            if before is None:
                 names = ", ".join(f"{n}={v['state']}" for n, v in prev["workers"].items()) or "no live workers"
                 lines = [f"watching: {names}"] + lines
-            shown = emit(lines, prev, tagged=tagged, last_status=shown)
+            shown = emit(lines, prev, tagged=tagged, last_status=shown, prev=before)
             keep_labels()
         except Exception as exc:
             report_error(exc, tagged=tagged)

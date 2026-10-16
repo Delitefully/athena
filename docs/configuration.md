@@ -36,11 +36,13 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 ```
 
 - `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
-- `athena watch`'s doorbells ([How it works](how-it-works.md#doorbells-ci-and-slack)) read four optional keys, which `athena init` does not ask for and `config.json` holds only once you add them by hand:
+- `athena watch` ([How it works](how-it-works.md#doorbells-ci-and-slack)) reads six optional keys, which `athena init` does not ask for and `config.json` holds only once you add them by hand:
+  - `watch_main_moved` (default `"active"`): when `<repo> main moved` wakes HQ. `"active"`: only while that repo has a live worker working or blocked, or a live worker's open PR not yet approved; `"always"`; `"never"`. An unknown value counts as `"active"`. A line it keeps back goes to `logs/watch-suppressed.log`.
   - `ci_repos` (default `[]`): repos whose default branch the watch checks for failed CI runs even with no live worker on them, each a path (`~/Developer/web`) or an `owner/name`. Repos with a live worker are always checked.
   - `slack_channels` (default `[]`): Slack channel ids the Slack doorbell polls. It always reads your DMs and group DMs.
   - `slack_ext_channels` (default `true`): also poll every `ext-` channel you are a member of.
   - `slack_allow_bots` (default `[]`): bot or app ids whose messages count; no other bot's do.
+  - `slack_dm_active_minutes` (default `15`): a DM or group DM you wrote in within this many minutes does not wake HQ; its new messages go to `logs/watch-suppressed.log`, and once the window lapses the doorbell rings once with the messages that came after your last one. `0` turns it off.
 - An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file.
 - Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
 
@@ -50,7 +52,7 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 
 ## State files
 
-State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json`, `actions.jsonl`. Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
+State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json`, `actions.jsonl`. Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`, and `watch-suppressed.log`, the watch lines kept from HQ, rotated to `.1` at 1 MB). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
 
 ## Per-repo worktree setup
 

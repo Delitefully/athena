@@ -4,7 +4,36 @@ import re
 import subprocess
 
 FIELDS = ("number,url,title,state,isDraft,reviewDecision,headRefOid,mergeable,statusCheckRollup,comments,reviews,"
-          "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName,headRefName")
+          "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName,headRefName,author")
+
+# Accounts whose comments never count as review comments: gh names them without the `[bot]` suffix REST uses. The
+# last two are platform bots that post as ordinary accounts.
+BOTS = {"github-actions", "github-advanced-security", "copilot", "linear-code", "sun-merge-queue"}
+
+
+def is_bot(author, association=None) -> bool:
+    """Whether a comment's author is a bot: a known bot login (Copilot's reviewer and agent logins too), any login
+    ending in `[bot]`, or an account gh or GitHub types as a Bot. An association of NONE is an outside human, too."""
+    author = author if isinstance(author, dict) else {}
+    login = str(author.get("login") or "").lower()
+    if login in BOTS or login.startswith("copilot-") or login.endswith("[bot]"):
+        return True
+    if author.get("is_bot") is True or "Bot" in (author.get("type"), author.get("__typename")):
+        return True
+    return str(association or "").upper() == "BOT"
+
+
+def _human_comments(data) -> int:
+    """Comments and review bodies by humans other than the PR's author: what HQ reads review comments for."""
+    owner = str(((data.get("author") or {}).get("login")) or "").lower()
+    notes = list(data.get("comments") or []) + [r for r in data.get("reviews") or [] if r.get("body")]
+    count = 0
+    for note in notes:
+        who = note.get("author") or {}
+        if is_bot(who, note.get("authorAssociation")) or owner and str(who.get("login") or "").lower() == owner:
+            continue
+        count += 1
+    return count
 
 
 def reduce_checks(rollup) -> str:
@@ -48,7 +77,9 @@ def reduce(data: dict) -> dict:
         "state": data.get("state"), "draft": data.get("isDraft"), "review": data.get("reviewDecision") or "",
         "head": (data.get("headRefOid") or "")[:12], "mergeable": data.get("mergeable"),
         "base": data.get("baseRefName"), "branch": data.get("headRefName"), "checks": reduce_checks(data.get("statusCheckRollup")),
-        "comments": len(data.get("comments") or []) + sum(1 for r in data.get("reviews") or [] if r.get("body")),
+        "author": (data.get("author") or {}).get("login"),
+        "comments": _human_comments(data),
+        "comments_all": len(data.get("comments") or []) + sum(1 for r in data.get("reviews") or [] if r.get("body")),
         "requested": [n for n in (_reviewer(r) for r in data.get("reviewRequests") or []) if n],
         "reviews": {r["author"]["login"]: r.get("state") for r in data.get("latestReviews") or []
                     if (r.get("author") or {}).get("login")},
