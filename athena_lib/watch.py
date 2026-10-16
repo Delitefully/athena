@@ -3,7 +3,8 @@
 Quiet when nothing changes. Also keeps athena workspace labels from being renamed by other plugins, and watches the
 stacked PRs listed in stack.json. Plain output is for Monitor; `--tagged` output is for the athena-watch mod in HQ,
 which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line. Lines it calls
-quiet (notices HQ never acts on) are printed in neither mode: they go to logs/watch-suppressed.log.
+quiet (notices HQ never acts on, such as the Slack doorbell's `slack-new <dm> <n> dm active` for a DM the human is
+replying in) are printed in neither mode: they go to logs/watch-suppressed.log.
 """
 import json
 import os
@@ -361,6 +362,7 @@ _WAKE = [
 
 
 _DOORBELL = re.compile(r"^dash-queue \d{1,9}$")
+_SLACK_ACTIVE = re.compile(r"^slack-new \S+ \d+ dm active$")  # the doorbell's mark: the human is replying there
 
 
 SUPPRESSED_MAX = 1024 * 1024  # watch-suppressed.log rotates to .1 at this size
@@ -450,6 +452,8 @@ def verdict(line: str, retired=frozenset(), ctx=None):
     """
     if _DOORBELL.match(line):
         return "wake", None  # the human answered on the dashboard: HQ reads `athena ask queue`
+    if _SLACK_ACTIVE.match(line):
+        return "quiet", "human active in DM"
     name = line.split(" ", 1)[0]
     if line.endswith(" gone from the ledger") and name in retired:
         return "quiet", "retired via athena retire"
@@ -781,7 +785,7 @@ def knock_start(doorbell):
 def knock(doorbell, tagged=False):
     """Print the Slack doorbell's `slack-new <channel> <n>` lines when a poll is due: ids and counts, never text. A
     network error backs off quietly on stderr; anything else Slack says is a watch error, told once until it reads
-    again."""
+    again. A DM the human is replying in (` dm active`) goes to the suppressed log instead."""
     try:
         lines = doorbell.check()
     except Exception as exc:
@@ -797,7 +801,11 @@ def knock(doorbell, tagged=False):
     for note in doorbell.notes():
         print(doorbell.redact(note), file=sys.stderr, flush=True)
     for line in lines:
-        print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
+        kind, why = verdict(line)
+        if kind == "quiet":
+            suppress(line, why)
+        else:
+            print(json.dumps({"line": line, "wake": True}) if tagged else line, flush=True)
 
 
 def slack_once(window=0) -> int:

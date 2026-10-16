@@ -499,6 +499,123 @@ class SlackTest(unittest.TestCase):
         b = self.bell(window=300)
         self.assertEqual(b.check(), ["slack-new D0DM0001 1 dm"])
 
+    def active(self, minutes=None):
+        cfg = {"slack_channels": ["C0CHAN01"], "slack_ext_channels": True}
+        if minutes is not None:
+            cfg["slack_dm_active_minutes"] = minutes
+        config.config_file().write_text(json.dumps(cfg))
+
+    def test_a_dm_the_human_is_replying_in_is_marked_active_not_rung(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        self.api.post("D0DM0001", "1070.000100")
+        self.api.post("D0DM0001", "1075.000100", user=ME)
+        self.api.post("D0DM0001", "1080.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 2 dm active"])
+        self.assertEqual(self.tick(b), [])  # nothing new: no line, not even a quiet one
+
+    def test_a_dm_the_human_last_wrote_in_long_ago_rings(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.tick(b)
+        self.now += 16 * 60
+        self.api.post("D0DM0001", f"{self.now + 30:.6f}")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
+
+    def test_the_window_lapsing_with_messages_after_the_humans_last_rings_once(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.api.post("D0DM0001", "1045.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 2 dm active"])
+        rung = []
+        while self.now < 1030 + 15 * 60 + 120:
+            rung += self.tick(b)
+        self.assertEqual(rung, ["slack-new D0DM0001 2 dm"])
+        self.assertEqual(self.tick(b), [])
+
+    def test_the_lapse_rings_only_what_came_after_the_humans_last_reply(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        self.api.post("D0DM0001", "1070.000100")
+        self.api.post("D0DM0001", "1080.000100", user=ME)  # answered both
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        rung = []
+        for _ in range(20):
+            rung += self.tick(b)
+        self.assertEqual(rung, [])
+
+    def test_a_held_dm_still_rings_after_a_restart(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        again = self.bell(api=self.api)
+        rung = []
+        for _ in range(20):
+            rung += self.tick(again)
+        self.assertEqual(rung, ["slack-new D0DM0001 1 dm"])
+        saved = (paths.state_dir() / "slack.json").read_text()
+        self.assertNotIn("secret words", saved)
+        self.assertNotIn(ME, saved)
+
+    def test_the_active_window_is_configurable_and_0_turns_it_off(self):
+        self.active(0)
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
+        self.active(2)
+        self.api.post("D0DM0001", "1090.000100", user=ME)
+        self.api.post("D0DM0001", "1095.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        self.assertEqual(self.tick(b), [])
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])  # two minutes after 1090
+
+    def test_turning_the_window_off_rings_what_it_held(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm active"])
+        self.active(0)
+        self.assertEqual(self.tick(b), ["slack-new D0DM0001 1 dm"])
+
+    def test_a_channel_the_human_is_writing_in_still_rings(self):
+        b = self.bell()
+        b.check()
+        self.api.post("C0CHAN01", "1030.000100", user=ME)
+        self.api.post("C0CHAN01", "1040.000100")
+        self.assertEqual(self.tick(b), ["slack-new C0CHAN01 1"])
+
+    def test_an_active_dm_goes_to_the_suppressed_log_not_to_hq(self):
+        b = self.bell()
+        b.check()
+        self.api.post("D0DM0001", "1030.000100", user=ME)
+        self.api.post("D0DM0001", "1040.000100")
+        self.api.post("D0DM0001", "1041.000100")
+        self.now += 60
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            watch.knock(b)
+            self.now += 15 * 60
+            watch.knock(b)
+        self.assertEqual(out.getvalue(), "slack-new D0DM0001 2 dm\n")
+        log = (paths.state_dir() / "logs" / "watch-suppressed.log").read_text()
+        self.assertEqual(log.count("\n"), 1)
+        self.assertTrue(log.rstrip().endswith(" slack-new D0DM0001 2 dm active (human active in DM)"), log)
+        self.assertNotIn("secret words", log)
+
     def test_only_read_methods_are_ever_called(self):
         client = slack.Client(TOKEN)
         for method in ("chat.postMessage", "reactions.add", "conversations.mark", "chat.delete"):
@@ -594,6 +711,7 @@ class ReservedTest(unittest.TestCase):
         self.assertEqual(config.DEFAULTS["ci_repos"], [])
         self.assertIs(config.DEFAULTS["slack_ext_channels"], True)
         self.assertEqual(config.DEFAULTS["slack_allow_bots"], [])
+        self.assertEqual(config.DEFAULTS["slack_dm_active_minutes"], 15)
 
     def test_an_older_install_reads_the_slack_keys_as_defaults(self):
         tmp = tempfile.TemporaryDirectory()

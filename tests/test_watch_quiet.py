@@ -208,6 +208,12 @@ class AlwaysToldTest(Isolated):
             with self.subTest(line=line):
                 self.assertEqual(self.verdict(line, prev, cur), ("wake", None))
 
+    def test_a_dm_the_human_is_active_in_is_quiet_with_or_without_a_context(self):
+        self.assertEqual(watch.verdict("slack-new D0123ABCD 2 dm active"), ("quiet", "human active in DM"))
+        self.assertEqual(self.verdict("slack-new D0123ABCD 2 dm active", _snap(), _snap()),
+                         ("quiet", "human active in DM"))
+        self.assertEqual(watch.verdict("slack-new C0123ABCD 2 active"), ("wake", None))  # only a DM is held
+
     def test_classify_keeps_its_words(self):
         ctx = watch.Context(_snap(), _snap())
         self.assertEqual(watch.classify("platform main moved a..b", ctx=ctx), "quiet")

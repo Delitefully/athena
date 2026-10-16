@@ -6,10 +6,13 @@ saw in each conversation: the human's DMs and group DMs, the channels in config 
 `slack_ext_channels`) every `ext-` channel the human is a member of. It counts top-level messages, and replies in
 threads the human started that it saw start (followed for two days); replies in a thread the human only joined are
 not counted (HQ's fallback sweep reads those). The human's own messages, bots and apps (but those in config
-`slack_allow_bots`) and housekeeping (joins, edits, deletions) do not count.
+`slack_allow_bots`) and housekeeping (joins, edits, deletions) do not count. A DM the human wrote in within config
+`slack_dm_active_minutes` rings `slack-new <dm> <n> dm active`, which the watch logs instead of telling HQ; when that
+window lapses, the messages after the human's last one ring once.
 
-What it keeps, in slack.json in the state dir: the last-seen ts per conversation and per followed thread, and the
-counts it has not rung yet. Never a message's text, its author or a link to it. The token goes in the Authorization
+What it keeps, in slack.json in the state dir: the last-seen ts per conversation and per followed thread, the counts
+it has not rung yet, and per DM the ts of the human's last message and how many counted ones came after it. Never a
+message's text, its author or a link to it. The token goes in the Authorization
 header and nowhere else: not a URL, an error, a log line or a file.
 """
 import json
@@ -176,10 +179,14 @@ def _settings() -> dict:
     except config.ConfigError:
         loaded = {}
     cfg = {key: loaded.get(key, config.DEFAULTS[key]) for key in ("slack_channels", "slack_ext_channels",
-                                                                    "slack_allow_bots")}
+                                                                    "slack_allow_bots", "slack_dm_active_minutes")}
     channels = [c for c in cfg.get("slack_channels") or [] if isinstance(c, str) and CHANNEL_ID.match(c)]
     allow = {b for b in cfg.get("slack_allow_bots") or [] if isinstance(b, str) and b}
-    return {"channels": channels, "ext": bool(cfg.get("slack_ext_channels")), "allow": allow}
+    minutes = cfg.get("slack_dm_active_minutes")
+    if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or not 0 <= minutes <= 24 * 60:
+        minutes = config.DEFAULTS["slack_dm_active_minutes"]
+    return {"channels": channels, "ext": bool(cfg.get("slack_ext_channels")), "allow": allow,
+            "dm_active": minutes * 60}
 
 
 class Doorbell:
@@ -199,6 +206,7 @@ class Doorbell:
         self._failures = 0
         self._me = None
         self._dms, self._ext, self._listed_at = [], [], None
+        self._dm_ids = set()
         self._cursor = 0
         self._channel_cursor = 0
         self._active_cursor = 0
@@ -282,7 +290,10 @@ class Doorbell:
                 "seen": stamps("seen"), "active": stamps("active"),
                 "threads": {ch: {t: last for t, last in ts.items() if isinstance(last, str) and _ts(last) is not None}
                             for ch, ts in part("threads").items() if isinstance(ts, dict)},
-                "unrung": {ch: n for ch, n in part("unrung").items() if isinstance(n, int) and n > 0}}
+                "unrung": {ch: n for ch, n in part("unrung").items() if isinstance(n, int) and n > 0},
+                "mine": stamps("mine"),
+                "after": {ch: n for ch, n in part("after").items() if isinstance(n, int) and n >= 0},
+                "held": sorted({ch for ch in data.get("held") or [] if isinstance(ch, str) and CHANNEL_ID.match(ch)})}
 
     def _save(self):
         paths.ensure()
@@ -300,8 +311,10 @@ class Doorbell:
             self._read_conversations(now, cfg)
             self._read_threads(now, cfg)
             unrung = self._state["unrung"]
-            dms = {d for d, _ in self._dms}
+            dms = self._dm_ids | set(self._state["held"])
+            active = self._hold(now, cfg, dms)
             lines = [f"slack-new {ch} {min(int(n), COUNT_MAX)}{' dm' if ch in dms else ''}"
+                     f"{' active' if ch in active else ''}"
                      for ch, n in sorted(unrung.items()) if CHANNEL_ID.match(ch) and isinstance(n, int) and n > 0]
             self._state["unrung"] = {}
             self._state["polled"] = _fmt(now)  # a conversation first seen next poll is read from here
@@ -309,6 +322,39 @@ class Doorbell:
         finally:
             if self._state is not None:
                 self._save()
+
+    def _hold(self, now, cfg, dms) -> set:
+        """The DMs the human wrote in within config `slack_dm_active_minutes`, which ring ` dm active` (the watch
+        keeps those out of HQ); a DM whose window has lapsed rings, once, the messages that came after the human's
+        last one."""
+        unrung, mine, after = self._state["unrung"], self._state["mine"], self._state["after"]
+        held, active = set(self._state["held"]), set()
+        for ch in sorted(dms):
+            if cfg["dm_active"] and ch in mine and now - float(_ts(mine[ch])) < cfg["dm_active"]:
+                if unrung.get(ch):
+                    active.add(ch)
+                    held.add(ch)
+                continue
+            if ch in held:
+                held.discard(ch)
+                unrung.pop(ch, None)
+                if after.get(ch):
+                    unrung[ch] = after[ch]
+            after.pop(ch, None)
+        self._state["held"] = sorted(held)
+        return active
+
+    def _tally(self, ch, m, counted):
+        """Keep, for a DM, when the human last wrote in it and how many counted messages came after that."""
+        if ch not in self._dm_ids:
+            return
+        mine, after = self._state["mine"], self._state["after"]
+        if m.get("user") == self._me and m.get("subtype") in COUNTED_SUBTYPES:
+            if ch not in mine or _ts(m["ts"]) > _ts(mine[ch]):
+                mine[ch] = str(_ts(m["ts"]))
+            after[ch] = 0
+        elif counted and ch in mine:
+            after[ch] = after.get(ch, 0) + 1
 
     def _pages(self, method, key, **params) -> list:
         out, cursor = [], None
@@ -325,6 +371,7 @@ class Doorbell:
         dms = self._pages("conversations.list", "channels", types="im,mpim", exclude_archived="true")
         self._dms = [(c["id"], _latest(c)) for c in dms
                      if CHANNEL_ID.match(str(c.get("id"))) and not c.get("is_user_deleted") and not c.get("is_archived")]
+        self._dm_ids = {d for d, _ in self._dms}
         if self._listed_at is not None and now - self._listed_at < LIST_EVERY:
             return
         self._ext = []
@@ -422,14 +469,15 @@ class Doorbell:
                 continue
             newest, n = _ts(oldest), 0
             last = None
-            for m in data.get("messages") or []:
-                ts = _ts(m.get("ts")) if isinstance(m, dict) else None
-                if ts is not None:
-                    last = ts if last is None else max(last, ts)
-                if ts is None or ts <= _ts(oldest):
+            dated = [(_ts(m.get("ts")), m) for m in data.get("messages") or [] if isinstance(m, dict)]
+            for ts, m in sorted(((ts, m) for ts, m in dated if ts is not None), key=lambda x: x[0]):
+                last = ts if last is None else max(last, ts)
+                if ts <= _ts(oldest):
                     continue
                 newest = max(newest, ts)
-                n += self._counts(m, cfg)
+                counted = self._counts(m, cfg)
+                n += counted
+                self._tally(ch, m, counted)
                 if m.get("user") == self._me and m.get("thread_ts", m.get("ts")) == m.get("ts"):
                     threads.setdefault(ch, {})[m["ts"]] = m["ts"]
             seen[ch] = str(newest)
@@ -463,7 +511,10 @@ class Doorbell:
                     continue
                 newest = max(newest, ts)
                 # A reply also sent to the channel was counted with the channel's messages.
-                n += m.get("subtype") != "thread_broadcast" and self._counts(m, cfg)
+                counted = m.get("subtype") != "thread_broadcast" and self._counts(m, cfg)
+                n += counted
+                if m.get("subtype") != "thread_broadcast":
+                    self._tally(ch, m, counted)
             kept[ch][t] = str(newest)
             if n:
                 unrung[ch] = unrung.get(ch, 0) + n
