@@ -186,6 +186,13 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(self.move(_pr(review="APPROVED"), PASSED, human_merge=True),
                          ("approved · yours to merge", "approved", True))
 
+    def test_no_reviewer_requested_waits_on_athenas_review_first(self):
+        # A review is required and nobody is asked: HQ reviews before the human is asked to request one.
+        self.assertEqual(self.move(_pr(), None), ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(), {"verdict": "fail", "head": HEAD})[0], "review findings · worker fixing")
+        self.assertEqual(self.move(_pr(), PASSED), ("no reviewer requested", "unrequested", True))
+        self.assertEqual(self.move(_pr(), None, live=False), ("no reviewer requested", "unrequested", True))
+
     def test_earlier_moves_come_first(self):
         # Draft, failing checks, changes requested, a reviewer asked, CI still running: as before, verdict or not.
         for review in (None, {"verdict": "fail", "head": HEAD}):

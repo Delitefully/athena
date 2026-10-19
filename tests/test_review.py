@@ -46,6 +46,29 @@ class ReviewCommandTest(unittest.TestCase):
         self.assertEqual(ledger.workers()["abc-7"]["review"], record)
         self.assertEqual(json.loads(out)["review"], record)
 
+    def test_pass_and_fail_default_to_the_head_recorded_at_start(self):
+        with mock.patch.object(cli.pr, "summary", return_value=_pr()):
+            self.assertEqual(self.athena("review", "abc-7", "start")[0], 0)
+        # The worker pushed while the review ran: the verdict is still for the head the reviewer read.
+        with mock.patch.object(cli.pr, "summary", return_value=_pr(head="9a8b7c6d5e4f")) as summary:
+            self.assertEqual(self.athena("review", "abc-7", "pass")[0], 0)
+        self.assertEqual(summary.call_count, 0)
+        self.assertEqual(ledger.workers()["abc-7"]["review"]["head"], HEAD)
+        # A verdict is no start: the next pass or fail needs a start again, or --head.
+        code, _, err = self.athena("review", "abc-7", "fail")
+        self.assertEqual(code, 2)
+        self.assertIn("start", err)
+        self.assertEqual(ledger.workers()["abc-7"]["review"]["verdict"], "pass")
+
+    def test_pass_or_fail_with_no_start_and_no_head_is_refused(self):
+        with mock.patch.object(cli.pr, "summary", return_value=_pr()) as summary:
+            for verdict in ("pass", "fail"):
+                code, _, err = self.athena("review", "abc-7", verdict)
+                self.assertEqual(code, 2)
+                self.assertIn("--head", err)
+        self.assertEqual(summary.call_count, 0)  # never the PR's current head: a push during the review is unreviewed
+        self.assertNotIn("review", ledger.workers()["abc-7"])
+
     def test_pass_and_fail_take_the_head_they_reviewed(self):
         with mock.patch.object(cli.pr, "summary") as summary:
             self.assertEqual(self.athena("review", "abc-7", "pass", "--head", "4F2C1AB")[0], 0)
@@ -58,7 +81,7 @@ class ReviewCommandTest(unittest.TestCase):
 
     def test_refusals_record_nothing(self):
         with mock.patch.object(cli.pr, "summary", return_value=None):
-            code, _, err = self.athena("review", "abc-7", "pass")
+            code, _, err = self.athena("review", "abc-7", "start")
         self.assertEqual(code, 2)
         self.assertIn("--head", err)  # gh could not say the PR's head
         self.assertEqual(self.athena("review", "abc-7", "pass", "--head", "main")[0], 2)  # not a sha

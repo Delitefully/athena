@@ -114,7 +114,7 @@ def move(p, live: bool, human_merge: bool, ci=True, review=None):
     repo runs no CI); before that it is `checks running`, or `checks starting` while none have registered. A live worker's PR is the human's to merge only once the
     worker reported DONE: the dashboard and the band check that, from the worker's state.
 
-    A live worker's PR is the human's to merge only once HQ's review passed at the PR's current head (`review`, the
+    A live worker's PR is the human's to merge, or to request a reviewer for, only once HQ's review passed at the PR's current head (`review`, the
     worker's ledger verdict from `athena review`): before that it is `in review · athena`, and after a fail at that head
     `review findings · worker fixing`, both In progress. A verdict at an older head is void: in review again.
 
@@ -167,6 +167,8 @@ def move(p, live: bool, human_merge: bool, ci=True, review=None):
     if requested:
         return out("awaiting review · " + _names(requested), "awaiting", False)
     if p.get("review") == "REVIEW_REQUIRED":
+        if live and (gate := athena_review()):
+            return gate  # HQ reviews before the human is asked to request a reviewer
         return out("no reviewer requested", "unrequested", True)
     # No review rule on its branch (reviewDecision empty): nothing to wait for but the merge.
     if p.get("queued"):

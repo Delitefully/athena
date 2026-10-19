@@ -201,8 +201,15 @@ def cmd_review(a):
         print(f"{a.name} is not a live athena worker", file=sys.stderr)
         return 2
     head = a.head
-    if not head and w.get("repo") and w.get("branch"):
+    if not head and a.verdict == "start" and w.get("repo") and w.get("branch"):
         head = (pr.summary(w["repo"], w["branch"]) or {}).get("head")
+    elif not head:  # a verdict is for the head the reviewer read, never one pushed during the review
+        started = w.get("review") or {}
+        head = started.get("head") if started.get("verdict") == "start" else None
+        if not head:
+            print(f"athena review: no head recorded at start: run athena review {a.name} start, or pass --head <sha>",
+                  file=sys.stderr)
+            return 2
     if not head or not re.fullmatch(r"[0-9a-fA-F]{7,40}", head):
         print(f"athena review: no head to record ({head or 'gh found no PR'}): pass --head <sha>", file=sys.stderr)
         return 2
@@ -385,7 +392,7 @@ def parser():
     s = sub.add_parser("review", help="record HQ's review of a worker's PR: start, pass or fail, at its head")
     s.add_argument("name")
     s.add_argument("verdict", choices=pr.VERDICTS)
-    s.add_argument("--head", help="the commit reviewed (default: the PR's current head)")
+    s.add_argument("--head", help="the commit reviewed (default: start, the PR's current head; pass and fail, the head start recorded)")
     s.set_defaults(func=cmd_review)
 
     s = sub.add_parser("nudge", help="type a prompt or slash command into a worker (use SendMessage for messages)")

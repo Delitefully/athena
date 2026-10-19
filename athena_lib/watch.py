@@ -513,7 +513,9 @@ def _pr_key(url):
 
 
 _OVER_WORKING = ("approved", "queued", "changes")  # moves a working worker's row shows; others show `working`
-_MERGES = ("approved", "mergeable")  # the human's to merge: a live worker's PR only once the worker reported DONE
+# The human's to merge, and athena's review before that: a live worker's PR only once the worker reported DONE
+# (dash/view.go moveMerges).
+_MERGES = ("approved", "mergeable", "reviewing")
 
 
 def _reported(w) -> bool:
