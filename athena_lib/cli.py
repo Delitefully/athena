@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import asks, board, config, dash, gitops, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
+from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -42,6 +42,16 @@ def cmd_spawn(a):
     return code
 
 
+def _context_hint():
+    """One line when HQ's context is filling up; never a reason for `athena status` to fail."""
+    try:
+        ctx = handoff.hq_context()
+    except Exception:
+        return
+    if ctx and ctx["percent"] >= handoff.HINT_PERCENT:
+        print(f"{'hq':<12}  context {handoff.describe(ctx)}: rotate soon (athena hq rotate, skill §1a)")
+
+
 def cmd_status(a):
     rows = [status.collect(w, with_pr=a.pr) for w in ledger.live()]
     rows.sort(key=lambda r: (r["urgency"], r["name"]))
@@ -49,6 +59,7 @@ def cmd_status(a):
     if a.json:
         _print(rows)
         return 0
+    _context_hint()
     for w in left:
         print(f"{w['name']:<12}  failed    space not removed ({w.get('cleanup_error') or 'unknown'}): athena retire {w['name']}")
     if not rows:
@@ -252,6 +263,18 @@ def _first_run():
 
 
 def cmd_hq(a):
+    if a.action == "rotate":
+        if a.child:
+            _print(hq.rotate_now())
+            return 0
+        threads = _read_text(a.threads) if a.threads else None
+        result = hq.rotate(threads=threads, dry_run=a.dry_run, if_context_over=a.if_context_over)
+        if a.dry_run:
+            print(result["handoff"], end="")
+            print(f"\n--- launch (not run)\n{result['command']}\n\n--- first prompt\n{result['prompt']}")
+        else:
+            print(result["message"])
+        return 0
     if a.action == "restart":
         if a.child:
             _print(hq.restart_now(update=not a.no_update))
@@ -378,10 +401,25 @@ def parser():
     s.add_argument("--keep-worktree", action="store_true")
     s.set_defaults(func=cmd_retire)
 
-    s = sub.add_parser("hq", help="create or focus the chief of staff's space; `restart` restarts its Claude in place")
-    s.add_argument("action", choices=["restart"], nargs="?",
-                   help="update Claude Code and plugins, exit HQ's Claude and resume its conversation in the same pane")
+    s = sub.add_parser("hq", help="create or focus the chief of staff's space; `restart` restarts its Claude in place, "
+                                  "`rotate` replaces it with a fresh conversation that starts from a handoff",
+                       description="athena hq: create or focus HQ. "
+                                   "restart: update Claude Code and plugins, exit HQ's Claude and resume its conversation "
+                                   "in the same pane. "
+                                   "rotate: write the handoff (handoff.md in the state dir: fleet, PRs, open asks, "
+                                   "in-flight threads, notes tail, standing orders) from athena's state, then, once HQ is "
+                                   "idle, /exit its Claude (its conversation stays resumable) and start a NEW HQ "
+                                   "conversation in the same pane, told to read the handoff and run session start. "
+                                   "No updates; detached, like restart; log in logs/hq-restart.log.")
+    s.add_argument("action", choices=["restart", "rotate"], nargs="?",
+                   help="restart: resume the same conversation; rotate: a fresh conversation from a handoff")
     s.add_argument("--no-update", action="store_true", help="restart: skip claude update and the plugin updates")
+    s.add_argument("--threads", metavar="FILE|-",
+                   help="rotate: the in-flight threads HQ wrote for the handoff (default: threads.md in the state dir)")
+    s.add_argument("--dry-run", action="store_true",
+                   help="rotate: print the handoff, the launch command and the first prompt; run and write nothing")
+    s.add_argument("--if-context-over", type=float, metavar="PCT",
+                   help="rotate: only when HQ's context (read from its transcript) is at least PCT%% full")
     s.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--cwd")
     s.add_argument("--no-focus", action="store_true")
