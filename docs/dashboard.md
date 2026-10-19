@@ -53,7 +53,7 @@ All under `ATHENA_STATE_DIR` (`~/.local/state/athena/`):
 
 The ledger and the worker files alone give all three groups: the ledger keeps retired workers with their ticket, title and retire time, and a worker's file outlives it with its last report, which carries the PR url. The new files only enrich: `watch.json` adds checks, review and draft for live PRs, and `history.jsonl` adds whether a retired worker's PR merged. Today's state has none of them, and the page still works on it.
 
-`board.json`, `hq.json`, `standing-orders.md` and `notes.md` are not read: the page has no use for layout, and notes are athena's own.
+`board.json`, `hq.json`, `standing-orders.md`, `notes.md`, `handoff.md` and `threads.md` are not read: the page has no use for layout, and notes and handoffs are athena's own.
 
 ### Python additions
 

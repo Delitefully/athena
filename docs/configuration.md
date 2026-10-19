@@ -43,7 +43,7 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
   - `slack_ext_channels` (default `true`): also poll every `ext-` channel you are a member of.
   - `slack_allow_bots` (default `[]`): bot or app ids whose messages count; no other bot's do.
   - `slack_dm_active_minutes` (default `15`): a DM or group DM you wrote in within this many minutes does not wake HQ; its new messages go to `logs/watch-suppressed.log`, and once the window lapses the doorbell rings once with the messages that came after your last one. `0` turns it off.
-- An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file.
+- An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file. `ATHENA_HQ_CONTEXT_WINDOW` sets the context window `athena status` and `athena hq rotate --if-context-over` measure HQ against (default: 1M when HQ's model ends in `[1m]`, else 200k).
 - Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
 
 ## Environment variables

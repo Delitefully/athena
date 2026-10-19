@@ -193,6 +193,8 @@ def context(session):
                 continue
             tokens = sum(int(usage.get(k) or 0) for k in
                          ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+            if not tokens:
+                continue  # a `<synthetic>` entry (an API error, an interrupted turn) carries no usage
             model = entry.get("requestedModel") or (entry.get("message") or {}).get("model") or ""
             window = int(os.environ.get("ATHENA_HQ_CONTEXT_WINDOW") or (1_000_000 if "[1m]" in model else 200_000))
             return {"tokens": tokens, "window": window, "percent": round(100 * tokens / window), "session": session}

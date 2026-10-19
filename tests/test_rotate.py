@@ -126,6 +126,12 @@ class ContextTest(Fixture):
         self.assertEqual(ctx["window"], 200_000)
         self.assertEqual(ctx["percent"], 60)
 
+    def test_skips_synthetic_entries_with_no_usage(self):
+        synthetic = {"type": "assistant", "isSidechain": False, "message": {"model": "<synthetic>", "usage": {
+            "input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}}}
+        self.write("old", [assistant(120_000), synthetic])
+        self.assertEqual(handoff.context("old")["tokens"], 120_000)
+
     def test_a_1m_model_has_a_1m_window(self):
         self.write("old", [assistant(300_000, model="claude-opus-5-5[1m]")])
         self.assertEqual(handoff.context("old")["percent"], 30)
