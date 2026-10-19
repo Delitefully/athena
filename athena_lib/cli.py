@@ -269,7 +269,7 @@ def cmd_hq(a):
             return 0
         threads = _read_text(a.threads) if a.threads else None
         result = hq.rotate(threads=threads, dry_run=a.dry_run, if_context_over=a.if_context_over)
-        if a.dry_run:
+        if a.dry_run and "handoff" in result:
             print(result["handoff"], end="")
             print(f"\n--- launch (not run)\n{result['command']}\n\n--- first prompt\n{result['prompt']}")
         else:

@@ -215,6 +215,13 @@ class RotateTest(Fixture):
         self.assertIn("herdr agent start athena", text)
         self.assertIn("athena skill", text)
 
+    def test_cli_dry_run_under_the_context_threshold_says_why(self):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out), mock.patch("sys.stderr"):
+            code = cli.main(["hq", "rotate", "--dry-run", "--if-context-over", "90"])
+        self.assertEqual(code, 0)
+        self.assertIn("not rotating", out.getvalue())
+
     def test_writes_the_handoff_then_detaches(self):
         with self.popen() as popen:
             popen.return_value.pid = 4242
