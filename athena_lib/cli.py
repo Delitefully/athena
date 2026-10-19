@@ -66,7 +66,7 @@ def cmd_status(a):
         report = r.get("report") or {}
         if report:
             bits.append(f"report={report.get('status')}")
-        verdict = r.get("review") or {}
+        verdict = r.get("athena_review") or {}
         if verdict.get("verdict"):
             stale = r.get("pr") and not pr.same_head(verdict.get("head"), r["pr"].get("head"))
             bits.append(f"review={verdict['verdict']}@{str(verdict.get('head') or '-')[:7]}" + (" (stale)" if stale else ""))
