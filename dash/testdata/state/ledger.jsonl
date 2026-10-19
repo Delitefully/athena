@@ -11,6 +11,7 @@
 {"event": "update", "name": "abc-100", "prompt": "accepted", "ts": 1791428001}
 {"branch": "you/abc-108-search", "effort": "high", "event": "spawn", "linear": "ABC-108", "model": "opus", "name": "abc-108", "path": "/home/you/.worktrees/web/abc-108", "repo": "/home/you/src/web", "title": "Search results keep their filters", "ts": 1791485600}
 {"event": "update", "name": "abc-108", "prompt": "accepted", "ts": 1791485601}
+{"event": "review", "name": "abc-108", "review": {"at": 1791485602, "head": "4f2c1ab9d0e3", "verdict": "pass"}, "ts": 1791485602}
 {"branch": "you/abc-101-sign-in", "effort": "high", "event": "spawn", "linear": "ABC-101", "model": "opus", "name": "abc-101", "path": "/home/you/.worktrees/web/abc-101", "repo": "/home/you/src/web", "title": "Sign-in remembers the last workspace", "ts": 1791488600}
 {"event": "update", "name": "abc-101", "prompt": "accepted", "ts": 1791488601}
 {"event": "retire", "name": "abc-100", "removed": true, "ts": 1791489200}
