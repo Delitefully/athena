@@ -6,7 +6,7 @@ and the in-flight threads only HQ knows, which it writes before rotating (`--thr
 
 HQ's context is read from its own transcript, `<claude config dir>/projects/*/<session>.jsonl`: the last main-thread
 assistant entry's input, cache-read and cache-creation tokens are what the next turn starts from. Its window is 1M
-when that entry's requestedModel ends in `[1m]`, else 200k (`ATHENA_HQ_CONTEXT_WINDOW` overrides).
+when that entry's requestedModel ends in `[1m]` or it holds over 200k tokens, else 200k (`ATHENA_HQ_CONTEXT_WINDOW` overrides).
 """
 import json
 import os
@@ -17,6 +17,7 @@ from pathlib import Path
 from athena_lib import asks, ledger, paths, status
 
 MAX_LINES = 150
+LINE_MAX = 300  # characters: a pasted log line must not blow up the handoff
 NOTES_ENTRIES = 12
 THREADS_MAX = 40
 ASKS_MAX = 15
@@ -90,17 +91,20 @@ def _prs(rows):
     return out or ["no open PRs on live workers, no stacks"]
 
 
-def _asks():
-    items = [i for i in asks.items() if i.get("id")]
+def _asks(dry_run=False):
+    items = [i for i in asks.items(import_legacy=not dry_run) if i.get("id")]
     out = [f"- {i['id']} ({i.get('kind') or 'ask'}) {i.get('text', '')}" + (f" (pr {i['pr']})" if i.get("pr") else "")
            for i in items[:ASKS_MAX]]
+    if dry_run:  # a real rotation imports these first; a dry run only shows them
+        out += [f"- (needs-you.md, not imported yet) {line}" for line in asks.legacy_lines()][:ASKS_MAX - len(out)]
     if len(items) > ASKS_MAX:
         out.append(f"… {len(items) - ASKS_MAX} more: `athena ask`")
     return out or ["none"]
 
 
-def build(threads=None, previous_session=None, now=None) -> str:
-    """The handoff's Markdown, at most MAX_LINES lines. `threads`: HQ's text, else threads.md, else none."""
+def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
+    """The handoff's Markdown, at most MAX_LINES lines. `threads`: HQ's text, else threads.md, else none.
+    `dry_run` writes nothing, not even the import of a legacy needs-you.md."""
     state = paths.state_dir()
     rows = [status.collect(w, with_pr=True, with_herdr=False) for w in ledger.live()]
     rows.sort(key=lambda r: (r.get("urgency", 3), r["name"]))
@@ -116,14 +120,15 @@ def build(threads=None, previous_session=None, now=None) -> str:
     sections = [
         ("Fleet", _fleet(rows)),
         ("PRs", _prs(rows)),
-        ("Open asks", _asks()),
+        ("Open asks", _asks(dry_run)),
         ("In-flight threads", thread_lines),
-        ("Standing orders", [f"Read in full: {state / 'standing-orders.md'}. Repo map: {state / 'repo-map.md'}. "
-                             f"Notes: {state / 'notes.md'}."]),
+        ("Standing orders", [f"Read in full: {state / 'standing-orders.md'}", f"Repo map: {state / 'repo-map.md'}",
+                             f"Notes: {state / 'notes.md'}"]),
     ]
     start = ["## Start here",
-             "Load the athena skill, then run its session start (§1) from this handoff: re-arm the watch check and "
-             "re-create the session-only crons, the fallback sweep among them (§1a)."]
+             "Load the athena skill, then run its session start (§1) from this handoff. The athena-watch mod restarts "
+             "athena watch on its own (no Monitor unless the skill's fallback applies); re-create the session-only "
+             "crons, the fallback sweep among them (§1a)."]
 
     def render(notes):
         lines = head + [""]
@@ -137,7 +142,8 @@ def build(threads=None, previous_session=None, now=None) -> str:
     if len(notes) > room:
         notes = ["… (older notes cut)"] + notes[len(notes) - room + 1:]
     lines = render(notes or ["notes.md is empty"])
-    return "\n".join(lines[:MAX_LINES]) + "\n"
+    clipped = [line if len(line) <= LINE_MAX else line[:LINE_MAX - 1] + "…" for line in lines[:MAX_LINES]]
+    return "\n".join(clipped) + "\n"
 
 
 def write(text) -> Path:
@@ -196,7 +202,9 @@ def context(session):
             if not tokens:
                 continue  # a `<synthetic>` entry (an API error, an interrupted turn) carries no usage
             model = entry.get("requestedModel") or (entry.get("message") or {}).get("model") or ""
-            window = int(os.environ.get("ATHENA_HQ_CONTEXT_WINDOW") or (1_000_000 if "[1m]" in model else 200_000))
+            # Past 200k only a 1M window fits, whatever the entry says.
+            big = "[1m]" in model or tokens > 200_000
+            window = int(os.environ.get("ATHENA_HQ_CONTEXT_WINDOW") or (1_000_000 if big else 200_000))
             return {"tokens": tokens, "window": window, "percent": round(100 * tokens / window), "session": session}
     except OSError:
         return None

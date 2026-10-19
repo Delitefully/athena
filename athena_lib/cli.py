@@ -452,6 +452,8 @@ def main(argv=None):
     except (config.ConfigError, OSError) as exc:
         print(f"athena: could not write the config ({exc}); running on the current values", file=sys.stderr)
     config.sync_root_hint()
+    if args.cmd == "hq" and args.action != "rotate" and (args.threads or args.dry_run or args.if_context_over is not None):
+        p.error("--threads, --dry-run and --if-context-over go with `athena hq rotate`")
     if args.cmd == "spawn" and args.workflow_size and not args.ultracode:
         p.error("--workflow-size needs --ultracode")
     try:

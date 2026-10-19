@@ -419,7 +419,7 @@ def rotate(threads=None, dry_run=False, if_context_over=None) -> dict:
                     "message": f"not rotating: HQ's context is {handoff.describe(ctx)}, under {if_context_over:g}%"}
     if dry_run:
         argv = _start_argv(pane or "<hq pane>", write=False)
-        text = handoff.build(threads=threads, previous_session=session)
+        text = handoff.build(threads=threads, previous_session=session, dry_run=True)
         return {"dry_run": True, "handoff": text, "launch": argv, "prompt": _rotate_prompt(),
                 "command": " ".join(["herdr", *(shlex.quote(a) for a in argv)])}
     if not pane:
@@ -427,6 +427,9 @@ def rotate(threads=None, dry_run=False, if_context_over=None) -> dict:
     pid = _holder()
     if pid:
         raise RestartError(f"an HQ restart or rotation is already running (pid {pid}); see {_log_file()}")
+    if threads is not None:
+        # Kept before the child's idle wait: if HQ is busy the rotation is skipped, and the next one reads them here.
+        handoff.threads_file().write_text(threads)
     target = handoff.write(handoff.build(threads=threads, previous_session=_session() or session))
     log = _log_file()
     argv = [sys.executable, str(paths.PLUGIN_ROOT / "bin" / "athena"), "hq", "rotate", "--child"]
@@ -435,6 +438,18 @@ def rotate(threads=None, dry_run=False, if_context_over=None) -> dict:
                                 cwd=str(paths.PLUGIN_ROOT))
     return {"rotated": True, "pid": proc.pid, "log": str(log), "handoff": str(target),
             "message": f"handoff written to {target}; rotating HQ once it is idle; log at {log}"}
+
+
+def _new_session(old):
+    """The fresh HQ's conversation id: herdr may report none, or still the old one, for a moment after the start."""
+    deadline = time.monotonic() + float(os.environ.get("ATHENA_HQ_SESSION_WAIT") or 10)
+    while True:
+        session = _session()
+        if session and session != old:
+            return session
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
 
 
 def rotate_now() -> dict:
@@ -475,10 +490,15 @@ def _rotate():
             _notify("athena: HQ rotation failed", msg)
             raise RestartError(msg)
         _say(f"herdr gave up waiting ({exc}), but the fresh Claude is up")
+    new = _new_session(old)
     record = load()
-    record["previous_session"] = old
+    record["previous_session"], record["session"] = old, new
     _file().write_text(json.dumps(record, indent=2))
-    record = _remember_session(record)
+    if not new:
+        # Never leave the old id as the session: `athena status` would read its full transcript and keep asking for
+        # a rotation, and `athena hq restart` would resume the conversation this one replaced.
+        _say("herdr does not report the fresh HQ's conversation id yet; hq.json records none until a restart or "
+             "`athena hq` sees it")
     keep_label(owned=True)
     herdr.call("agent", "prompt", name, _rotate_prompt())
     threads = handoff.threads_file()

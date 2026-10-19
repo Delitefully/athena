@@ -71,6 +71,16 @@ class HandoffTest(Fixture):
         self.assertIn(str(self.state / "standing-orders.md"), text)
         self.assertIn("claude --resume old", text)
         self.assertLessEqual(len(text.splitlines()), handoff.MAX_LINES)
+        start = text.split("## Start here")[1]
+        self.assertNotIn("re-arm", start)  # never read as "arm Monitor"
+        self.assertIn("athena-watch mod", start)
+
+    def test_dry_run_does_not_import_a_legacy_needs_you_file(self):
+        (self.state / "needs-you.md").write_text("- Ship the export flag today?\n")
+        text = handoff.build(dry_run=True)
+        self.assertIn("Ship the export flag today?", text)
+        self.assertTrue((self.state / "needs-you.md").exists())
+        self.assertFalse((self.state / "needs-you.json").exists())
 
     def test_stays_under_the_line_cap(self):
         self.seed(notes=400)
@@ -83,6 +93,11 @@ class HandoffTest(Fixture):
         self.assertIn("thread 0", text)
         self.assertIn("cut", text.split("## In-flight threads")[1].split("## ")[0])
         self.assertIn("note 399", text)
+
+    def test_caps_each_line(self):
+        text = handoff.build(threads="- " + "x" * 1000 + "\n")
+        self.assertLessEqual(max(len(line) for line in text.splitlines()), handoff.LINE_MAX)
+        self.assertIn("x" * 100, text)
 
     def test_threads_come_from_the_threads_file_without_flag(self):
         (self.state / "threads.md").write_text("- review round 2 on abc-1\n")
@@ -135,6 +150,21 @@ class ContextTest(Fixture):
     def test_a_1m_model_has_a_1m_window(self):
         self.write("old", [assistant(300_000, model="claude-opus-5-5[1m]")])
         self.assertEqual(handoff.context("old")["percent"], 30)
+
+    def test_a_reading_over_200k_means_a_1m_window(self):
+        self.write("old", [assistant(300_000)])
+        self.assertEqual(handoff.context("old")["window"], 1_000_000)
+
+    def test_an_entry_without_requested_model_falls_back_to_the_200k_rule(self):
+        def bare(tokens):
+            entry = assistant(tokens)
+            del entry["requestedModel"]
+            entry["message"]["model"] = "claude-opus-5-5"
+            return entry
+        self.write("big", [bare(300_000)])
+        self.write("small", [bare(100_000)])
+        self.assertEqual(handoff.context("big")["window"], 1_000_000)
+        self.assertEqual(handoff.context("small")["window"], 200_000)
 
     def test_reads_from_the_end_of_a_long_transcript(self):
         self.write("old", [assistant(10_000)] + [{"type": "user", "pad": "x" * 2000}] * 3000 + [assistant(20_000)])
@@ -233,6 +263,8 @@ class RotateTest(Fixture):
             popen.return_value.pid = 4242
             result = hq.rotate(threads="- t1\n")
         self.assertIn("t1", handoff.handoff_file().read_text())
+        # Saved before the child's idle wait: a busy HQ skips the rotation, and the next one finds them.
+        self.assertIn("t1", handoff.threads_file().read_text())
         argv = popen.call_args.args[0]
         self.assertEqual(argv[-3:], ["hq", "rotate", "--child"])
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
@@ -265,6 +297,18 @@ class RotateTest(Fixture):
         self.assertFalse((self.state / "threads.md").exists())  # its threads are in the handoff now
         self.assertTrue((self.state / "threads.prev.md").exists())
         self.assertFalse(hq.lock_file().exists())
+
+    def test_a_fresh_hq_whose_session_herdr_does_not_report_yet_is_not_recorded_as_the_old_one(self):
+        no_session = {"match": ["agent", "get", "athena"], "after": ["agent", "start"],
+                      "stdout": {"result": {"agent": {"name": "athena"}}}}
+        write_scenario(self.tmp.name, [no_session, {**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE,
+                                       ON_EXIT])
+        result = hq.rotate_now()
+        self.assertTrue(result["rotated"])
+        record = json.loads((self.state / "hq.json").read_text())
+        self.assertIsNone(record["session"])  # so hq_context() never reads the old transcript again
+        self.assertEqual(record["previous_session"], "old")
+        self.assertIsNone(handoff.hq_context())
 
     def test_a_busy_hq_is_not_rotated(self):
         err = json.dumps({"error": {"code": "timeout", "message": "still blocked"}})
@@ -313,6 +357,12 @@ class RotateCliTest(unittest.TestCase):
         a = p.parse_args(["hq", "rotate", "--threads", "-", "--dry-run", "--if-context-over", "70"])
         self.assertEqual((a.action, a.threads, a.dry_run, a.if_context_over), ("rotate", "-", True, 70.0))
         self.assertTrue(p.parse_args(["hq", "rotate", "--child"]).child)
+
+    def test_rotate_flags_need_rotate(self):
+        for argv in (["hq", "--dry-run"], ["hq", "restart", "--threads", "-"], ["hq", "--if-context-over", "50"]):
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+                cli.main(argv)
+            self.assertEqual(raised.exception.code, 2)
 
     def test_help_names_rotate(self):
         out = io.StringIO()

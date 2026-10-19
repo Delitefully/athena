@@ -42,7 +42,8 @@ Return at most 8 lines and nothing else: `QUIET` when nothing needs HQ, else one
 
 - **daily**, at the start of the human's day or when they say so;
 - **when context is high**: `athena status` prints an `hq context NN%` line from 60% (read from HQ's transcript); rotate then, at the next quiet moment. `athena hq rotate --if-context-over 60` rotates only past that and prints why not otherwise;
-- never in the middle of something the human is waiting on: finish the turn's reply first.
+- never in the middle of something the human is waiting on: finish the turn's reply first;
+- never while a subagent or fork of yours still runs: `/exit` answers the background-work dialog with "Exit and stop tasks", which kills them. Wait for their results (or stop them on purpose) first.
 
 Before rotating, write the **in-flight threads**, the only part athena cannot rebuild: what you are waiting on and from whom, promises made to the human, a review round in progress, a decision you are about to relay, anything said in chat but not yet on the dashboard. One line each, at most 40, with ids and links. Pipe them: `athena hq rotate --threads - <<'EOF' ... EOF` (or keep `threads.md` in the state dir current and run `athena hq rotate`; it moves to `threads.prev.md` after the rotation). `--dry-run` prints the handoff and the launch command and changes nothing. Then end your turn with one line to the human: the rotation waits for you to be idle, and a busy or blocked HQ is left alone and says so in `logs/hq-restart.log`.
 
