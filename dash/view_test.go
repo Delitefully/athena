@@ -188,6 +188,12 @@ func TestBuildCases(t *testing.T) {
 		{"approved, exited mid-task", live("f11"), Hook{State: "exited"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "its Claude exited"},
 		{"approved, idle with no report", live("f12"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · yours to merge", "approved", true)}, "progress", "idle"},
 		{"checks running", live("f13"), Hook{State: "done"}, &WatchWorker{PR: moved("checks running", "pending", false)}, "progress", "checks running"},
+		{"done, athena reviewing its PR", live("r1"), Hook{State: "done"}, &WatchWorker{PR: moved("in review · athena", "reviewing", false)}, "progress", "in review · athena"},
+		{"idle after DONE, athena reviewing", live("r2"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: moved("in review · athena", "reviewing", false)}, "progress", "in review · athena"},
+		{"idle with no report, not in review yet", live("r3"), Hook{State: "idle"}, &WatchWorker{PR: moved("in review · athena", "reviewing", false)}, "progress", "idle"},
+		{"working, not in review yet", live("r4"), Hook{State: "working"}, &WatchWorker{PR: moved("in review · athena", "reviewing", false)}, "progress", "working"},
+		{"review findings, worker fixing", live("r5"), Hook{State: "working"}, &WatchWorker{PR: moved("review findings · worker fixing", "changes", false)}, "progress", "review findings · worker fixing"},
+		{"review findings, worker idle", live("r6"), Hook{State: "idle", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: moved("review findings · worker fixing", "changes", false)}, "progress", "review findings · worker fixing"},
 		{"no review rule, still working", live("f8"), Hook{State: "working"}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "progress", "working"},
 		{"approved, not the human's repo", live("f2"), Hook{State: "idle", LastReport: &Report{Status: "DONE_WITH_CONCERNS"}}, &WatchWorker{PR: moved("approved · your go to merge", "approved", true)}, "needs", "approved · your go to merge"},
 		{"approved, in the merge queue", live("f3"), Hook{State: "idle"}, &WatchWorker{PR: moved("approved · in merge queue", "queued", false)}, "progress", "approved · in merge queue"},
@@ -219,6 +225,22 @@ func TestBuildCases(t *testing.T) {
 				t.Fatalf("want %s %q, got needs=%+v progress=%+v done=%+v", c.group, c.label, v.NeedsYou, v.InProgress, v.Done)
 			}
 		})
+	}
+}
+
+// TestInReviewIsInProgress: a DONE worker's PR that waits on athena's own review is never the human's to merge yet.
+func TestInReviewIsInProgress(t *testing.T) {
+	p := &PR{Number: 7, URL: "https://github.com/acme/web/pull/7", State: "OPEN", Checks: "success",
+		Move: &Move{Label: "in review · athena", Kind: "reviewing", AthenaMerges: true}}
+	w := Worker{Name: "r", State: "live", Updated: fixtureNow}
+	s := Snapshot{Workers: []Worker{w}, Hooks: map[string]Hook{"r": {State: "done"}},
+		Watch: &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"r": {PR: p}}}}
+	v := Build(s, fixtureNow, "acme")
+	if len(v.InProgress) != 1 || len(v.NeedsYou) != 0 {
+		t.Fatalf("want one In progress row, got needs=%+v progress=%+v", v.NeedsYou, v.InProgress)
+	}
+	if it := v.InProgress[0]; it.Icon != "review" || it.Badge || it.Actions != nil && (it.Actions.Go || it.Actions.OpenPR != "") {
+		t.Fatalf("in review: icon %q badge %v actions %+v", it.Icon, it.Badge, it.Actions)
 	}
 }
 

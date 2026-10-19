@@ -60,7 +60,7 @@ type PR struct {
 // Move is whose move an open PR waits on (athena_lib/pr.py `move`): its row's label, and whether the row is in Needs you.
 type Move struct {
 	Label string
-	Kind  string // awaiting, unrequested, approved, mergeable, queued, changes, failing, draft
+	Kind  string // awaiting, unrequested, approved, mergeable, reviewing, queued, changes, failing, pending, draft
 	Needs bool
 	// AthenaMerges: its repo is not in human_merge_repos, so athena merges it on the human's go. A move without the
 	// field (a watch.json from before it) counts as human-merged: the dash then offers no Merge.

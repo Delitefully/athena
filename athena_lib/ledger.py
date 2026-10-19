@@ -27,6 +27,12 @@ def append(event: str, name: str, **fields) -> dict:
     return record
 
 
+def review(name: str, verdict: str, head: str) -> dict:
+    """HQ's own review of a worker's PR (`athena review`): start, pass or fail at the head it reviewed. The latest one
+    stands; a respawn starts with none."""
+    return append("review", name, review={"verdict": verdict, "head": head, "at": time.time()})
+
+
 def touch():
     _file().touch(exist_ok=True)
 
