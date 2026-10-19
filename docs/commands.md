@@ -26,6 +26,7 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 | `athena watch [--tagged]` | One line per change; also saves its snapshot to `watch.json` for the dashboard. The watch mod runs it `--tagged` (JSON lines: each change marked wake or not, and the status band's board); plain output is for the Monitor fallback |
 | `athena stack [set <owner/repo> <pr>... \| clear <owner/repo>]` | The stacked-PR chains `athena watch` follows (`stack.json`) |
 | `athena pr <name>` | PR summary |
+| `athena review <name> start\|pass\|fail [--head <sha>]` | Record HQ's review of a live worker's PR in the ledger, at `--head` (default: the PR's current head). Until a `pass` at the PR's current head, the PR is `in review · athena` (or `review findings · worker fixing` after a `fail`), never the human's to merge; `athena status` shows it as `review=<verdict>@<sha>`, `(stale)` once the head moved |
 | `athena nudge <name> <text>` | Type a slash command into a worker |
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
 | `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space |
