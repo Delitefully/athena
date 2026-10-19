@@ -112,6 +112,7 @@ const EXACT = [
   `${NAME} report ${REPORT}`,
   `${NAME} state ${STATE}->${STATE}(?: \\(startup prompt\\))?`,
   `${NAME} pr (?:merged|closed|open)`,
+  `${NAME} pr conflicts #\\d{1,7}`,
   `${NAME} checks ${CHECK}->${CHECK}`,
   `${NAME} review (?:CHANGES_REQUESTED|APPROVED|REVIEW_REQUIRED)`,
   `${NAME} review comments \\+\\d{1,4}`,

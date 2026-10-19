@@ -20,6 +20,7 @@ WAKE = [
     "abc-1 pr opened https://github.com/o/r/pull/7",
     "abc-1 pr merged",
     "abc-1 pr closed",
+    "abc-1 pr conflicts #7",
     "abc-1 checks pending->failure",
     "abc-1 review CHANGES_REQUESTED",
     "abc-1 review APPROVED",
@@ -50,6 +51,7 @@ ROUTINE = [
     "abc-1 new worker (working)",
     "abc-1 new worker (starting)",
     "abc-1 goal sent",
+    "abc-1 pr mergeable #7",
     "stack o/web#41: OPEN base=a MERGEABLE -> OPEN base=b MERGEABLE",
     "stack o/web#41: OPEN base=a CONFLICTING -> OPEN base=a MERGEABLE",
 ]
