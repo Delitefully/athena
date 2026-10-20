@@ -112,25 +112,49 @@ def _resume_args(name, w):
                              settings)
 
 
+def _session_started(event):
+    sid = event.get("session_id")
+    if event.get("hook_event_name") == "SessionStart" and isinstance(sid, str) and sid:
+        return sid
+    return None
+
+
+def _register(pane, sid, args):
+    try:
+        herdr.register_resume(pane, sid, args, timeout=2)  # the hook's own timeout is 10 s
+    except herdr.HerdrError:
+        pass
+
+
 def register_resume(event, name, env):
     """On SessionStart in the worker's own herdr pane, give herdr the session's whole resume command again.
 
     /clear and a resume start a new session id, and herdr's own Claude hook reports it with no resume command;
     a worker herdr restored bare (no ATHENA_WORKER, found here by its cwd) gets its name and settings back next time.
     """
-    sid = event.get("session_id")
-    if event.get("hook_event_name") != "SessionStart" or not isinstance(sid, str) or not sid:
+    sid = _session_started(event)
+    if not sid:
         return
     w = ledger.workers().get(name)
     if not w or w.get("state") != "live" or not w.get("pane") or env.get("HERDR_PANE_ID") != w["pane"]:
         return
     args = _resume_args(name, w)
-    if not args:
+    if args:
+        _register(w["pane"], sid, args)
+
+
+def register_hq_resume(event, env):
+    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json."""
+    sid = _session_started(event)
+    if not sid or env.get("ATHENA_ROLE") != "hq":
         return
     try:
-        herdr.register_resume(w["pane"], sid, args, timeout=5)
-    except herdr.HerdrError:
-        pass
+        record = json.loads((paths.state_dir() / "hq.json").read_text())
+    except (OSError, ValueError):
+        return
+    pane, args = record.get("pane"), record.get("claude_args")
+    if pane and args and env.get("HERDR_PANE_ID") == pane:
+        _register(pane, sid, args)
 
 
 def main():
@@ -144,6 +168,8 @@ def main():
         if name:
             apply(event, name)
             register_resume(event, name, os.environ)
+        else:
+            register_hq_resume(event, os.environ)
     except Exception:  # a hook must never break the session
         pass
 

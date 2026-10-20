@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
@@ -233,10 +234,61 @@ class ResumeHookTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("--settings") + 1], str(settings))
         self.assertTrue(argv[argv.index("--append-system-prompt-file") + 1].endswith("worker.md"))
 
+    def test_the_hook_gives_herdr_two_seconds(self):
+        with mock.patch.object(hookstatus.herdr, "register_resume") as register:
+            hookstatus.register_resume({"hook_event_name": "SessionStart", "session_id": "sid-2"}, "abc-1",
+                                       {"HERDR_PANE_ID": "w9:p1"})
+        register.assert_called_once_with("w9:p1", "sid-2", ARGS, timeout=2)
+
     def test_a_herdr_error_never_breaks_the_hook(self):
         write_scenario(self.tmp.name, [{"match": ["pane"], "stdout": "", "stderr": "boom", "exit": 3}])
         hookstatus.register_resume({"hook_event_name": "SessionStart", "session_id": "sid-2"}, "abc-1",
                                    {"HERDR_PANE_ID": "w9:p1"})
+
+
+HQ_ARGS = ["--name", "athena", "--append-system-prompt-file", "/p/hq.md", "--settings", "/s/hq.json"]
+
+
+class HqResumeHookTest(unittest.TestCase):
+    """HQ registers its own resume command on SessionStart too, from the args `athena hq` kept in hq.json."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        ledger.touch()
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w1:p1", "claude_args": HQ_ARGS}))
+        self.home = Path(self.tmp.name) / "dev"
+        self.home.mkdir()
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def reports(self):
+        return [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "report-agent-session"]]
+
+    def test_the_hook_registers_hq_from_outside_the_worktree_root(self):
+        payload = {"hook_event_name": "SessionStart", "session_id": "hq-2", "source": "clear", "cwd": str(self.home)}
+        proc = run_hook(payload, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"}, cwd=self.home)
+        self.assertEqual(proc.returncode, 0)
+        [report] = self.reports()
+        self.assertEqual(report[2], "w1:p1")
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "hq-2", *HQ_ARGS])
+        self.assertFalse((paths.state_dir() / "workers").exists() and any((paths.state_dir() / "workers").iterdir()))
+
+    def test_not_hq_or_not_its_pane_registers_nothing(self):
+        event = {"hook_event_name": "SessionStart", "session_id": "hq-2"}
+        hookstatus.register_hq_resume(event, {"HERDR_PANE_ID": "w1:p1"})
+        hookstatus.register_hq_resume(event, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w2:p1"})
+        hookstatus.register_hq_resume({"hook_event_name": "Stop", "session_id": "hq-2"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
+        self.assertEqual(self.reports(), [])
+
+    def test_an_hq_json_without_args_registers_nothing(self):
+        (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1"}))
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "hq-2"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
+        self.assertEqual(self.reports(), [])
 
 
 class WhoamiTest(unittest.TestCase):

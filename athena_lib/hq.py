@@ -69,11 +69,19 @@ def _session():
 
 
 def _remember_session(record):
-    """Keep the conversation id in hq.json, so a restart can resume it even after HQ's Claude has gone."""
+    """Keep the conversation id in hq.json, so a restart can resume it even after HQ's Claude has gone, and give
+    herdr HQ's whole resume command: else a herdr restart brings HQ back as a bare `claude --resume`, without
+    ATHENA_ROLE or hq.md. hq.json keeps the args for the SessionStart hook, which registers each new session."""
     session = _session()
-    if session and session != record.get("session"):
-        record["session"] = session
+    args = _claude_args()
+    if session and (session != record.get("session") or args != record.get("claude_args")):
+        record.update(session=session, claude_args=args)
         _file().write_text(json.dumps(record, indent=2))
+    if session and record.get("pane"):
+        try:
+            herdr.register_resume(record["pane"], session, args)
+        except herdr.HerdrError:
+            pass
     return record
 
 
