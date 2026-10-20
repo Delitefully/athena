@@ -59,7 +59,10 @@ class HqTest(unittest.TestCase):
         claude = start[start.index("--") + 1:]
         self.assertEqual(claude[claude.index("--name") + 1], "athena")
         self.assertTrue(claude[claude.index("--append-system-prompt-file") + 1].endswith("hq.md"))
-        env = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())["env"]
+        settings = json.loads(Path(claude[claude.index("--settings") + 1]).read_text())
+        # HQ keeps Remote Control on even if the user setting goes; workers turn it off in theirs.
+        self.assertIs(settings["remoteControlAtStartup"], True)
+        env = settings["env"]
         self.assertEqual(env["ATHENA_HQ"], "athena")  # so `athena hq restart` run inside HQ targets this HQ
         # herdr is not a terminal Claude Code draws OSC 8 links for; it renders them, so HQ's links are masked.
         self.assertEqual(env["FORCE_HYPERLINK"], "1")

@@ -15,6 +15,7 @@ Taken on 2026-10-07 from the Chief of Staff Blueprint (private). The user accept
 | D9 | keepwarm | Off in workers (per-worker settings), on in the chief of staff. |
 | D10 | herdr 0.9.3 | At a quiet moment before relying on the board. herdr is a Homebrew install, so `herdr update --handoff` is unavailable; `brew upgrade herdr` then a server restart. The user picks the moment. |
 | D11 | Main checkouts not on main | The chief of staff proposes a cleanup per repo; the user confirms each. `athena preflight` refuses to launch until a checkout is clean and on main. |
+| D12 | Remote Control | On in the chief of staff (`remoteControlAtStartup: true` in its `--settings`), off in workers (`false` in per-worker settings), whatever the user settings say. Added 2026-10-19 at the user's request. |
 
 ## Implementation decisions
 

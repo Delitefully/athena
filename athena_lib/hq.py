@@ -34,8 +34,9 @@ def _claude_args(write=True):
     settings = (paths.ensure("settings") if write else paths.state_dir() / "settings") / "hq.json"
     # FORCE_HYPERLINK: Claude Code draws OSC 8 links only for terminals it knows, and herdr is not one, though it
     # renders them; without it every link in HQ (the status band's "open dash →" and #n among them) shows its raw URL.
+    # remoteControlAtStartup: HQ is the one session on Remote Control, even if the user setting goes (workers: off).
     if write:
-        settings.write_text(json.dumps({"crossSessionInbound": "accept",
+        settings.write_text(json.dumps({"crossSessionInbound": "accept", "remoteControlAtStartup": True,
                                         "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
                                                 "ATHENA_STATE_DIR": str(paths.state_dir()), "FORCE_HYPERLINK": "1"}},
                                        indent=2))
