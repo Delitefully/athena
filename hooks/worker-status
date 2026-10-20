@@ -1,10 +1,12 @@
 #!/bin/sh
-# athena worker status hook. Does nothing unless this session is an athena worker.
+# athena worker status hook. Does nothing unless this session is an athena worker, or HQ (its resume command).
 # It fires on every hook event of every Claude session, so a session outside the worktree root exits in shell:
 # the root is ATHENA_WORKTREE_ROOT, else the one-line worktree-root file athena writes with config.json.
 state="${ATHENA_STATE_DIR:-$HOME/.local/state/athena}"
 [ -f "$state/ledger.jsonl" ] || { cat >/dev/null; exit 0; }
-if [ -z "${ATHENA_WORKER:-}" ]; then
+# HQ (ATHENA_ROLE=hq) goes through on SessionStart alone (hooks.json passes it as $1): hookstatus registers its
+# resume command with herdr. Every other HQ event stays in shell.
+if [ -z "${ATHENA_WORKER:-}" ] && ! { [ "${ATHENA_ROLE:-}" = hq ] && [ "${1:-}" = SessionStart ]; }; then
 	root="${ATHENA_WORKTREE_ROOT:-}"
 	if [ -z "$root" ] && [ -f "$state/worktree-root" ] && ! [ "$state/config.json" -nt "$state/worktree-root" ]; then
 		IFS= read -r root <"$state/worktree-root" || root=""

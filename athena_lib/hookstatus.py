@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-from athena_lib import config, ledger, paths
+from athena_lib import config, herdr, ledger, paths
 
 SUMMARY_LIMIT = 300
 DONE = {"DONE", "DONE_WITH_CONCERNS"}
@@ -100,6 +100,63 @@ def apply(event, name):
     return data
 
 
+def _resume_args(name, w):
+    """The args the worker was spawned with; a record from before they were kept rebuilds them."""
+    if w.get("claude_args"):
+        return w["claude_args"]
+    settings = paths.state_dir() / "settings" / f"{name}.json"
+    if not settings.is_file():
+        return None
+    from athena_lib import spawn  # only for an older record: spawn imports most of athena
+    return spawn.claude_args(name, w.get("model") or config.get("model"), w.get("effort") or config.get("effort"),
+                             settings)
+
+
+def _session_started(event):
+    sid = event.get("session_id")
+    if event.get("hook_event_name") == "SessionStart" and isinstance(sid, str) and sid:
+        return sid
+    return None
+
+
+def _register(pane, sid, args):
+    try:
+        herdr.register_resume(pane, sid, args, timeout=2)  # the hook's own timeout is 10 s
+    except herdr.HerdrError:
+        pass
+
+
+def register_resume(event, name, env):
+    """On SessionStart in the worker's own herdr pane, give herdr the session's whole resume command again.
+
+    /clear and a resume start a new session id, and herdr's own Claude hook reports it with no resume command;
+    a worker herdr restored bare (no ATHENA_WORKER, found here by its cwd) gets its name and settings back next time.
+    """
+    sid = _session_started(event)
+    if not sid:
+        return
+    w = ledger.workers().get(name)
+    if not w or w.get("state") != "live" or not w.get("pane") or env.get("HERDR_PANE_ID") != w["pane"]:
+        return
+    args = _resume_args(name, w)
+    if args:
+        _register(w["pane"], sid, args)
+
+
+def register_hq_resume(event, env):
+    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json."""
+    sid = _session_started(event)
+    if not sid or env.get("ATHENA_ROLE") != "hq":
+        return
+    try:
+        record = json.loads((paths.state_dir() / "hq.json").read_text())
+    except (OSError, ValueError):
+        return
+    pane, args = record.get("pane"), record.get("claude_args")
+    if pane and args and env.get("HERDR_PANE_ID") == pane:
+        _register(pane, sid, args)
+
+
 def main():
     try:
         config.sync_root_hint()  # so the shell fast path reads a current worktree root next time
@@ -110,6 +167,9 @@ def main():
         name = worker_name(os.environ, event.get("cwd") or os.getcwd())
         if name:
             apply(event, name)
+            register_resume(event, name, os.environ)
+        else:
+            register_hq_resume(event, os.environ)
     except Exception:  # a hook must never break the session
         pass
 

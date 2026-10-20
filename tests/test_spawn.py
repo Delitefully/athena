@@ -39,12 +39,13 @@ class SpawnTest(unittest.TestCase):
         return spawn.spawn(**args)
 
     def test_spawn_calls_in_order(self):
-        self.scenario()
+        self.scenario([{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_session": {"value": "s"}}}}}])
         result = self.run_spawn()
         calls = logged_calls(self.tmp.name)
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [["worktree", "create"], ["agent", "start"], ["agent", "prompt"],
-                                 ["agent", "wait"], ["workspace", "report-metadata"]])
+        self.assertEqual(verbs, [["worktree", "create"], ["agent", "start"], ["agent", "get"],
+                                 ["pane", "report-agent-session"], ["agent", "prompt"], ["agent", "wait"],
+                                 ["workspace", "report-metadata"]])
         create = calls[0]
         wt = paths.worktree_path(self.repo, "you/abc-1-fix")
         self.assertIn(str(wt), create)
@@ -59,7 +60,7 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-1")
         self.assertEqual(settings["crossSessionInbound"], "accept")
         self.assertFalse(settings["enabledPlugins"]["keepwarm@keepwarm"])
-        prompt = calls[2]
+        prompt = calls[4]
         self.assertTrue(prompt[3].startswith("/goal ABC-1 is done when the test passes."))
         self.assertIn(str(paths.state_dir() / "briefs" / "abc-1.md"), prompt[3])
         self.assertNotIn("\n", prompt[3])
@@ -67,6 +68,54 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual((w["state"], w["pane"], w["terminal"], w["workspace"]), ("live", "w9:p1", "term_abc", "w9"))
         self.assertFalse(paths.claim_file(str(wt)).exists())
         self.assertEqual(result["name"], "abc-1")
+
+    def test_spawn_registers_the_full_resume_command_with_herdr(self):
+        # herdr resumes agents after a restart with a bare `claude --resume <id>` unless told the whole command.
+        self.scenario([{"match": ["agent", "get", "w9:p1"], "stdout": {"result": {"agent": {
+            "name": "abc-1", "pane_id": "w9:p1", "agent_session": {"kind": "id", "value": "sid-1"}}}}}])
+        self.run_spawn()
+        calls = logged_calls(self.tmp.name)
+        start = next(c for c in calls if c[:2] == ["agent", "start"])
+        args = start[start.index("--") + 1:]
+        report = next(c for c in calls if c[:2] == ["pane", "report-agent-session"])
+        self.assertEqual(report[2], "w9:p1")
+        self.assertEqual(report[report.index("--source") + 1], "athena")
+        self.assertEqual(report[report.index("--agent") + 1], "claude")
+        self.assertEqual(report[report.index("--agent-session-id") + 1], "sid-1")
+        self.assertTrue(report[report.index("--seq") + 1].isdigit())
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "sid-1", *args])
+        self.assertLess(calls.index(start), calls.index(report))
+        w = ledger.workers()["abc-1"]
+        self.assertEqual((w["claude_args"], w["session"], w["resume"]), (args, "sid-1", "registered"))
+
+    def test_waits_for_herdr_to_learn_the_session_id(self):
+        # herdr's own Claude hook reports the session; it may land just after `agent start` returns.
+        self.scenario([
+            {"match": ["agent", "get", "w9:p1"], "stdout": {"result": {"agent": {"name": "abc-1"}}}, "times": 2},
+            {"match": ["agent", "get", "w9:p1"], "stdout": {"result": {"agent": {"agent_session": {"value": "sid-9"}}}}},
+        ])
+        self.run_spawn()
+        calls = logged_calls(self.tmp.name)
+        self.assertEqual(len([c for c in calls if c[:2] == ["agent", "get"]]), 3)
+        self.assertEqual(ledger.workers()["abc-1"]["session"], "sid-9")
+
+    def test_a_refused_resume_registration_does_not_fail_the_spawn(self):
+        err = {"error": {"code": "invalid_resume_argv", "message": "resume_argv must not contain apostrophes"}}
+        self.scenario([
+            {"match": ["agent", "get", "w9:p1"], "stdout": {"result": {"agent": {"agent_session": {"value": "sid-1"}}}}},
+            {"match": ["pane", "report-agent-session"], "stdout": "", "stderr": json.dumps(err), "exit": 1},
+        ])
+        self.assertEqual(self.run_spawn()["name"], "abc-1")
+        w = ledger.workers()["abc-1"]
+        self.assertEqual((w["state"], w["resume"]), ("live", "failed: invalid_resume_argv"))
+        self.assertIn(["agent", "prompt"], [c[:2] for c in logged_calls(self.tmp.name)])
+
+    def test_no_session_id_yet_skips_the_resume_registration(self):
+        self.scenario()
+        self.run_spawn()
+        self.assertNotIn(["pane", "report-agent-session"], [c[:2] for c in logged_calls(self.tmp.name)])
+        self.assertIsNone(ledger.workers()["abc-1"].get("resume"))
+        self.assertTrue(ledger.workers()["abc-1"]["claude_args"])
 
     def test_spawn_refuses_over_cap(self):
         self.scenario()

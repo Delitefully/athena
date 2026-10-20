@@ -351,6 +351,37 @@ class RestartTest(unittest.TestCase):
         hq.hq(start_board=False)
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "sess-9")
 
+    def test_hq_registers_its_whole_resume_command_with_herdr(self):
+        # Else a herdr restart brings HQ back as a bare `claude --resume`, without ATHENA_ROLE or hq.md.
+        write_scenario(self.tmp.name, [{"match": ["agent", "get", "w8:p1"], "stdout": "", "exit": 1},
+                                       alive("sess-9", after=["agent", "start"]), HQ_SPACE])
+        hq.hq(start_board=False)
+        calls = self.calls()
+        (start,) = self.starts()
+        args = start[start.index("--") + 1:]
+        (report,) = [c for c in calls if c[:2] == ["pane", "report-agent-session"]]
+        self.assertEqual(report[2], "w8:p1")
+        self.assertEqual(report[report.index("--source") + 1], "athena")
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "sess-9", *args])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["claude_args"], args)
+
+    def test_a_resumed_hq_registers_without_its_resume_flag(self):
+        write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
+        hq.restart_now(update=False)
+        (report,) = [c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]]
+        argv = report[report.index("--") + 1:]
+        self.assertEqual(argv[:3], ["claude", "--resume", "sess-1"])
+        self.assertEqual(argv.count("--resume"), 1)
+        self.assertEqual(argv[argv.index("--name") + 1], "athena")
+
+    def test_a_refused_registration_does_not_stop_hq(self):
+        write_scenario(self.tmp.name, [{"match": ["agent", "get", "w8:p1"], "stdout": "", "exit": 1},
+                                       {"match": ["pane", "report-agent-session"], "stdout": "", "stderr": "no", "exit": 1},
+                                       alive("sess-9", after=["agent", "start"]), HQ_SPACE])
+        hq.hq(start_board=False)
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "sess-9")
+
 
 class HqCliTest(unittest.TestCase):
     def test_plain_hq_and_restart_parse(self):

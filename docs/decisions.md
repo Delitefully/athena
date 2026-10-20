@@ -20,4 +20,6 @@ Taken on 2026-10-07 from the Chief of Staff Blueprint (private). The user accept
 
 - Worker hooks ship in the athena plugin and do nothing unless the session is an athena worker: `ATHENA_WORKER` is set, or the cwd is under the worktree root and in the ledger.
 - Status is merged from four sources, most trusted first: the worker's `ATHENA-REPORT` line, hook state, git and PR state, herdr's screen-read status.
+- Workers survive a herdr restart through herdr's own resume: athena reports each worker's whole `claude --resume` command (spawn, then every SessionStart). It does not also write `ATHENA_WORKER` into the worktree's `.claude/settings.local.json`: that file could be committed in a repo that does not ignore it, and it would make the human's own sessions in the worktree workers too.
+- The board resolves each worker's terminal from `herdr agent list` (by name), then `herdr pane list` (by pane), on every sync: herdr renumbers terminals on restart, so the ledger's id is only for a worker herdr lists under neither, and a failed listing moves nothing.
 - One writer per state file: `ledger.jsonl` (athena commands), `workers/<name>.json` (that worker's hooks), `board.json` (board sync).

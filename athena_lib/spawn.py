@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from athena_lib import config, gitops, herdr, ledger, paths, retire
@@ -14,6 +15,7 @@ HARD_CAP = 6
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
 NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 READY = {"idle", "done"}  # herdr: both mean ready for input; which one depends on seen state
+SESSION_TRIES = 3  # asks for the session id to register the resume command, a second apart
 
 
 class SpawnError(Exception):
@@ -160,9 +162,11 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         brief = paths.ensure("briefs") / f"{name}.md"
         shutil.copyfile(brief_path, brief)
         settings = _write_settings(name, brief, ultracode, workflow_size, repo)
+        record["claude_args"] = claude_args(name, model, effort, settings)
         try:
             herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
-                       "--", *claude_args(name, model, effort, settings), timeout=200)
+                       "--", *record["claude_args"], timeout=200)
+            record.update(_register_resume(record["pane"], record["claude_args"]))
         except herdr.HerdrError as exc:
             if not _blocked_at_startup(name, record["pane"], exc):
                 raise
@@ -200,6 +204,31 @@ def _report_metadata(workspace, linear):
         herdr.call("workspace", "report-metadata", workspace, "--source", "athena", *tokens)
     except herdr.HerdrError:
         pass
+
+
+def _register_resume(pane, args) -> dict:
+    """Give herdr the worker's whole resume command. Never fails the spawn: the worker's SessionStart hook tries again.
+
+    Before Claude is past its startup prompts herdr knows no session yet; the hook registers it then.
+    """
+    sid = None
+    for attempt in range(SESSION_TRIES):  # herdr's own Claude hook reports the session, maybe just after start
+        if attempt:
+            time.sleep(float(os.environ.get("ATHENA_SESSION_WAIT") or 1))
+        try:
+            session = herdr.call("agent", "get", pane, timeout=10).get("agent", {}).get("agent_session") or {}
+        except herdr.HerdrError:
+            return {}
+        sid = session.get("value") if session.get("kind", "id") == "id" else None
+        if sid:
+            break
+    if not sid:
+        return {}
+    try:
+        herdr.register_resume(pane, sid, args)
+    except herdr.HerdrError as exc:
+        return {"session": sid, "resume": f"failed: {exc.code}"}
+    return {"session": sid, "resume": "registered"}
 
 
 def _agent(name, pane):

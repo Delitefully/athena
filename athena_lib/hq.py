@@ -69,12 +69,25 @@ def _session():
 
 
 def _remember_session(record):
-    """Keep the conversation id in hq.json, so a restart can resume it even after HQ's Claude has gone."""
+    """Keep the conversation id in hq.json, so a restart can resume it even after HQ's Claude has gone, and give
+    herdr HQ's whole resume command: else a herdr restart brings HQ back as a bare `claude --resume`, without
+    ATHENA_ROLE or hq.md. hq.json keeps the args for the SessionStart hook, which registers each new session."""
     session = _session()
-    if session and session != record.get("session"):
-        record["session"] = session
+    args = _claude_args()
+    if session and (session != record.get("session") or args != record.get("claude_args")):
+        record.update(session=session, claude_args=args)
         _file().write_text(json.dumps(record, indent=2))
+    _register_resume(record.get("pane"), session, args)
     return record
+
+
+def _register_resume(pane, session, args):
+    if not pane or not session:
+        return
+    try:
+        herdr.register_resume(pane, session, args)
+    except herdr.HerdrError:
+        pass
 
 
 LABEL = "athena"
@@ -493,7 +506,9 @@ def _rotate():
     new = _new_session(old)
     record = load()
     record["previous_session"], record["session"] = old, new
+    record["claude_args"] = _claude_args()
     _file().write_text(json.dumps(record, indent=2))
+    _register_resume(pane, new, record["claude_args"])
     if not new:
         # Never leave the old id as the session: `athena status` would read its full transcript and keep asking for
         # a rotation, and `athena hq restart` would resume the conversation this one replaced.
