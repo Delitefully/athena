@@ -77,12 +77,17 @@ def _remember_session(record):
     if session and (session != record.get("session") or args != record.get("claude_args")):
         record.update(session=session, claude_args=args)
         _file().write_text(json.dumps(record, indent=2))
-    if session and record.get("pane"):
-        try:
-            herdr.register_resume(record["pane"], session, args)
-        except herdr.HerdrError:
-            pass
+    _register_resume(record.get("pane"), session, args)
     return record
+
+
+def _register_resume(pane, session, args):
+    if not pane or not session:
+        return
+    try:
+        herdr.register_resume(pane, session, args)
+    except herdr.HerdrError:
+        pass
 
 
 LABEL = "athena"
@@ -501,7 +506,9 @@ def _rotate():
     new = _new_session(old)
     record = load()
     record["previous_session"], record["session"] = old, new
+    record["claude_args"] = _claude_args()
     _file().write_text(json.dumps(record, indent=2))
+    _register_resume(pane, new, record["claude_args"])
     if not new:
         # Never leave the old id as the session: `athena status` would read its full transcript and keep asking for
         # a rotation, and `athena hq restart` would resume the conversation this one replaced.

@@ -298,6 +298,16 @@ class RotateTest(Fixture):
         self.assertTrue((self.state / "threads.prev.md").exists())
         self.assertFalse(hq.lock_file().exists())
 
+    def test_the_fresh_hq_registers_its_whole_resume_command(self):
+        write_scenario(self.tmp.name, [alive("sess-new", after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
+        hq.rotate_now()
+        (start,) = self.starts()
+        (report,) = [c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]]
+        self.assertEqual(report[2], "w8:p1")
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "sess-new", *start[start.index("--") + 1:]])
+        self.assertEqual(json.loads((self.state / "hq.json").read_text())["claude_args"], start[start.index("--") + 1:])
+
     def test_a_fresh_hq_whose_session_herdr_does_not_report_yet_is_not_recorded_as_the_old_one(self):
         no_session = {"match": ["agent", "get", "athena"], "after": ["agent", "start"],
                       "stdout": {"result": {"agent": {"name": "athena"}}}}
