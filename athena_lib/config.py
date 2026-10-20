@@ -28,9 +28,10 @@ DEFAULTS = {
     "slack_allow_bots": [],  # bot or app ids whose messages count; other bots never do
     "slack_dm_active_minutes": 15,  # a DM the human wrote in this recently goes to the suppressed log; 0: off
     "ci_repos": [],  # repos (paths, or owner/name) whose main athena watch checks for failed CI with no live worker
-    # When `<repo> main moved` wakes HQ: "active" (a working or blocked worker, or an unapproved open PR, in that
+    # When `<repo> main moved` wakes HQ: "conflicts" (never: HQ hears `<w> pr conflicts #<n>` when a live worker's PR
+    # turns CONFLICTING, in every mode), "active" (a working or blocked worker, or an unapproved open PR, in that
     # repo), "always" or "never". What it does not tell goes to logs/watch-suppressed.log.
-    "watch_main_moved": "active",
+    "watch_main_moved": "conflicts",
 }
 
 # Migration only: the values an install from before config.json ran with.

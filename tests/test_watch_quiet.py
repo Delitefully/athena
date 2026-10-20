@@ -6,9 +6,10 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 from tests import helpers
-from athena_lib import config, ledger, paths, pr, watch
+from athena_lib import config, ledger, paths, pr, status, watch
 
 
 def _pr(**kw):
@@ -87,7 +88,12 @@ class CommentsRuleTest(Isolated):
 
 
 class MainMovedTest(Isolated):
+    """The old modes, each set in config.json, keep their words."""
     LINE = "platform main moved 1a2b3c4..4d5e6f7"
+
+    def setUp(self):
+        super().setUp()
+        config.write({**config.DEFAULTS, "watch_main_moved": "active"})
 
     def _cur(self, **worker):
         return _snap({"a": {"state": "idle", "pr": None, "report": None, **worker}}, {"a": "/src/platform"})
@@ -115,14 +121,12 @@ class MainMovedTest(Isolated):
         self.assertEqual(self.verdict(self.LINE, cur=_snap()), ("wake", None))
         config.write({**config.DEFAULTS, "watch_main_moved": "never"})
         self.assertEqual(self.verdict(self.LINE, cur=self._cur(state="working")), ("quiet", "watch_main_moved is never"))
-        config.write({**config.DEFAULTS, "watch_main_moved": "sometimes"})  # unknown: the default, active
-        self.assertEqual(self.verdict(self.LINE, cur=self._cur(state="working"))[0], "wake")
-        self.assertEqual(self.verdict(self.LINE, cur=_snap())[0], "quiet")
+        config.write({**config.DEFAULTS, "watch_main_moved": "sometimes"})  # unknown: the default, conflicts
+        self.assertEqual(self.verdict(self.LINE, cur=self._cur(state="working")),
+                         ("quiet", "watch_main_moved is conflicts"))
 
-    def test_the_default_is_active_and_written_only_when_set(self):
-        self.assertEqual(config.DEFAULTS["watch_main_moved"], "active")
-        config.write(dict(config.DEFAULTS))
-        self.assertNotIn("watch_main_moved", json.loads(config.config_file().read_text()))
+    def test_active_is_still_written_down_now_that_it_is_not_the_default(self):
+        self.assertEqual(json.loads(config.config_file().read_text())["watch_main_moved"], "active")
 
     def test_snapshot_records_each_workers_repo_but_watch_json_does_not(self):
         ledger.append("spawn", "a", repo="/src/platform")
@@ -132,6 +136,125 @@ class MainMovedTest(Isolated):
         from athena_lib import dashstate
         dashstate.save_watch(snap)
         self.assertNotIn("repos", json.loads((paths.state_dir() / "watch.json").read_text()))
+
+
+class ConflictsModeTest(Isolated):
+    """The default: `main moved` is logged whatever the repo's workers do; HQ hears `pr conflicts` instead."""
+    LINE = "platform main moved 1a2b3c4..4d5e6f7"
+
+    def test_the_default_is_conflicts_and_written_only_when_set(self):
+        self.assertEqual(config.DEFAULTS["watch_main_moved"], "conflicts")
+        config.write(dict(config.DEFAULTS))
+        self.assertNotIn("watch_main_moved", json.loads(config.config_file().read_text()))
+        self.assertEqual(config.get("watch_main_moved"), "conflicts")
+
+    def test_a_config_file_without_the_key_picks_up_the_default(self):
+        paths.ensure()
+        config.config_file().write_text(json.dumps({"version": 1, "projects_dir": "~"}))
+        self.assertEqual(config.get("watch_main_moved"), "conflicts")
+        self.assertEqual(config.source("watch_main_moved"), "default")
+
+    def test_main_moved_is_logged_with_its_reason_even_with_an_active_worker(self):
+        cur = _snap({"a": {"state": "working", "pr": _pr(review="REVIEW_REQUIRED")}}, {"a": "/src/platform"})
+        for snap in (_snap(), cur):
+            with self.subTest(snap=snap):
+                self.assertEqual(self.verdict(self.LINE, cur=snap), ("quiet", "watch_main_moved is conflicts"))
+
+    def test_main_moved_under_conflicts_goes_to_the_log_not_hq(self):
+        cur = _snap({"a": {"state": "working", "pr": _pr()}}, {"a": "/src/platform"})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            watch.emit([self.LINE], cur, tagged=False, prev=cur)
+        self.assertEqual(out.getvalue(), "")
+        log = (paths.state_dir() / "logs" / "watch-suppressed.log").read_text()
+        self.assertIn(" platform main moved 1a2b3c4..4d5e6f7 (watch_main_moved is conflicts)", log)
+
+
+def _open(n=7, mergeable="MERGEABLE", **kw):
+    return _pr(number=n, url=f"https://github.com/o/platform/pull/{n}", mergeable=mergeable, **kw)
+
+
+class PrConflictsTest(Isolated):
+    """`<w> pr conflicts #<n>`: a live worker's open PR turning CONFLICTING, told once per turn."""
+
+    def _ticks(self, *values, n=7):
+        """Each value is what gh says of the worker's PR's mergeable on one tick; the lines of every tick after the
+        first, as athena watch would print them."""
+        ledger.append("spawn", "a")
+        prev, lines = None, []
+        for value in values:
+            p = None if value is None else _open(n, value) if isinstance(value, str) else value
+            with mock.patch.object(status, "collect", return_value={
+                    "state": "idle", "pr": p, "report": None, "detail": None}):
+                cur = watch.snapshot(prev=prev)
+            if prev is not None:
+                lines += [line for line in watch.diff(prev, cur) if " pr " in line]
+            prev = cur
+        return lines
+
+    def test_mergeable_to_conflicting_wakes_once(self):
+        lines = self._ticks("MERGEABLE", "CONFLICTING", "CONFLICTING", "CONFLICTING")
+        self.assertEqual(lines, ["a pr conflicts #7"])
+        self.assertEqual(self.verdict(lines[0]), ("wake", None))
+        self.assertEqual(watch.classify(lines[0]), "wake")
+
+    def test_unknown_in_between_does_not_flap(self):
+        self.assertEqual(self._ticks("MERGEABLE", "UNKNOWN", "UNKNOWN", "MERGEABLE"), [])
+        self.assertEqual(self._ticks("CONFLICTING", "UNKNOWN", "CONFLICTING", "UNKNOWN", "CONFLICTING"), [])
+        self.assertEqual(self._ticks("MERGEABLE", "UNKNOWN", "CONFLICTING", "UNKNOWN", "CONFLICTING"),
+                         ["a pr conflicts #7"])
+
+    def test_unknown_then_conflicting_is_a_turn(self):
+        self.assertEqual(self._ticks("UNKNOWN", "CONFLICTING"), ["a pr conflicts #7"])
+
+    def test_conflicting_to_mergeable_is_status_only(self):
+        lines = self._ticks("MERGEABLE", "CONFLICTING", "UNKNOWN", "MERGEABLE")
+        self.assertEqual(lines, ["a pr conflicts #7", "a pr mergeable #7"])
+        self.assertEqual(self.verdict("a pr mergeable #7"), ("status", None))
+        self.assertEqual(watch.classify("a pr mergeable #7"), "status")
+
+    def test_a_second_conflict_after_a_fix_is_told_again(self):
+        self.assertEqual(self._ticks("MERGEABLE", "CONFLICTING", "MERGEABLE", "CONFLICTING"),
+                         ["a pr conflicts #7", "a pr mergeable #7", "a pr conflicts #7"])
+
+    def test_a_pr_gh_cannot_read_keeps_its_last_value(self):
+        self.assertEqual(self._ticks("CONFLICTING", None, "CONFLICTING"), [])
+
+    def test_only_an_open_pr_conflicts(self):
+        self.assertEqual(self._ticks("MERGEABLE", _open(mergeable="CONFLICTING", state="CLOSED")), ["a pr closed"])
+
+    def test_a_new_pr_does_not_inherit_the_old_ones_value(self):
+        lines = self._ticks(_open(7, "CONFLICTING"), _open(8, "UNKNOWN"), _open(8, "CONFLICTING"))
+        self.assertEqual(lines, ["a pr conflicts #8"])
+
+    def test_every_mode_tells_a_conflict(self):
+        for mode in ("conflicts", "active", "always", "never"):
+            with self.subTest(mode=mode):
+                config.write({**config.DEFAULTS, "watch_main_moved": mode})
+                self.assertEqual(self.verdict("a pr conflicts #7"), ("wake", None))
+
+    def test_a_retired_workers_pr_is_ignored(self):
+        ledger.append("spawn", "a")
+        ledger.append("spawn", "b")
+        before = {"state": "idle", "pr": None, "report": None, "detail": None}
+        with mock.patch.object(status, "collect", return_value={**before, "pr": _open(7, "MERGEABLE")}):
+            prev = watch.snapshot()
+        ledger.append("retire", "a")
+        with mock.patch.object(status, "collect", return_value={**before, "pr": _open(7, "CONFLICTING")}):
+            cur = watch.snapshot(prev=prev)
+        self.assertNotIn("a", cur["workers"])
+        self.assertEqual([line for line in watch.diff(prev, cur) if line.startswith("a ")], ["a gone from the ledger"])
+        self.assertIn("b pr conflicts #7", watch.diff(prev, cur))
+
+    def test_a_followed_pr_of_a_retired_worker_says_nothing(self):
+        prev = {"workers": {}, "prs": {"o/platform#7": _open(7, "MERGEABLE")}}
+        cur = {"workers": {}, "prs": {"o/platform#7": _open(7, "CONFLICTING")}}
+        self.assertEqual(watch.diff(prev, cur), [])
+
+    def test_a_worker_being_retired_is_logged(self):
+        ledger.append("spawn", "a")
+        ledger.append("update", "a", retiring=time.time())
+        self.assertEqual(self.verdict("a pr conflicts #7"), ("quiet", "retired via athena retire"))
 
 
 class RetiredExitTest(Isolated):
@@ -244,7 +367,7 @@ class EmitTest(Isolated):
         log = self._log()
         self.assertEqual(len(log), 4)  # two quiet lines, once per emit
         self.assertRegex(log[0], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d platform main moved 1a2b3c4\.\.4d5e6f7 "
-                                 r"\(no active worker or open PR in platform\)$")
+                                 r"\(watch_main_moved is conflicts\)$")
         self.assertTrue(log[1].endswith(" a review comments +2 (bot or author comments only)"))
 
     def test_the_log_rotates_at_its_cap_and_keeps_one(self):

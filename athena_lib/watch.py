@@ -4,7 +4,9 @@ Quiet when nothing changes. Also keeps athena workspace labels from being rename
 stacked PRs listed in stack.json. Plain output is for Monitor; `--tagged` output is for the athena-watch mod in HQ,
 which wakes HQ only for the lines `classify` calls actionable and shows the rest in its status line. Lines it calls
 quiet (notices HQ never acts on, such as the Slack doorbell's `slack-new <dm> <n> dm active` for a DM the human is
-replying in) are printed in neither mode: they go to logs/watch-suppressed.log.
+replying in, or `<repo> main moved` under config watch_main_moved's default, "conflicts") are printed in neither
+mode: they go to logs/watch-suppressed.log. Under "conflicts" HQ hears `<w> pr conflicts #<n>` instead, when main moving
+turns a live worker's open PR CONFLICTING.
 """
 import json
 import os
@@ -51,6 +53,11 @@ def diff(prev: dict, cur: dict) -> list:
                 lines.append(f"{name} review {np_['review']}")
             if np_.get("state") != bp.get("state"):
                 lines.append(f"{name} pr {np_.get('state', '').lower()}")
+        if np_.get("number") is not None and np_.get("state") == "OPEN":
+            if now.get("mergeable") == "CONFLICTING" and before.get("mergeable") != "CONFLICTING":
+                lines.append(f"{name} pr conflicts #{np_['number']}")
+            elif before.get("mergeable") == "CONFLICTING" and now.get("mergeable") == "MERGEABLE":
+                lines.append(f"{name} pr mergeable #{np_['number']}")  # status only: a new conflict is told again
     for name in pw:
         if name not in cw:
             lines.append(f"{name} gone from the ledger")
@@ -63,6 +70,18 @@ def diff(prev: dict, cur: dict) -> list:
         if old and now != old:
             lines.append(f"stack {key}: {old} -> {now}")
     return lines
+
+
+def _mergeable(p, before) -> str:
+    """A live worker's open PR's mergeability as the watch last knew it, MERGEABLE or CONFLICTING (None before gh
+    has said). GitHub recomputes it lazily after main moves, so UNKNOWN keeps the last value for the same PR, as
+    stack_snapshot does."""
+    if not p or p.get("state") != "OPEN":
+        return None
+    if p.get("mergeable") in ("MERGEABLE", "CONFLICTING"):
+        return p["mergeable"]
+    last = before or {}
+    return last.get("mergeable") if (last.get("pr") or {}).get("number") == p.get("number") else None
 
 
 def _told_as(report):
@@ -344,6 +363,7 @@ _ROUTINE = [
     re.compile(r"^\S+ state \S+->(working|idle|done|starting|unknown)( \(.*\))?$"),
     re.compile(r"^\S+ checks \S+->(pending|success|none)$"),
     re.compile(r"^\S+ goal sent$"),
+    re.compile(r"^\S+ pr mergeable #\d+$"),
     re.compile(r"^\S+ new worker \((working|idle|done|starting|unknown)[,)]"),
 ]
 _WAKE = [
@@ -367,7 +387,7 @@ _SLACK_ACTIVE = re.compile(r"^slack-new \S+ \d+ dm active$")  # the doorbell's m
 
 SUPPRESSED_MAX = 1024 * 1024  # watch-suppressed.log rotates to .1 at this size
 _RETIRING_FOR = 30 * 60  # how long a `retiring` mark explains an exit, should retire die before clearing it
-_MAIN_MOVED = ("active", "always", "never")
+_MAIN_MOVED = ("conflicts", "active", "always", "never")
 _ACTIVE = ("working", "blocked", "needs context")  # _group's words for a worker that may still rebase
 _ALWAYS_TOLD = ("BLOCKED", "NEEDS_CONTEXT")
 
@@ -396,11 +416,12 @@ class Context:
         return w.get("state") == "retired" or w.get("state") == "live" and fresh
 
     def main_moved(self) -> str:
+        default = config.DEFAULTS["watch_main_moved"]
         try:
             mode = config.get("watch_main_moved")
         except config.ConfigError:
-            return "active"
-        return mode if mode in _MAIN_MOVED else "active"
+            return default
+        return mode if mode in _MAIN_MOVED else default
 
     def repo_active(self, name) -> bool:
         """A live worker in repo `name` (its folder) works or is blocked, or has an open PR not yet approved."""
@@ -419,8 +440,8 @@ def _quiet(line, ctx):
     m = re.match(r"^(\S+) main moved ", line)
     if m:
         mode = ctx.main_moved()
-        if mode == "never":
-            return "watch_main_moved is never"
+        if mode in ("never", "conflicts"):
+            return f"watch_main_moved is {mode}"
         if mode == "active" and not ctx.repo_active(m.group(1)):
             return f"no active worker or open PR in {m.group(1)}"
         return None
@@ -431,7 +452,7 @@ def _quiet(line, ctx):
         if "comments_all" in now and (now.get("comments") or 0) <= (before.get("comments") or 0):
             return "bot or author comments only"
         return None
-    m = re.match(r"^(\S+) (?:state \S+->exited(?: \(.*\))?|gone from the ledger)$", line)
+    m = re.match(r"^(\S+) (?:state \S+->exited(?: \(.*\))?|gone from the ledger|pr conflicts #\d+)$", line)
     if m:
         return "retired via athena retire" if ctx.retired(m.group(1)) else None
     m = re.match(r"^(\S+) report (\S+)$", line)
@@ -685,7 +706,8 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
             key = _pr_key(pr_state.get("url"))
             pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None)}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
-                              "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None}
+                              "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None,
+                              "mergeable": _mergeable(pr_state, before.get(w["name"]))}
         if repo:
             repos[w["name"]] = repo  # for the main-moved rule; never in watch.json
         if repo and repo not in mains:

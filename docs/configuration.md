@@ -37,7 +37,7 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 
 - `human_merge_repos`: repos (by folder name) the human merges; HQ prepares them and stops. `reapproval_repos`: repos where a push after approval needs a new approval; their workers get `ATHENA_REAPPROVAL=1` and say so.
 - `athena watch` ([How it works](how-it-works.md#doorbells-ci-and-slack)) reads six optional keys, which `athena init` does not ask for and `config.json` holds only once you add them by hand:
-  - `watch_main_moved` (default `"active"`): when `<repo> main moved` wakes HQ. `"active"`: only while that repo has a live worker working or blocked, or a live worker's open PR not yet approved; `"always"`; `"never"`. An unknown value counts as `"active"`. A line it keeps back goes to `logs/watch-suppressed.log`.
+  - `watch_main_moved` (default `"conflicts"`): when `<repo> main moved` wakes HQ. `"conflicts"`: never; HQ hears `<w> pr conflicts #<n>` instead when a live worker's open PR turns CONFLICTING (told in every mode). `"active"`: only while that repo has a live worker working or blocked, or a live worker's open PR not yet approved; `"always"`; `"never"`. An unknown value counts as `"conflicts"`. A line it keeps back goes to `logs/watch-suppressed.log`.
   - `ci_repos` (default `[]`): repos whose default branch the watch checks for failed CI runs even with no live worker on them, each a path (`~/Developer/web`) or an `owner/name`. Repos with a live worker are always checked.
   - `slack_channels` (default `[]`): Slack channel ids the Slack doorbell polls. It always reads your DMs and group DMs.
   - `slack_ext_channels` (default `true`): also poll every `ext-` channel you are a member of.
