@@ -147,19 +147,18 @@ def _key(p, terminals):
 
 
 def live_terminals() -> tuple:
-    """herdr's current terminal ids, by agent name and by pane. herdr gives every pane a new terminal when it
-    restarts, so the id the ledger kept from the spawn goes stale; pane ids and agent names survive."""
-    try:
-        agents = herdr.call("agent", "list", timeout=10).get("agents") or []
-    except herdr.HerdrError:
-        return {}, {}
-    found = [a for a in agents if isinstance(a, dict) and a.get("terminal_id")]
-    return ({a["name"]: a["terminal_id"] for a in found if a.get("name")},
-            {a["pane_id"]: a["terminal_id"] for a in found if a.get("pane_id")})
+    """herdr's current terminal ids, by agent name (`agent list`) and by pane (`pane list`, which has every pane,
+    one whose Claude exited included). herdr gives every pane a new terminal when it restarts, so the id the ledger
+    kept from the spawn goes stale; pane ids and agent names survive. A HerdrError propagates: falling back to the
+    ledger's dead ids would rebuild the board twice, so the watcher logs it and retries with nothing moved."""
+    agents = herdr.call("agent", "list", timeout=10).get("agents") or []
+    panes = herdr.call("pane", "list", timeout=10).get("panes") or []
+    return ({a["name"]: a["terminal_id"] for a in agents if isinstance(a, dict) and a.get("name") and a.get("terminal_id")},
+            {p["pane_id"]: p["terminal_id"] for p in panes if isinstance(p, dict) and p.get("pane_id") and p.get("terminal_id")})
 
 
 def terminal(w, by_name, by_pane):
-    """A worker's live terminal: herdr's for its agent name, else for its pane, else the ledger's."""
+    """A worker's live terminal: herdr's for its agent name, else for its pane, else (herdr lists neither) the ledger's."""
     return by_name.get(w["name"]) or by_pane.get(w.get("pane")) or w.get("terminal")
 
 
