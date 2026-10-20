@@ -2,7 +2,7 @@
 // draws a one-line status band above the prompt, and wakes HQ with one short prompt only for lines that need it,
 // each event once in ten minutes. A wake draws as athena's own compact row, without the engine's plugin frame.
 // It also hides any Monitor rows left in HQ's transcript (the call, its result and its notifications). In a worker
-// (ATHENA_WORKER set), it draws the ATHENA-REPORT line as a completion block. Every other session sees no change.
+// (ATHENA_WORKER set, or its cwd in a live worker's worktree), it draws the ATHENA-REPORT line as a completion block. Every other session sees no change.
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Board, Part, Segment } from './core'
@@ -61,9 +61,12 @@ async function readRole($: EngineInterface): Promise<boolean> {
 
 let worker: Promise<boolean> | undefined
 
-// A worker session: ATHENA_WORKER set, in its environment or its settings.
+// A worker session: ATHENA_WORKER set, in its environment or its settings; else `athena whoami` finds it by its
+// worktree in the ledger, as the status hook does. herdr's bare `claude --resume` after a restart drops both.
 async function readWorker($: EngineInterface): Promise<boolean> {
-  return Boolean((await $.env.get('ATHENA_WORKER')) ?? (await settingsEnv($)).ATHENA_WORKER)
+  if ((await $.env.get('ATHENA_WORKER')) ?? (await settingsEnv($)).ATHENA_WORKER) return true
+  const found = await $.process.run([`${$.plugin.root}/bin/athena`, 'whoami']).catch(() => undefined)
+  return found?.exitCode === 0 && found.stdout.trim() !== ''
 }
 
 function isWorker($: EngineInterface): Promise<boolean> {

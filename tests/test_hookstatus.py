@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests import helpers
+from tests.test_herdr import logged_calls, write_scenario
 from athena_lib import config, hookstatus, ledger, paths
 
 HOOK = helpers.ROOT / "hooks" / "worker-status"
@@ -167,6 +168,112 @@ class HookStatusTest(unittest.TestCase):
         self.assertEqual(hookstatus.parse_report(text)["status"], "DONE")
         self.assertIsNone(hookstatus.parse_report("ATHENA-REPORT {broken"))
 
+
+
+ARGS = ["--name", "abc-1", "--model", "opus", "--effort", "high", "--settings", "/s/abc-1.json"]
+
+
+class ResumeHookTest(unittest.TestCase):
+    """On SessionStart a worker tells herdr its whole resume command again: /clear and a resume start new sessions."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1-x"
+        self.wt.mkdir(parents=True)
+        ledger.append("spawn", "abc-1", pane="w9:p1", path=os.path.realpath(self.wt), model="opus", effort="high",
+                      claude_args=ARGS)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def reports(self):
+        return [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "report-agent-session"]]
+
+    def test_session_start_registers_the_new_session_with_the_spawn_args(self):
+        event = {"hook_event_name": "SessionStart", "session_id": "sid-2", "source": "clear", "cwd": str(self.wt)}
+        hookstatus.register_resume(event, "abc-1", {"HERDR_PANE_ID": "w9:p1"})
+        [report] = self.reports()
+        self.assertEqual(report[2], "w9:p1")
+        self.assertEqual(report[report.index("--source") + 1], "athena")
+        self.assertEqual(report[report.index("--agent-session-id") + 1], "sid-2")
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "sid-2", *ARGS])
+
+    def test_the_hook_registers_a_bare_resumed_worker_found_by_its_cwd(self):
+        # After herdr's bare `claude --resume`, the session has no ATHENA_WORKER: the ledger finds it by its cwd.
+        payload = {"hook_event_name": "SessionStart", "session_id": "sid-3", "source": "resume", "cwd": str(self.wt)}
+        proc = run_hook(payload, {"HERDR_PANE_ID": "w9:p1"}, cwd=self.wt)
+        self.assertEqual(proc.returncode, 0)
+        [report] = self.reports()
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "sid-3", *ARGS])
+
+    def test_only_in_the_workers_own_pane(self):
+        event = {"hook_event_name": "SessionStart", "session_id": "sid-2"}
+        hookstatus.register_resume(event, "abc-1", {"HERDR_PANE_ID": "w5:p2"})
+        hookstatus.register_resume(event, "abc-1", {})
+        self.assertEqual(self.reports(), [])
+
+    def test_other_events_and_missing_sessions_register_nothing(self):
+        hookstatus.register_resume({"hook_event_name": "Stop", "session_id": "sid-2"}, "abc-1", {"HERDR_PANE_ID": "w9:p1"})
+        hookstatus.register_resume({"hook_event_name": "SessionStart"}, "abc-1", {"HERDR_PANE_ID": "w9:p1"})
+        self.assertEqual(self.reports(), [])
+
+    def test_an_older_record_rebuilds_its_args_from_model_effort_and_settings(self):
+        ledger.append("spawn", "old-1", pane="w8:p1", path="/nowhere", model="sonnet", effort="medium")
+        settings = paths.ensure("settings") / "old-1.json"
+        settings.write_text("{}")
+        hookstatus.register_resume({"hook_event_name": "SessionStart", "session_id": "sid-4"}, "old-1",
+                                   {"HERDR_PANE_ID": "w8:p1"})
+        [report] = self.reports()
+        argv = report[report.index("--") + 1:]
+        self.assertEqual(argv[:3], ["claude", "--resume", "sid-4"])
+        self.assertEqual(argv[argv.index("--name") + 1], "old-1")
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+        self.assertEqual(argv[argv.index("--settings") + 1], str(settings))
+        self.assertTrue(argv[argv.index("--append-system-prompt-file") + 1].endswith("worker.md"))
+
+    def test_a_herdr_error_never_breaks_the_hook(self):
+        write_scenario(self.tmp.name, [{"match": ["pane"], "stdout": "", "stderr": "boom", "exit": 3}])
+        hookstatus.register_resume({"hook_event_name": "SessionStart", "session_id": "sid-2"}, "abc-1",
+                                   {"HERDR_PANE_ID": "w9:p1"})
+
+
+class WhoamiTest(unittest.TestCase):
+    """`athena whoami`: the worker this session is, for the mod when a bare resume dropped ATHENA_WORKER."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+        self.wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1-x"
+        (self.wt / "src").mkdir(parents=True)
+        ledger.append("spawn", "abc-1", pane="w9:p1", path=os.path.realpath(self.wt))
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def whoami(self, cwd, extra=None):
+        env = {k: v for k, v in os.environ.items() if k != "ATHENA_WORKER"}
+        env.update(extra or {})
+        return subprocess.run([str(helpers.ROOT / "bin" / "athena"), "whoami"], cwd=cwd, env=env,
+                              capture_output=True, text=True)
+
+    def test_a_live_workers_worktree_names_it(self):
+        proc = self.whoami(self.wt / "src")
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "abc-1"))
+
+    def test_the_environment_wins(self):
+        proc = self.whoami(self.tmp.name, {"ATHENA_WORKER": "abc-1"})
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "abc-1"))
+
+    def test_elsewhere_is_no_worker(self):
+        proc = self.whoami(self.tmp.name)
+        self.assertEqual((proc.returncode, proc.stdout), (1, ""))
+
+    def test_a_retired_worker_is_no_worker(self):
+        ledger.append("retire", "abc-1")
+        self.assertEqual(self.whoami(self.wt).returncode, 1)
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hq, init, launch, ledger, pr, retire, spawn, status, watch
+from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, retire, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -323,6 +323,15 @@ def cmd_hq(a):
     return 0
 
 
+def cmd_whoami(a):
+    """The worker this session is: ATHENA_WORKER, else the live worker whose worktree holds the cwd. Exit 1: none."""
+    name = hookstatus.worker_name(os.environ, os.getcwd())
+    if not name:
+        return 1
+    print(name)
+    return 0
+
+
 def cmd_config(a):
     if a.action == "path":
         print(config.config_file())
@@ -462,6 +471,9 @@ def parser():
 
     sub.add_parser("init", help="check herdr, claude, gh and git, ask for your folders and merge rules, write config.json "
                                 "(athena init -h)")
+
+    s = sub.add_parser("whoami", help="print the worker this session is (ATHENA_WORKER, else by its worktree); exit 1 if none")
+    s.set_defaults(func=cmd_whoami)
 
     s = sub.add_parser("config", help="the effective config and where each value comes from: show, path")
     s.add_argument("action", choices=["show", "path"], nargs="?", default="show")
