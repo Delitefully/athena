@@ -1,7 +1,8 @@
 """The board: worker attach columns beside the chief of staff's pane, in the same tab.
 
 `plan` and `ops` are pure. `sync` reads herdr and the ledger, and rebuilds the columns only when the
-plan changes and no board column has focus. Columns run `herdr terminal attach <terminal> --takeover`.
+plan or a shown worker's terminal changes and no board column has focus. Columns run
+`herdr terminal attach <terminal> --takeover`, the terminal herdr lists for the worker now (`live_terminals`).
 """
 import contextlib
 import fcntl
@@ -139,8 +140,27 @@ def _close_owned(column) -> bool:
         return False
 
 
-def _key(p):
-    return json.dumps({"mode": p["mode"], "rows": p["rows"], "hq": round(p["hq_ratio"], 2)}, sort_keys=True)
+def _key(p, terminals):
+    shown = {name: terminals[name] for row in p["rows"] for name in row}
+    return json.dumps({"mode": p["mode"], "rows": p["rows"], "hq": round(p["hq_ratio"], 2), "terminals": shown},
+                      sort_keys=True)
+
+
+def live_terminals() -> tuple:
+    """herdr's current terminal ids, by agent name and by pane. herdr gives every pane a new terminal when it
+    restarts, so the id the ledger kept from the spawn goes stale; pane ids and agent names survive."""
+    try:
+        agents = herdr.call("agent", "list", timeout=10).get("agents") or []
+    except herdr.HerdrError:
+        return {}, {}
+    found = [a for a in agents if isinstance(a, dict) and a.get("terminal_id")]
+    return ({a["name"]: a["terminal_id"] for a in found if a.get("name")},
+            {a["pane_id"]: a["terminal_id"] for a in found if a.get("pane_id")})
+
+
+def terminal(w, by_name, by_pane):
+    """A worker's live terminal: herdr's for its agent name, else for its pane, else the ledger's."""
+    return by_name.get(w["name"]) or by_pane.get(w.get("pane")) or w.get("terminal")
 
 
 class BoardBusy(Exception):
@@ -187,10 +207,13 @@ def _sync(force) -> dict:
     layout = herdr.call("pane", "layout", "--pane", hq).get("layout", {})
     width = int(layout.get("area", {}).get("width") or 0)
     live = ledger.live()
-    workers = [{"name": w["name"], "spawned": w.get("spawned") or 0, "terminal": w.get("terminal"),
-                "urgency": status.urgency(status.quick_state(w))} for w in live if w.get("terminal")]
+    by_name, by_pane = live_terminals()
+    workers = [{"name": w["name"], "spawned": w.get("spawned") or 0, "terminal": terminal(w, by_name, by_pane),
+                "urgency": status.urgency(status.quick_state(w))} for w in live]
+    workers = [w for w in workers if w["terminal"]]
+    terminals = {w["name"]: w["terminal"] for w in workers}
     p = plan(width, paths.min_col(), workers)
-    key = _key(p)
+    key = _key(p, terminals)
     saved = load()
     columns = saved.get("columns", []) if saved.get("hq") == hq else []
     result = {**p, "width": width, "changed": False, "postponed": False}
@@ -202,7 +225,6 @@ def _sync(force) -> dict:
     for c in columns:
         _close_owned(c)
     save({"hq": hq, "key": None, "columns": [], "width": width, "ts": time.time()})
-    terminals = {w["name"]: w["terminal"] for w in workers}
     refs, created, new_columns = {}, [], []
     try:
         for op in ops(p, hq):

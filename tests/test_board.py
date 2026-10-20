@@ -178,6 +178,40 @@ class SyncTest(unittest.TestCase):
             self.scenario(330)
             self.assertIn("skipped", board.sync())
 
+    def agents(self, *agents):
+        return [{"match": ["agent", "list"], "stdout": {"result": {"agents": list(agents)}}}]
+
+    def attached(self):
+        runs = [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "run"]]
+        return [r[3].split("terminal attach ")[1].split()[0] for r in runs]
+
+    def test_attaches_the_live_terminal_herdr_names_not_the_stale_ledger_id(self):
+        # herdr gives every pane a new terminal id when it restarts; the ledger keeps the old one.
+        self.scenario(330, self.agents({"name": "a", "pane_id": "w2:p1", "terminal_id": "term_a2"},
+                                       {"name": "b", "pane_id": "w3:p1", "terminal_id": "term_b2"}))
+        board.sync()
+        self.assertEqual(self.attached(), ["term_a2", "term_b2"])
+        saved = json.loads((paths.state_dir() / "board.json").read_text())
+        self.assertEqual([c["terminal"] for c in saved["columns"]], ["term_a2", "term_b2"])
+
+    def test_an_agent_herdr_lists_under_another_name_is_found_by_its_pane(self):
+        self.scenario(330, self.agents({"name": "claude", "pane_id": "w2:p1", "terminal_id": "term_a2"}))
+        board.sync()
+        self.assertEqual(self.attached(), ["term_a2", "term_b"])
+
+    def test_the_ledger_terminal_stands_when_herdr_cannot_list_agents(self):
+        self.scenario(330, [{"match": ["agent", "list"], "stdout": "", "stderr": "down", "exit": 1}])
+        board.sync()
+        self.assertEqual(self.attached(), ["term_a", "term_b"])
+
+    def test_a_new_terminal_rebuilds_an_unchanged_layout(self):
+        self.scenario(330)
+        board.sync()
+        (Path(self.tmp.name) / "herdr.log").write_text("")
+        self.scenario(330, self.agents({"name": "a", "pane_id": "w2:p1", "terminal_id": "term_a2"}))
+        self.assertTrue(board.sync()["changed"])
+        self.assertEqual(self.attached(), ["term_a2", "term_b"])
+
     def test_sync_uses_urgency_when_narrow(self):
         ledger.append("spawn", "c", pane="w4:p1", terminal="term_c", workspace="w4")
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "x"}, "b")
