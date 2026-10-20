@@ -92,6 +92,8 @@ def _write_settings(name, brief, ultracode=False, workflow_size=None, repo=None)
         "env": {"ATHENA_WORKER": name, "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
                 "ATHENA_BRIEF": str(brief)},
         "crossSessionInbound": "accept",
+        # Remote Control is HQ's alone; --settings outranks the user's remoteControlAtStartup.
+        "remoteControlAtStartup": False,
         "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
     }
     if repo and config.listed("reapproval_repos", repo):  # worker.md: say a push after approval needs a new one

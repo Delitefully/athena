@@ -60,6 +60,8 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(settings["env"]["ATHENA_WORKER"], "abc-1")
         self.assertEqual(settings["crossSessionInbound"], "accept")
         self.assertFalse(settings["enabledPlugins"]["keepwarm@keepwarm"])
+        # Remote Control is HQ's alone: --settings outranks the user's remoteControlAtStartup: true.
+        self.assertIs(settings["remoteControlAtStartup"], False)
         prompt = calls[4]
         self.assertTrue(prompt[3].startswith("/goal ABC-1 is done when the test passes."))
         self.assertIn(str(paths.state_dir() / "briefs" / "abc-1.md"), prompt[3])
@@ -256,6 +258,7 @@ class SpawnTest(unittest.TestCase):
             "env": {"ATHENA_WORKER": "abc-1", "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
                     "ATHENA_BRIEF": str(brief)},
             "crossSessionInbound": "accept",
+            "remoteControlAtStartup": False,
             "enabledPlugins": {"keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False},
         }
         self.assertEqual(text, json.dumps(expected, indent=2) + "\n")

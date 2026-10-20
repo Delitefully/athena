@@ -48,6 +48,7 @@ and `athena` brings you back.
 - **`prefix+shift+h`** (or `athena hq restart`): update Claude Code and the plugins, then restart athena in place.
 - **`athena hq rotate`**: replace a long HQ conversation with a fresh one that starts from a handoff written from athena's state, instead of compacting it again.
 - **`athena dash open`:** the dashboard in your browser: what needs you, what is in progress, what is done.
+- **Remote Control:** athena's own session always connects to Remote Control, so you can reach it from your phone or claude.ai/code; workers never do, whatever `remoteControlAtStartup` says in `~/.claude/settings.json`. A worker that was already running keeps its connection until it next starts.
 
 ## Learn more
 

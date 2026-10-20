@@ -16,6 +16,10 @@ A ticket becomes a brief and a worker in its own worktree. The worker builds, te
 
 `athena watch` prints one line per change, and athena reacts to the ones that matter: it asks you about a blocked worker, sends a failed check back to its worker, starts a review on DONE, and asks a repo's workers to rebase when its main moves. Routine progress stays quiet.
 
+## Remote Control
+
+Only HQ connects to [Remote Control](https://code.claude.com/docs/en/remote-control). `athena hq` writes `remoteControlAtStartup: true` into HQ's `--settings` file and `athena spawn` writes `false` into each worker's, and settings passed with `--settings` outrank `~/.claude/settings.json`. So HQ stays reachable from your phone or claude.ai/code even without a user-level setting, and your Remote Control list holds one athena session, not one per worker. A herdr restart resumes each session with the same `--settings` file. A worker started before this change keeps its connection until it next starts.
+
 ## After a herdr restart
 
 herdr restores its spaces when its server restarts and, with `resume_agents_on_restore`, relaunches each agent. Left alone it relaunches Claude as a bare `claude --resume <id>`, which drops the worker's `--name`, `--settings` (where `ATHENA_WORKER` lives) and `worker.md`. So athena tells herdr each worker's whole command:
