@@ -46,6 +46,7 @@ and `athena` brings you back.
 - **`prefix+shift+c`** (or `athena hq`): open or focus athena's space.
 - **`prefix+shift+b`** (or `athena board toggle`): show or hide the worker columns.
 - **`prefix+shift+h`** (or `athena hq restart`): update Claude Code and the plugins, then restart athena in place.
+- **`athena hq rotate`**: replace a long HQ conversation with a fresh one that starts from a handoff written from athena's state, instead of compacting it again.
 - **`athena dash open`:** the dashboard in your browser: what needs you, what is in progress, what is done.
 
 ## Learn more

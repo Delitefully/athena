@@ -1,13 +1,14 @@
 """The chief of staff's own space: create it once, then focus it, and restart its Claude in place."""
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from athena_lib import board, dash, herdr, paths, retire
+from athena_lib import board, dash, handoff, herdr, paths, retire
 
 
 def _file():
@@ -29,14 +30,15 @@ def _alive(pane):
         return False
 
 
-def _claude_args():
-    settings = paths.ensure("settings") / "hq.json"
+def _claude_args(write=True):
+    settings = (paths.ensure("settings") if write else paths.state_dir() / "settings") / "hq.json"
     # FORCE_HYPERLINK: Claude Code draws OSC 8 links only for terminals it knows, and herdr is not one, though it
     # renders them; without it every link in HQ (the status band's "open dash →" and #n among them) shows its raw URL.
-    settings.write_text(json.dumps({"crossSessionInbound": "accept",
-                                    "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
-                                            "ATHENA_STATE_DIR": str(paths.state_dir()), "FORCE_HYPERLINK": "1"}},
-                                   indent=2))
+    if write:
+        settings.write_text(json.dumps({"crossSessionInbound": "accept",
+                                        "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
+                                                "ATHENA_STATE_DIR": str(paths.state_dir()), "FORCE_HYPERLINK": "1"}},
+                                       indent=2))
     args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
             "--settings", str(settings)]
     if os.environ.get("ATHENA_PLUGIN_DIR"):
@@ -44,9 +46,14 @@ def _claude_args():
     return args
 
 
+def _start_argv(pane, *extra, write=True):
+    """The herdr argv that starts HQ's Claude in `pane`. `write=False` (a dry run) leaves the settings file alone."""
+    return ["agent", "start", paths.hq_name(), "--kind", "claude", "--pane", pane, "--timeout", "120000",
+            "--", *extra, *_claude_args(write)]
+
+
 def _start_agent(pane, *extra):
-    herdr.call("agent", "start", paths.hq_name(), "--kind", "claude", "--pane", pane, "--timeout", "120000",
-               "--", *extra, *_claude_args(), timeout=200)
+    herdr.call(*_start_argv(pane, *extra), timeout=200)
 
 
 def _session():
@@ -380,3 +387,122 @@ def restart(update=True) -> dict:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
                                 cwd=str(paths.PLUGIN_ROOT))
     return {"pid": proc.pid, "log": str(log), "message": f"restarting HQ; log at {log}"}
+
+
+ROTATE_ROUTINE = ("Fresh HQ after `athena hq rotate`: load the athena skill, then read {handoff} in full (your fleet, "
+                  "PRs, open asks, in-flight threads, notes tail and standing orders). Run the skill's session start "
+                  "(§1) from it, including §1a: check the athena-watch mod runs athena watch, re-create the fallback "
+                  "sweep cron with the sweep subagent brief, act on `athena ask queue`. Then tell me in at most five "
+                  "lines what needs me and what is live.")
+
+
+def _rotate_prompt():
+    return ROTATE_ROUTINE.format(handoff=handoff.handoff_file())
+
+
+def rotate(threads=None, dry_run=False, if_context_over=None) -> dict:
+    """Write the handoff, then replace HQ's Claude with a fresh conversation that starts from it (detached, as restart).
+
+    The handoff is written here, before anything exits, so a failure shows in HQ and the file exists for the new HQ.
+    `dry_run` makes no herdr call and writes nothing: it returns the handoff, the launch argv and the first prompt.
+    `if_context_over`: rotate only when HQ's context is readable and at least that full.
+    """
+    record = load()
+    pane, session = record.get("pane"), record.get("session")
+    if if_context_over is not None:
+        ctx = handoff.context(session if dry_run else (_session() or session))
+        if not ctx:
+            return {"rotated": False, "message": "not rotating: HQ's context usage is not readable (no transcript "
+                                                 f"for conversation {session or 'unknown'})"}
+        if ctx["percent"] < if_context_over:
+            return {"rotated": False, "context": ctx,
+                    "message": f"not rotating: HQ's context is {handoff.describe(ctx)}, under {if_context_over:g}%"}
+    if dry_run:
+        argv = _start_argv(pane or "<hq pane>", write=False)
+        text = handoff.build(threads=threads, previous_session=session, dry_run=True)
+        return {"dry_run": True, "handoff": text, "launch": argv, "prompt": _rotate_prompt(),
+                "command": " ".join(["herdr", *(shlex.quote(a) for a in argv)])}
+    if not pane:
+        raise RestartError("there is no HQ to rotate: start one with `athena hq`")
+    pid = _holder()
+    if pid:
+        raise RestartError(f"an HQ restart or rotation is already running (pid {pid}); see {_log_file()}")
+    if threads is not None:
+        # Kept before the child's idle wait: if HQ is busy the rotation is skipped, and the next one reads them here.
+        handoff.threads_file().write_text(threads)
+    target = handoff.write(handoff.build(threads=threads, previous_session=_session() or session))
+    log = _log_file()
+    argv = [sys.executable, str(paths.PLUGIN_ROOT / "bin" / "athena"), "hq", "rotate", "--child"]
+    with open(log, "a") as out:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
+                                cwd=str(paths.PLUGIN_ROOT))
+    return {"rotated": True, "pid": proc.pid, "log": str(log), "handoff": str(target),
+            "message": f"handoff written to {target}; rotating HQ once it is idle; log at {log}"}
+
+
+def _new_session(old):
+    """The fresh HQ's conversation id: herdr may report none, or still the old one, for a moment after the start."""
+    deadline = time.monotonic() + float(os.environ.get("ATHENA_HQ_SESSION_WAIT") or 10)
+    while True:
+        session = _session()
+        if session and session != old:
+            return session
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def rotate_now() -> dict:
+    """The rotation itself, in the detached child: exit HQ's Claude, start a fresh one in the same pane."""
+    _lock()
+    try:
+        return _rotate()
+    finally:
+        _unlock()
+
+
+def _rotate():
+    record = load()
+    name, pane = paths.hq_name(), record.get("pane")
+    if not pane:
+        raise RestartError("there is no HQ to rotate: start one with `athena hq`")
+    old = _session() or record.get("session")
+    if retire.agent_owned(name):
+        # The same clean exit as a restart: never /exit into a running turn or a permission dialog, never kill.
+        if not _wait_idle():
+            msg = f"HQ ({name} in pane {pane}) is busy or waiting on you; not rotating. Retry when it is idle"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ rotation skipped", msg)
+            raise RestartError(msg)
+        if not retire.exit_claude(name, float(os.environ.get("ATHENA_EXIT_GRACE") or 20)):
+            msg = f"HQ's Claude ({name} in pane {pane}) did not exit; it is still running and nothing was rotated"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ rotation failed", msg)
+            raise RestartError(msg)
+        _say(f"HQ's Claude exited (conversation {old or 'unknown'}, still resumable with claude --resume)")
+    time.sleep(0.2)  # herdr reports the agent gone a moment after the shell is back; this is only a margin
+    try:
+        _start_agent(pane)
+    except herdr.HerdrError as exc:
+        if not retire.agent_owned(name):
+            msg = f"starting the fresh HQ failed ({exc}); run `athena hq` to start one, then point it at {handoff.handoff_file()}"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ rotation failed", msg)
+            raise RestartError(msg)
+        _say(f"herdr gave up waiting ({exc}), but the fresh Claude is up")
+    new = _new_session(old)
+    record = load()
+    record["previous_session"], record["session"] = old, new
+    _file().write_text(json.dumps(record, indent=2))
+    if not new:
+        # Never leave the old id as the session: `athena status` would read its full transcript and keep asking for
+        # a rotation, and `athena hq restart` would resume the conversation this one replaced.
+        _say("herdr does not report the fresh HQ's conversation id yet; hq.json records none until a restart or "
+             "`athena hq` sees it")
+    keep_label(owned=True)
+    herdr.call("agent", "prompt", name, _rotate_prompt())
+    threads = handoff.threads_file()
+    if threads.exists():
+        os.replace(threads, threads.with_name("threads.prev.md"))  # its threads are in the handoff now
+    _say(f"HQ rotated in pane {pane}: conversation {old or 'unknown'} -> {record.get('session') or 'unknown'}")
+    return {"rotated": True, "pane": pane, "previous_session": old, "session": record.get("session")}

@@ -173,9 +173,19 @@ def migrate():
     return added
 
 
-def items():
-    migrate()
+def items(import_legacy=True):
+    """The asks. `import_legacy=False` (a dry run) reads needs-you.json and leaves a needs-you.md where it is."""
+    if import_legacy:
+        migrate()
     return _read()["items"]
+
+
+def legacy_lines() -> list:
+    """The lines a needs-you.md not yet imported holds."""
+    try:
+        return _legacy_lines(_legacy_file().read_text())
+    except OSError:
+        return []
 
 
 def show(item_id):
