@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from athena_lib import config, gitops, herdr, ledger, paths, retire
@@ -14,6 +15,7 @@ HARD_CAP = 6
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
 NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 READY = {"idle", "done"}  # herdr: both mean ready for input; which one depends on seen state
+SESSION_TRIES = 3  # asks for the session id to register the resume command, a second apart
 
 
 class SpawnError(Exception):
@@ -209,11 +211,17 @@ def _register_resume(pane, args) -> dict:
 
     Before Claude is past its startup prompts herdr knows no session yet; the hook registers it then.
     """
-    try:
-        session = herdr.call("agent", "get", pane, timeout=10).get("agent", {}).get("agent_session") or {}
-    except herdr.HerdrError:
-        return {}
-    sid = session.get("value") if session.get("kind", "id") == "id" else None
+    sid = None
+    for attempt in range(SESSION_TRIES):  # herdr's own Claude hook reports the session, maybe just after start
+        if attempt:
+            time.sleep(float(os.environ.get("ATHENA_SESSION_WAIT") or 1))
+        try:
+            session = herdr.call("agent", "get", pane, timeout=10).get("agent", {}).get("agent_session") or {}
+        except herdr.HerdrError:
+            return {}
+        sid = session.get("value") if session.get("kind", "id") == "id" else None
+        if sid:
+            break
     if not sid:
         return {}
     try:
