@@ -2,6 +2,7 @@
 import json
 import shlex
 import subprocess
+import time
 
 from athena_lib import paths
 
@@ -54,3 +55,14 @@ def text(*args, timeout=60) -> str:
     """For commands that print plain text (pane read)."""
     proc = subprocess.run(argv(*args), capture_output=True, text=True, timeout=timeout)
     return proc.stdout
+
+
+def register_resume(pane, session_id, claude_args, timeout=15) -> dict:
+    """Tell herdr the whole command that resumes this Claude session after a herdr restart.
+
+    Without it herdr resumes the session as a bare `claude --resume <id>`, which drops the worker's name, settings
+    (ATHENA_WORKER) and system prompt. herdr keeps it beside the session its own Claude hook reports.
+    """
+    return call("pane", "report-agent-session", pane, "--source", "athena", "--agent", "claude",
+                "--seq", time.time_ns(), "--agent-session-id", session_id,
+                "--", "claude", "--resume", session_id, *claude_args, timeout=timeout)

@@ -160,9 +160,11 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         brief = paths.ensure("briefs") / f"{name}.md"
         shutil.copyfile(brief_path, brief)
         settings = _write_settings(name, brief, ultracode, workflow_size, repo)
+        record["claude_args"] = claude_args(name, model, effort, settings)
         try:
             herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
-                       "--", *claude_args(name, model, effort, settings), timeout=200)
+                       "--", *record["claude_args"], timeout=200)
+            record.update(_register_resume(record["pane"], record["claude_args"]))
         except herdr.HerdrError as exc:
             if not _blocked_at_startup(name, record["pane"], exc):
                 raise
@@ -200,6 +202,25 @@ def _report_metadata(workspace, linear):
         herdr.call("workspace", "report-metadata", workspace, "--source", "athena", *tokens)
     except herdr.HerdrError:
         pass
+
+
+def _register_resume(pane, args) -> dict:
+    """Give herdr the worker's whole resume command. Never fails the spawn: the worker's SessionStart hook tries again.
+
+    Before Claude is past its startup prompts herdr knows no session yet; the hook registers it then.
+    """
+    try:
+        session = herdr.call("agent", "get", pane, timeout=10).get("agent", {}).get("agent_session") or {}
+    except herdr.HerdrError:
+        return {}
+    sid = session.get("value") if session.get("kind", "id") == "id" else None
+    if not sid:
+        return {}
+    try:
+        herdr.register_resume(pane, sid, args)
+    except herdr.HerdrError as exc:
+        return {"session": sid, "resume": f"failed: {exc.code}"}
+    return {"session": sid, "resume": "registered"}
 
 
 def _agent(name, pane):
