@@ -12,7 +12,7 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 - Tell it what to start: "start abc-101 and abc-102". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
 - `prefix+shift+h` (or `athena hq restart`): update Claude Code and its plugins, then restart HQ's Claude in the same pane on the same conversation; it runs its start routine by itself. HQ can run it about itself. Workers and the dashboard keep running.
 - `athena hq rotate`: HQ's answer to a long conversation, instead of compacting it again. It writes `handoff.md` in the state dir (fleet, PRs, open asks, in-flight threads, notes tail, standing-orders path), then starts a fresh HQ conversation in the same pane that reads it and runs its start routine. HQ runs it daily or when `athena status` shows its context at 60% or more.
-- `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq.
+- `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq. Each column runs a nested `herdr terminal attach --takeover`, which takes the mouse: hold Shift while you drag to select and copy text (herdr 0.9.3 has no attach flag to leave the mouse alone).
 - `athena dash open`: the dashboard in your browser.
 
 ## Reference
@@ -30,6 +30,7 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 | `athena review <name> start\|pass\|fail [--head <sha>]` | Record HQ's review of a live worker's PR in the ledger, at `--head`. Without it, `start` records the PR's current head, and `pass` or `fail` the head that `start` recorded (refused with no `start` before it), so a push during the review is never passed. Until a `pass` at the PR's current head, the PR is `in review · athena` (or `review findings · worker fixing` after a `fail`), never the human's to merge nor in Needs you as `no reviewer requested`; `athena status` shows it as `review=<verdict>@<sha>`, `(stale)` once the head moved |
 | `athena nudge <name> <text>` | Type a slash command into a worker |
 | `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
+| `athena whoami` | The worker this session is: `ATHENA_WORKER`, else the live worker whose worktree holds the cwd; exit 1 when none (the watch mod asks it) |
 | `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space |
 | `athena` | Outside herdr, from a terminal: start herdr if needed, open HQ, attach. Inside herdr: same as `athena hq` |
 | `athena init [--yes ...]` | Check herdr, claude and the plugin, gh, git; ask for folders, merge rules, model; write `config.json` |
