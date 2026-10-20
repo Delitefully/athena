@@ -364,7 +364,7 @@ export type Board = {
   needs: string[]
   /** `#n` per PR waiting on the human */
   prs: string[]
-  /** [state, workers] per active state: working, idle, starting */
+  /** [state, workers] per active state: working, idle, starting, in review */
   active: [string, string[]][]
   done: string[]
   /** `owner/repo` per PR number the watch knows from the ledger: a live worker's repo, or a stack's. */

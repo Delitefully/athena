@@ -107,11 +107,13 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(b["needs"], ["a blocked"])
 
     def test_prs_that_need_the_human(self):
-        # Only a PR whose dash row is in Needs you counts: never one that waits on a teammate's review.
+        # Only a PR whose dash row is in Needs you counts: never one that waits on a teammate's review. Each has
+        # passed HQ's review at its head (`athena review`; WatchReviewTest in test_review.py has the PRs still in it).
         def pr(n, review="REVIEW_REQUIRED", requested=(), **kw):
             p = {"state": "OPEN", "draft": False, "review": review, "checks": "success", "requested": list(requested),
-                 "reviews": {}, "auto_merge": False, "queued": False, "url": f"https://github.com/o/r/pull/{n}", **kw}
-            p["move"] = watch.pr.move(p, live=True, human_merge=False)
+                 "reviews": {}, "auto_merge": False, "queued": False, "url": f"https://github.com/o/r/pull/{n}",
+                 "head": "8d1c2b3a4f5e", **kw}
+            p["move"] = watch.pr.move(p, live=True, human_merge=False, review={"verdict": "pass", "head": p["head"]})
             return p
         done = {"status": "DONE"}
         snap = {"workers": {"a": _w("idle", pr(1, review="APPROVED"), report=done),  # approved, worker done: the human's go

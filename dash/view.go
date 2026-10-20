@@ -460,9 +460,10 @@ func repoName(key string) string {
 // moveOverWorking: the moves a working worker's row shows; on any other, the row says `working`.
 var moveOverWorking = map[string]bool{"approved": true, "queued": true, "changes": true}
 
-// moveMerges: the moves that make a PR the human's to merge. A live worker's PR is that only once the worker
-// reported DONE; until then its row shows the worker's own state (athena_lib/watch.py `_reported` agrees).
-var moveMerges = map[string]bool{"approved": true, "mergeable": true}
+// moveMerges: the moves that make a PR the human's to merge, and `reviewing`, athena's own review before that. A live
+// worker's PR shows one only once the worker reported DONE; until then its row shows the worker's own state
+// (athena_lib/watch.py `_reported` agrees).
+var moveMerges = map[string]bool{"approved": true, "mergeable": true, "reviewing": true}
 
 // placeMove puts a PR's row where whose move it is says: Needs you when it is the human's, else In progress.
 func placeMove(v *View, it Item, m *Move) {
@@ -472,6 +473,8 @@ func placeMove(v *View, it Item, m *Move) {
 		it.Icon = "ready"
 	case "queued":
 		it.Icon = "ok"
+	case "reviewing":
+		it.Icon = "review"
 	case "failing":
 		it.Icon = "fail"
 	case "pending":

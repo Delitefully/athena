@@ -179,11 +179,11 @@ def has_ci(slug):
     return found
 
 
-def _move(p, live, repo, slug):
+def _move(p, live, repo, slug, review=None):
     """pr.move for a PR of `repo` (a path or owner/name, for human_merge_repos); whether `slug` runs CI is asked only
-    for a PR with no checks yet."""
+    for a PR with no checks yet. `review`: a live worker's verdict from `athena review`."""
     ci = has_ci(slug) if p.get("checks") == "none" and is_slug(slug) else None
-    return pr.move(p, live=live, human_merge=_human_merge(repo, slug), ci=ci)
+    return pr.move(p, live=live, human_merge=_human_merge(repo, slug), ci=ci, review=review)
 
 
 def _retired_open() -> dict:
@@ -513,7 +513,8 @@ _DEFAULT_BASES = ("main", "master")
 
 def _group(w) -> str:
     """Where a worker sits on the status line: `needs context`, `blocked` or `exited` need the human, `done` is
-    done (its report says so even once its hook went idle), anything else is its state, shown as active."""
+    done (its report says so even once its hook went idle), unless its PR waits on HQ's review (`in review`, shown
+    as active); anything else is its state, shown as active."""
     report = ((w.get("report") or {}).get("status") or "").upper()
     state = w.get("state") or "unknown"
     if report == "NEEDS_CONTEXT":
@@ -523,7 +524,7 @@ def _group(w) -> str:
     if state == "exited":
         return "exited"
     if state == "done" or report.startswith("DONE"):
-        return "done"
+        return "in review" if (((w.get("pr") or {}).get("move") or {}).get("kind")) == "reviewing" else "done"
     return state
 
 
@@ -533,7 +534,9 @@ def _pr_key(url):
 
 
 _OVER_WORKING = ("approved", "queued", "changes")  # moves a working worker's row shows; others show `working`
-_MERGES = ("approved", "mergeable")  # the human's to merge: a live worker's PR only once the worker reported DONE
+# The human's to merge, and athena's review before that: a live worker's PR only once the worker reported DONE
+# (dash/view.go moveMerges).
+_MERGES = ("approved", "mergeable", "reviewing")
 
 
 def _reported(w) -> bool:
@@ -704,7 +707,8 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
         repo = w.get("repo")
         if pr_state and "requested" in pr_state:
             key = _pr_key(pr_state.get("url"))
-            pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None)}
+            pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None,
+                                                  review=w.get("review"))}
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
                               "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None,
                               "mergeable": _mergeable(pr_state, before.get(w["name"]))}

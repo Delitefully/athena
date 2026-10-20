@@ -93,7 +93,19 @@ def _names(names, most=3) -> str:
     return shown + (f" +{len(names) - most}" if len(names) > most else "")
 
 
-def move(p, live: bool, human_merge: bool, ci=True):
+VERDICTS = ("start", "pass", "fail")  # `athena review`: HQ's own review of a live worker's PR
+_SHA_MIN = 7
+
+
+def same_head(a, b) -> bool:
+    """Whether two shas name one commit: one is a prefix of the other, at least 7 hex digits, any case."""
+    a, b = str(a or "").lower(), str(b or "").lower()
+    if min(len(a), len(b)) < _SHA_MIN or not re.fullmatch(r"[0-9a-f]+", a + b):
+        return False
+    return a.startswith(b) or b.startswith(a)
+
+
+def move(p, live: bool, human_merge: bool, ci=True, review=None):
     """Whose move an open PR waits on: {"label", "kind", "needs", "human_merge"}; `needs` puts its row in the human's
     Needs you, and `human_merge` (its repo is in `human_merge_repos`) keeps the dashboard's Merge, a go for athena, off it.
 
@@ -101,6 +113,10 @@ def move(p, live: bool, human_merge: bool, ci=True):
     rule (reviewDecision empty) waits on the merge alone. A merge is the human's only once checks are green (or the
     repo runs no CI); before that it is `checks running`, or `checks starting` while none have registered. A live worker's PR is the human's to merge only once the
     worker reported DONE: the dashboard and the band check that, from the worker's state.
+
+    A live worker's PR is the human's to merge, or to request a reviewer for, only once HQ's review passed at the PR's current head (`review`, the
+    worker's ledger verdict from `athena review`): before that it is `in review · athena`, and after a fail at that head
+    `review findings · worker fixing`, both In progress. A verdict at an older head is void: in review again.
 
     `live`: a live worker owns the PR. `human_merge`: its repo is in `human_merge_repos`. `ci`: False when its repo
     runs no CI (`has_ci`), so a PR with no checks is green there; True or None (not known) waits for checks. None for a PR that is not
@@ -114,6 +130,16 @@ def move(p, live: bool, human_merge: bool, ci=True):
 
     def starting():
         return out("checks starting" if p.get("checks") == "none" else "checks running", "pending", False)
+
+    def athena_review():
+        """In review, or the worker fixing findings, until HQ's review passed at this head; None once it did."""
+        verdict = review if isinstance(review, dict) else {}
+        current = same_head(verdict.get("head"), p.get("head"))
+        if current and verdict.get("verdict") == "pass":
+            return None
+        if current and verdict.get("verdict") == "fail":
+            return out("review findings · worker fixing", "changes", False)
+        return out("in review · athena", "reviewing", False)
 
     requested = list(p.get("requested") or [])
     # Nothing is the human's to merge while CI still runs. No checks at all is green only in a repo known to run no CI
@@ -135,10 +161,14 @@ def move(p, live: bool, human_merge: bool, ci=True):
             return out("approved · auto-merge on", "queued", False)
         if not green:
             return starting()
+        if live and (gate := athena_review()):
+            return gate
         return out("approved · yours to merge" if human_merge else "approved · your go to merge", "approved", True)
     if requested:
         return out("awaiting review · " + _names(requested), "awaiting", False)
     if p.get("review") == "REVIEW_REQUIRED":
+        if live and (gate := athena_review()):
+            return gate  # HQ reviews before the human is asked to request a reviewer
         return out("no reviewer requested", "unrequested", True)
     # No review rule on its branch (reviewDecision empty): nothing to wait for but the merge.
     if p.get("queued"):
@@ -147,6 +177,8 @@ def move(p, live: bool, human_merge: bool, ci=True):
         return out("auto-merge on", "queued", False)
     if not green:
         return starting()
+    if live and (gate := athena_review()):
+        return gate
     return out("yours to merge" if human_merge else "your go to merge", "mergeable", True)
 
 

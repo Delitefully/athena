@@ -7,9 +7,13 @@ from unittest import mock
 from athena_lib import pr
 
 
+HEAD = "8d1c2b3a4f5e"
+PASSED = {"verdict": "pass", "head": HEAD}  # HQ's review passed at the PR's head
+
+
 def _pr(**kw):
     base = {"state": "OPEN", "draft": False, "review": "REVIEW_REQUIRED", "checks": "success", "requested": [],
-            "reviews": {}, "auto_merge": False, "queued": False}
+            "reviews": {}, "auto_merge": False, "queued": False, "head": HEAD}
     return {**base, **kw}
 
 
@@ -45,8 +49,8 @@ class ReduceTest(unittest.TestCase):
 class MoveTest(unittest.TestCase):
     """The table: whose move it is, its label, and whether its row is in Needs you."""
 
-    def check(self, p, live, human_merge, label, needs):
-        m = pr.move(p, live=live, human_merge=human_merge)
+    def check(self, p, live, human_merge, label, needs, review=PASSED):
+        m = pr.move(p, live=live, human_merge=human_merge, review=review)
         self.assertEqual((m["label"], m["needs"]), (label, needs), p)
 
     def test_a_teammate_reviews(self):
@@ -74,7 +78,7 @@ class MoveTest(unittest.TestCase):
         self.check(_pr(review="", queued=True), True, True, "in merge queue", False)
         self.check(_pr(review="", checks="failure"), True, False, "checks failing", False)
         # Its worker still at work keeps the row (`working`): not a move that wins over working.
-        self.assertEqual(pr.move(_pr(review=""), live=True, human_merge=False)["kind"], "mergeable")
+        self.assertEqual(pr.move(_pr(review=""), live=True, human_merge=False, review=PASSED)["kind"], "mergeable")
 
     def test_a_merge_waits_for_green_checks(self):
         # Nothing is the human's to merge while CI still runs: "checks running", In progress.
@@ -92,7 +96,7 @@ class MoveTest(unittest.TestCase):
                              "checks starting")
         self.assertEqual(pr.move(_pr(review="APPROVED", checks="none"), live=False, human_merge=True)["label"],
                          "checks starting")
-        m = pr.move(_pr(review="", checks="none"), live=True, human_merge=False, ci=False)
+        m = pr.move(_pr(review="", checks="none"), live=True, human_merge=False, ci=False, review=PASSED)
         self.assertEqual((m["label"], m["needs"]), ("your go to merge", True))
         m = pr.move(_pr(review="APPROVED", checks="none"), live=False, human_merge=True, ci=False)
         self.assertEqual((m["label"], m["needs"]), ("approved · yours to merge", True))
@@ -136,20 +140,94 @@ class MoveTest(unittest.TestCase):
 
     def test_kinds(self):
         self.assertEqual(pr.move(_pr(requested=["a"]), live=True, human_merge=False)["kind"], "awaiting")
-        self.assertEqual(pr.move(_pr(review="APPROVED"), live=True, human_merge=True)["kind"], "approved")
+        self.assertEqual(pr.move(_pr(review="APPROVED"), live=True, human_merge=True, review=PASSED)["kind"], "approved")
         self.assertEqual(pr.move(_pr(review="CHANGES_REQUESTED"), live=True, human_merge=False)["kind"], "changes")
+
+
+class ReviewGateTest(unittest.TestCase):
+    """A live worker's PR is the human's to merge only once HQ's review passed at the PR's current head."""
+
+    def move(self, p, review, live=True, human_merge=False):
+        m = pr.move(p, live=live, human_merge=human_merge, review=review)
+        return m["label"], m["kind"], m["needs"]
+
+    def test_done_with_no_verdict_is_in_review(self):
+        self.assertEqual(self.move(_pr(review=""), None), ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(review=""), {}), ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "start", "head": HEAD}),
+                         ("in review · athena", "reviewing", False))
+
+    def test_a_pass_at_the_current_head_is_the_merge(self):
+        self.assertEqual(self.move(_pr(review=""), PASSED), ("your go to merge", "mergeable", True))
+        self.assertEqual(self.move(_pr(review=""), PASSED, human_merge=True), ("yours to merge", "mergeable", True))
+        # A full sha against the 12 characters gh's reduce keeps, and a short one: the same commit.
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "pass", "head": HEAD + "0123456789abcdef0123"})[1],
+                         "mergeable")
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "pass", "head": HEAD[:7].upper()})[1], "mergeable")
+
+    def test_a_pass_at_an_old_head_is_in_review_again(self):
+        old = {"verdict": "pass", "head": "1111111aaaaa"}
+        self.assertEqual(self.move(_pr(review=""), old), ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "pass", "head": ""})[1], "reviewing")
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "pass", "head": "8d1"})[1], "reviewing")  # too short
+        self.assertEqual(self.move(_pr(review="", head=""), PASSED)[1], "reviewing")  # no head to match
+
+    def test_a_fail_is_the_workers_move(self):
+        failed = {"verdict": "fail", "head": HEAD}
+        self.assertEqual(self.move(_pr(review=""), failed), ("review findings · worker fixing", "changes", False))
+        self.assertEqual(self.move(_pr(review="APPROVED"), failed),
+                         ("review findings · worker fixing", "changes", False))
+        # The worker pushed its fixes: the failed verdict is void, so the new head waits on a new review.
+        self.assertEqual(self.move(_pr(review=""), {"verdict": "fail", "head": "1111111aaaaa"})[1], "reviewing")
+
+    def test_an_approved_pr_waits_on_athenas_review_too(self):
+        self.assertEqual(self.move(_pr(review="APPROVED"), None, human_merge=True),
+                         ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(review="APPROVED"), PASSED, human_merge=True),
+                         ("approved · yours to merge", "approved", True))
+
+    def test_no_reviewer_requested_waits_on_athenas_review_first(self):
+        # A review is required and nobody is asked: HQ reviews before the human is asked to request one.
+        self.assertEqual(self.move(_pr(), None), ("in review · athena", "reviewing", False))
+        self.assertEqual(self.move(_pr(), {"verdict": "fail", "head": HEAD})[0], "review findings · worker fixing")
+        self.assertEqual(self.move(_pr(), PASSED), ("no reviewer requested", "unrequested", True))
+        self.assertEqual(self.move(_pr(), None, live=False), ("no reviewer requested", "unrequested", True))
+
+    def test_earlier_moves_come_first(self):
+        # Draft, failing checks, changes requested, a reviewer asked, CI still running: as before, verdict or not.
+        for review in (None, {"verdict": "fail", "head": HEAD}):
+            self.assertEqual(self.move(_pr(draft=True), review)[0], "draft")
+            self.assertEqual(self.move(_pr(review="", checks="failure"), review)[0], "checks failing")
+            self.assertEqual(self.move(_pr(review="CHANGES_REQUESTED", reviews={"alex": "CHANGES_REQUESTED"}), review)[0],
+                             "changes requested · worker fixing")
+            self.assertEqual(self.move(_pr(requested=["alex"]), review)[0], "awaiting review · alex")
+            self.assertEqual(self.move(_pr(review="", checks="pending"), review)[0], "checks running")
+            self.assertEqual(self.move(_pr(review="APPROVED", auto_merge=True), review)[0], "approved · auto-merge on")
+
+    def test_a_pr_with_no_live_worker_is_unchanged(self):
+        for review in (None, {"verdict": "fail", "head": HEAD}, {"verdict": "start", "head": HEAD}):
+            self.assertEqual(self.move(_pr(review=""), review, live=False), ("your go to merge", "mergeable", True))
+            self.assertEqual(self.move(_pr(review="APPROVED"), review, live=False, human_merge=True),
+                             ("approved · yours to merge", "approved", True))
 
 
 class DashFixtureTest(unittest.TestCase):
     def test_the_dash_fixture_moves_are_what_pr_move_says(self):
         # The dash renders the move athena watch stored: its fixture must hold what pr.move gives (web is human-merged).
         fixture = json.loads((Path(__file__).resolve().parent.parent / "dash/testdata/state/watch.json").read_text())
-        stored = [(p, True) for p in (w.get("pr") for w in fixture["workers"].values()) if p and "move" in p]
-        stored += [(p, False) for p in fixture["prs"].values()]
+        state = Path(__file__).resolve().parent.parent / "dash/testdata/state"
+        verdicts = {}  # HQ's review per live worker, as the fixture ledger records it
+        for line in (state / "ledger.jsonl").read_text().splitlines():
+            ev = json.loads(line)
+            if ev.get("review"):
+                verdicts[ev["name"]] = ev["review"]
+        stored = [(p, True, verdicts.get(name)) for name, p in ((n, w.get("pr")) for n, w in fixture["workers"].items())
+                  if p and "move" in p]
+        stored += [(p, False, None) for p in fixture["prs"].values()]
         self.assertGreaterEqual(len(stored), 4)
-        for p, live in stored:
+        for p, live, review in stored:
             human = "/web/" in p["url"]
-            self.assertEqual(p["move"], pr.move(p, live=live, human_merge=human), p["url"])
+            self.assertEqual(p["move"], pr.move(p, live=live, human_merge=human, review=review), p["url"])
 
 
 def _graphql(nodes):
