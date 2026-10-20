@@ -13,11 +13,11 @@ from athena_lib import config, hookstatus, ledger, paths
 HOOK = helpers.ROOT / "hooks" / "worker-status"
 
 
-def run_hook(payload, env_extra=None, cwd=None):
+def run_hook(payload, env_extra=None, cwd=None, args=()):
     env = dict(os.environ)
     env.update(env_extra or {})
     data = payload if isinstance(payload, str) else json.dumps(payload)
-    return subprocess.run([str(HOOK)], input=data, capture_output=True, text=True, env=env, cwd=cwd)
+    return subprocess.run([str(HOOK), *args], input=data, capture_output=True, text=True, env=env, cwd=cwd)
 
 
 class HookStatusTest(unittest.TestCase):
@@ -269,12 +269,33 @@ class HqResumeHookTest(unittest.TestCase):
 
     def test_the_hook_registers_hq_from_outside_the_worktree_root(self):
         payload = {"hook_event_name": "SessionStart", "session_id": "hq-2", "source": "clear", "cwd": str(self.home)}
-        proc = run_hook(payload, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"}, cwd=self.home)
+        proc = run_hook(payload, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"}, cwd=self.home, args=["SessionStart"])
         self.assertEqual(proc.returncode, 0)
         [report] = self.reports()
         self.assertEqual(report[2], "w1:p1")
         self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "hq-2", *HQ_ARGS])
         self.assertFalse((paths.state_dir() / "workers").exists() and any((paths.state_dir() / "workers").iterdir()))
+
+    def test_hqs_other_events_stay_in_shell(self):
+        # Only SessionStart starts Python in HQ: hooks.json names it as the hook's argument.
+        stub = Path(self.tmp.name) / "python"
+        mark = Path(self.tmp.name) / "python-ran"
+        stub.write_text(f"#!/bin/sh\ntouch {mark}\ncat >/dev/null\n")
+        stub.chmod(0o755)
+        os.environ.pop("ATHENA_WORKTREE_ROOT")
+        config.write({**config.DEFAULTS, "worktree_root": str(Path(self.tmp.name) / "worktrees")})
+        env = {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1", "ATHENA_PYTHON": str(stub)}
+        for event in ("UserPromptSubmit", "Stop", "Notification", "SessionEnd"):
+            run_hook({"hook_event_name": event, "cwd": str(self.home)}, env, cwd=self.home)
+        self.assertFalse(mark.exists())
+        run_hook({"hook_event_name": "SessionStart", "cwd": str(self.home)}, env, cwd=self.home, args=["SessionStart"])
+        self.assertTrue(mark.exists())
+
+    def test_hooks_json_names_session_start_alone(self):
+        hooks = json.loads((helpers.ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+        for event, entries in hooks.items():
+            command = entries[0]["hooks"][0]["command"]
+            self.assertEqual(command.endswith(" SessionStart"), event == "SessionStart", event)
 
     def test_not_hq_or_not_its_pane_registers_nothing(self):
         event = {"hook_event_name": "SessionStart", "session_id": "hq-2"}
