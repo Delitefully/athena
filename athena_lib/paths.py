@@ -41,8 +41,11 @@ def min_col() -> int:
     return int(os.environ.get("ATHENA_MIN_COL") or 70)
 
 
+HARD_CAP = 8  # live workers at most, even with `athena spawn --force`
+
+
 def max_workers() -> int:
-    return min(int(os.environ.get("ATHENA_MAX_WORKERS") or 4), 6)
+    return min(int(os.environ.get("ATHENA_MAX_WORKERS") or 4), HARD_CAP)
 
 
 def ensure(sub: str = "") -> Path:

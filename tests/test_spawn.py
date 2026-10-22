@@ -131,19 +131,28 @@ class SpawnTest(unittest.TestCase):
 
     def test_hard_cap_ignores_force(self):
         self.scenario()
-        for i in range(6):
+        for i in range(8):
             ledger.append("spawn", f"w{i}", pane=f"w{i}:p1")
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn(force=True)
-        self.assertIn("hard cap is 6", str(ctx.exception))
+        self.assertIn("hard cap is 8", str(ctx.exception))
 
-    def test_force_allows_a_sixth_worker(self):
+    def test_force_allows_an_eighth_worker(self):
         self.scenario()
-        for i in range(5):
+        for i in range(7):
             ledger.append("spawn", f"w{i}", pane=f"w{i}:p1")
-        with self.assertRaises(spawn.SpawnError):
+        with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
+        self.assertIn("the cap is 4 (use --force to go up to 8)", str(ctx.exception))
         self.assertEqual(self.run_spawn(force=True)["name"], "abc-1")
+
+    def test_the_configured_cap_never_passes_the_hard_cap(self):
+        self.assertEqual(paths.max_workers(), 4)
+        os.environ["ATHENA_MAX_WORKERS"] = "7"
+        self.assertEqual(paths.max_workers(), 7)
+        os.environ["ATHENA_MAX_WORKERS"] = "12"
+        self.assertEqual(paths.max_workers(), 8)
+        self.assertEqual(spawn.HARD_CAP, paths.HARD_CAP)
 
     def test_spawn_ignores_quota_state(self):
         # An install from before the quota gate was removed: its config.json still names the
