@@ -32,6 +32,9 @@ DEFAULTS = {
     # turns CONFLICTING, in every mode), "active" (a working or blocked worker, or an unapproved open PR, in that
     # repo), "always" or "never". What it does not tell goes to logs/watch-suppressed.log.
     "watch_main_moved": "conflicts",
+    # `athena hq restart` skips `claude update` and the plugin updates when they last ran without a warning less than
+    # this many hours ago (`--update` forces them). 0: update on every restart.
+    "hq_update_interval_hours": 6,
 }
 
 # Migration only: the values an install from before config.json ran with.
@@ -53,7 +56,7 @@ ENV = {
 
 PATH_KEYS = ("projects_dir", "worktree_root")
 OPTIONAL_KEYS = ("slack_channels", "slack_ext_channels", "slack_allow_bots", "slack_dm_active_minutes", "ci_repos",
-                 "watch_main_moved")  # written only when set
+                 "watch_main_moved", "hq_update_interval_hours")  # written only when set
 LIST_KEYS = ("human_merge_repos", "reapproval_repos")
 
 

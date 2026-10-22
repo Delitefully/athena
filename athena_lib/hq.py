@@ -8,7 +8,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from athena_lib import board, dash, handoff, herdr, paths, retire
+from athena_lib import board, config, dash, handoff, herdr, paths, retire
 
 
 def _file():
@@ -247,6 +247,7 @@ def _claude_bin():
 
 # Not in `claude plugin marketplace list --json`, but refreshed by a plain `claude plugin marketplace update`.
 BUILT_IN_MARKETPLACE = "anthropic-plugin-directory"
+PLUGIN_UPDATE_WORKERS = 8
 
 
 def _json(proc, default):
@@ -261,8 +262,10 @@ def update_claude():
 
     `claude update` runs alongside the rest. The marketplaces update side by side, one process per marketplace (in the
     lab, Claude Code 2.1.296, each landed in ~/.claude/plugins/known_marketplaces.json). The user-scope plugins then
-    update from the refreshed marketplaces one at a time: an update that installs a new version rewrites
-    installed_plugins.json, and nothing read-only says in advance which plugins have one.
+    update from the refreshed marketplaces side by side too, PLUGIN_UPDATE_WORKERS at a time. Most say they are
+    already at the latest version and write nothing; one that installs a new version rewrites installed_plugins.json,
+    and two doing so at once could each write over the other's record. So every plugin that updated is updated once
+    more, alone, afterwards: that puts a lost record back, or says it is already at the latest version.
     Project-scope installs belong to other checkouts (often live workers'), so they are left alone. No `--yes`:
     a plugin whose marketplace changed its install command waits for a person to accept it by hand.
     """
@@ -305,10 +308,55 @@ def update_claude():
         for p in _json(listed.result(), []):
             if isinstance(p, dict) and p.get("scope") == "user" and p.get("id") and p["id"] not in ids:
                 ids.append(p["id"])
-        for pid in ids:
-            run("plugin", "update", pid, "--scope", "user", timeout=120)
+        with ThreadPoolExecutor(max_workers=PLUGIN_UPDATE_WORKERS) as plugins:
+            done = list(plugins.map(lambda pid: (pid, run("plugin", "update", pid, "--scope", "user", timeout=120)),
+                                    ids))
+        for pid, proc in done:
+            if proc and " updated from " in (proc.stdout or ""):
+                run("plugin", "update", pid, "--scope", "user", timeout=120)
         cli.result()
     return warnings
+
+
+def update_stamp_file():
+    return paths.ensure() / "hq-update.json"
+
+
+def _last_update():
+    """When the updates last ran without a warning (epoch seconds), or None."""
+    try:
+        return float(json.loads(update_stamp_file().read_text())["last_success"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _stamp_update():
+    target = update_stamp_file()
+    tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+    tmp.write_text(json.dumps({"last_success": time.time()}) + "\n")
+    os.replace(tmp, target)
+
+
+def _update_interval_hours():
+    default = config.DEFAULTS["hq_update_interval_hours"]
+    try:
+        hours = float(config.get("hq_update_interval_hours"))
+    except (config.ConfigError, TypeError, ValueError):
+        return default
+    return hours if hours >= 0 else default
+
+
+def _why_skip_updates():
+    """Why the updates can wait this time, or None when they are due: they ran without a warning within the
+    configured interval (0: always update)."""
+    hours, last = _update_interval_hours(), _last_update()
+    if not hours or last is None:
+        return None
+    ago = (time.time() - last) / 3600
+    if 0 <= ago < hours:
+        return (f"the last successful run was {ago:.1f}h ago, under hq_update_interval_hours ({hours:g}); "
+                "`athena hq restart --update` forces them")
+    return None
 
 
 def _wait_idle():
@@ -322,16 +370,19 @@ def _wait_idle():
         return False
 
 
-def restart_now(update=True) -> dict:
-    """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane."""
+def restart_now(update=True, force_update=False) -> dict:
+    """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane.
+
+    The updates are skipped when they ran without a warning within config hq_update_interval_hours, unless
+    `force_update`; `update=False` skips them whatever."""
     _lock()
     try:
-        return _restart(update)
+        return _restart(update, force_update)
     finally:
         _unlock()
 
 
-def _restart(update):
+def _restart(update, force_update=False):
     record = load()
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
@@ -340,8 +391,15 @@ def _restart(update):
 
     def took(since):
         return f"{time.monotonic() - since:.1f}s"
-    if update:
-        update_claude()
+    skip = None if force_update else _why_skip_updates() if update else "--no-update"
+    if skip:
+        _say(f"updates skipped: {skip}")
+    else:
+        if force_update:
+            _say("updates forced by --update")
+        # Before the exit: the resume that follows is the restart that applies what they installed.
+        if not update_claude():
+            _stamp_update()
         _say(f"updates took {took(began)}")
     session = _session() or record.get("session")
     if retire.agent_owned(name):
@@ -388,7 +446,7 @@ def _fallback(why):
     return {**result, "fallback": True, "reason": why}
 
 
-def restart(update=True) -> dict:
+def restart(update=True, force_update=False) -> dict:
     """Start the restart detached and return at once: when HQ runs this about itself, exiting HQ must not kill it."""
     pid = _holder()
     if pid:
@@ -397,6 +455,8 @@ def restart(update=True) -> dict:
     argv = [sys.executable, str(paths.PLUGIN_ROOT / "bin" / "athena"), "hq", "restart", "--child"]
     if not update:
         argv.append("--no-update")
+    elif force_update:
+        argv.append("--update")
     with open(log, "a") as out:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
                                 cwd=str(paths.PLUGIN_ROOT))
