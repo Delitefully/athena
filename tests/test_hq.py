@@ -426,6 +426,15 @@ class RestartTest(unittest.TestCase):
         update.assert_called_once_with()
         self.assertLess(json.loads(hq.update_stamp_file().read_text())["last_success"], hq.time.time() - 6 * 3600)
 
+    def test_a_stamp_that_cannot_be_written_never_stops_the_restart(self):
+        with mock.patch.object(hq.os, "replace", side_effect=OSError("read-only file system")):
+            update, _, said = self.restart_with_updates()
+        update.assert_called_once_with()
+        self.assertEqual(len(self.starts()), 1)  # exited and resumed all the same
+        (warning,) = [line for line in said if line.startswith("warning:")]
+        self.assertIn("hq-update.json", warning)
+        self.assertIn("read-only file system", warning)
+
     def test_no_update_skips_them_however_old(self):
         with mock.patch.object(hq, "update_claude") as update:
             write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),

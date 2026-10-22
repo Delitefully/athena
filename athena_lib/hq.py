@@ -1,4 +1,5 @@
 """The chief of staff's own space: create it once, then focus it, and restart its Claude in place."""
+import contextlib
 import json
 import os
 import shlex
@@ -324,10 +325,16 @@ def _last_update():
 
 
 def _stamp_update():
+    """Record a run with no warnings. A stamp that cannot be written is a warning: the next restart updates again."""
     target = update_stamp_file()
     tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
-    tmp.write_text(json.dumps({"last_success": time.time()}) + "\n")
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(json.dumps({"last_success": time.time()}) + "\n")
+        os.replace(tmp, target)
+    except OSError as exc:
+        _say(f"warning: could not write {target} ({exc}); the next restart updates again")
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _update_interval_hours():
