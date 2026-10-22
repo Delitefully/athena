@@ -247,7 +247,6 @@ def _claude_bin():
 
 # Not in `claude plugin marketplace list --json`, but refreshed by a plain `claude plugin marketplace update`.
 BUILT_IN_MARKETPLACE = "anthropic-plugin-directory"
-PLUGIN_UPDATE_WORKERS = 8
 
 
 def _json(proc, default):
@@ -262,10 +261,8 @@ def update_claude():
 
     `claude update` runs alongside the rest. The marketplaces update side by side, one process per marketplace (in the
     lab, Claude Code 2.1.296, each landed in ~/.claude/plugins/known_marketplaces.json). The user-scope plugins then
-    update from the refreshed marketplaces side by side too, PLUGIN_UPDATE_WORKERS at a time. Most say they are
-    already at the latest version and write nothing; one that installs a new version rewrites installed_plugins.json,
-    and two doing so at once could each write over the other's record. So every plugin that updated is updated once
-    more, alone, afterwards: that puts a lost record back, or says it is already at the latest version.
+    update from the refreshed marketplaces one at a time: an update that installs a new version rewrites
+    installed_plugins.json, and nothing read-only says in advance which plugins have one.
     Project-scope installs belong to other checkouts (often live workers'), so they are left alone. No `--yes`:
     a plugin whose marketplace changed its install command waits for a person to accept it by hand.
     """
@@ -308,12 +305,8 @@ def update_claude():
         for p in _json(listed.result(), []):
             if isinstance(p, dict) and p.get("scope") == "user" and p.get("id") and p["id"] not in ids:
                 ids.append(p["id"])
-        with ThreadPoolExecutor(max_workers=PLUGIN_UPDATE_WORKERS) as plugins:
-            done = list(plugins.map(lambda pid: (pid, run("plugin", "update", pid, "--scope", "user", timeout=120)),
-                                    ids))
-        for pid, proc in done:
-            if proc and " updated from " in (proc.stdout or ""):
-                run("plugin", "update", pid, "--scope", "user", timeout=120)
+        for pid in ids:
+            run("plugin", "update", pid, "--scope", "user", timeout=120)
         cli.result()
     return warnings
 

@@ -270,17 +270,16 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(result["log"].endswith("hq-restart.log"))
         self.assertIn("restarting HQ; log at", result["message"])
 
-    def fake_claude(self, fail=(), meet=(), updated=(), plugins=None):
+    def fake_claude(self, fail=(), meet=(), updated=()):
         """A stand-in for `subprocess.run` of the claude CLI. Commands in `fail` exit 1. Commands in `meet` each wait
-        (the first time they run) until all of them are running at once, so a test fails if update_claude runs them
-        one after another. A plugin update says the plugin is already at the latest version, but for the plugin ids
-        in `updated`, which install a new one. `overlap["max"]` is the most plugin updates that ran at the same time."""
-        plugins = plugins or [{"id": "athena@athena", "scope": "user"},
-                              {"id": "linear@x", "scope": "project", "projectPath": "/p"},
-                              {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"},
-                              {"id": "figma@y", "scope": "user"}]
+        until all of them are running at once, so a test fails if update_claude runs them one after another. A plugin
+        update says the plugin is already at the latest version, but for the plugin ids in `updated`, which install a
+        new one. `overlap["max"]` is the most plugin updates that ran at the same time."""
+        plugins = [{"id": "athena@athena", "scope": "user"}, {"id": "linear@x", "scope": "project", "projectPath": "/p"},
+                   {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"},
+                   {"id": "figma@y", "scope": "user"}]
         markets = [{"name": "athena"}, {"name": "claude-plugins-official"}]
-        ran, lock, met = [], threading.Lock(), set()
+        ran, lock = [], threading.Lock()
         barrier = threading.Barrier(len(meet), timeout=5) if meet else None
         overlap = {"now": 0, "max": 0}
 
@@ -288,9 +287,7 @@ class RestartTest(unittest.TestCase):
             args = cmd[1:]
             with lock:
                 ran.append(args)
-                first = tuple(args) not in met
-                met.add(tuple(args))
-            if tuple(args) in meet and first:
+            if tuple(args) in meet:
                 barrier.wait()
             if args[:2] == ["plugin", "update"]:
                 with lock:
@@ -345,42 +342,22 @@ class RestartTest(unittest.TestCase):
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             self.assertEqual(hq.update_claude(), [])
 
-    def test_plugin_updates_run_side_by_side(self):
-        run, ran = self.fake_claude(meet={("plugin", "update", pid, "--scope", "user")
-                                          for pid in ("athena@athena", "linear@x", "figma@y")})
+    def test_plugin_updates_never_overlap(self):
+        # An update that installs a new version rewrites ~/.claude/plugins/installed_plugins.json.
+        run, ran = self.fake_claude(updated={"linear@x"})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             self.assertEqual(hq.update_claude(), [])
         self.assertEqual(len([c for c in ran if c[:2] == ["plugin", "update"]]), 3)
-        self.assertEqual(self.overlap["max"], 3)
+        self.assertEqual(self.overlap["max"], 1)
 
     def test_a_failing_plugin_update_holds_up_no_other(self):
-        run, ran = self.fake_claude(fail={("plugin", "update", "athena@athena", "--scope", "user")},
-                                    meet={("plugin", "update", "linear@x", "--scope", "user"),
-                                          ("plugin", "update", "figma@y", "--scope", "user")})
+        run, ran = self.fake_claude(fail={("plugin", "update", "athena@athena", "--scope", "user")})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             warnings = hq.update_claude()
         self.assertEqual(sorted(c[2] for c in ran if c[:2] == ["plugin", "update"]),
                          ["athena@athena", "figma@y", "linear@x"])
         self.assertEqual(len(warnings), 1)
         self.assertIn("claude plugin update athena@athena --scope user failed", warnings[0])
-
-    def test_plugin_updates_are_bounded(self):
-        many = [{"id": f"p{i}@m", "scope": "user"} for i in range(hq.PLUGIN_UPDATE_WORKERS * 2)]
-        run, ran = self.fake_claude(plugins=many)
-        with mock.patch.object(hq.subprocess, "run", side_effect=run):
-            self.assertEqual(hq.update_claude(), [])
-        self.assertEqual(len([c for c in ran if c[:2] == ["plugin", "update"]]), len(many))
-        self.assertLessEqual(self.overlap["max"], hq.PLUGIN_UPDATE_WORKERS)
-
-    def test_a_plugin_that_updated_is_updated_again_on_its_own(self):
-        # Side-by-side updates can each rewrite ~/.claude/plugins/installed_plugins.json, and the last write wins: a
-        # second, lone run puts back a lost install record, or says the plugin is already at the latest version.
-        run, ran = self.fake_claude(updated={"linear@x"})
-        with mock.patch.object(hq.subprocess, "run", side_effect=run):
-            self.assertEqual(hq.update_claude(), [])
-        updates = [c[2] for c in ran if c[:2] == ["plugin", "update"]]
-        self.assertEqual(sorted(updates[:3]), ["athena@athena", "figma@y", "linear@x"])
-        self.assertEqual(updates[3:], ["linear@x"])
 
     def test_a_failed_marketplace_listing_updates_them_all_in_one_call(self):
         run, ran = self.fake_claude(fail={("plugin", "marketplace", "list", "--json")})
