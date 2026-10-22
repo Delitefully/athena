@@ -270,10 +270,11 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(result["log"].endswith("hq-restart.log"))
         self.assertIn("restarting HQ; log at", result["message"])
 
-    def fake_claude(self, fail=(), meet=()):
+    def fake_claude(self, fail=(), meet=(), updated=()):
         """A stand-in for `subprocess.run` of the claude CLI. Commands in `fail` exit 1. Commands in `meet` each wait
-        until all of them are running at once, so a test fails if update_claude runs them one after another.
-        `overlap["max"]` is the most plugin updates that ran at the same time."""
+        until all of them are running at once, so a test fails if update_claude runs them one after another. A plugin
+        update says the plugin is already at the latest version, but for the plugin ids in `updated`, which install a
+        new one. `overlap["max"]` is the most plugin updates that ran at the same time."""
         plugins = [{"id": "athena@athena", "scope": "user"}, {"id": "linear@x", "scope": "project", "projectPath": "/p"},
                    {"id": "linear@x", "scope": "user"}, {"id": "linear@x", "scope": "user"},
                    {"id": "figma@y", "scope": "user"}]
@@ -301,6 +302,13 @@ class RestartTest(unittest.TestCase):
                 return mock.Mock(returncode=0, stdout=json.dumps(plugins), stderr="")
             if args[:4] == ["plugin", "marketplace", "list", "--json"]:
                 return mock.Mock(returncode=0, stdout=json.dumps(markets), stderr="")
+            if args[:2] == ["plugin", "update"]:
+                name = args[2].split("@")[0]
+                if args[2] in updated:
+                    out = f'✔ Plugin "{name}" updated from aaa to bbb for scope user. Restart to apply changes.'
+                else:
+                    out = f"✔ {name} is already at the latest version (1.0.0)."
+                return mock.Mock(returncode=0, stdout=out, stderr="")
             return mock.Mock(returncode=0, stdout="", stderr="")
         self.overlap = overlap
         return run, ran
@@ -336,17 +344,110 @@ class RestartTest(unittest.TestCase):
 
     def test_plugin_updates_never_overlap(self):
         # An update that installs a new version rewrites ~/.claude/plugins/installed_plugins.json.
-        run, ran = self.fake_claude()
+        run, ran = self.fake_claude(updated={"linear@x"})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             self.assertEqual(hq.update_claude(), [])
         self.assertEqual(len([c for c in ran if c[:2] == ["plugin", "update"]]), 3)
         self.assertEqual(self.overlap["max"], 1)
+
+    def test_a_failing_plugin_update_holds_up_no_other(self):
+        run, ran = self.fake_claude(fail={("plugin", "update", "athena@athena", "--scope", "user")})
+        with mock.patch.object(hq.subprocess, "run", side_effect=run):
+            warnings = hq.update_claude()
+        self.assertEqual(sorted(c[2] for c in ran if c[:2] == ["plugin", "update"]),
+                         ["athena@athena", "figma@y", "linear@x"])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("claude plugin update athena@athena --scope user failed", warnings[0])
 
     def test_a_failed_marketplace_listing_updates_them_all_in_one_call(self):
         run, ran = self.fake_claude(fail={("plugin", "marketplace", "list", "--json")})
         with mock.patch.object(hq.subprocess, "run", side_effect=run):
             hq.update_claude()
         self.assertIn(["plugin", "marketplace", "update"], ran)
+
+    def restart_with_updates(self, last=None, warnings=(), force=False, interval=None):
+        """restart_now with updates on and update_claude stubbed. `last`: hours since the last successful update
+        (None: never), `interval`: config hq_update_interval_hours. Returns the stub, the herdr starts seen when it
+        ran and what the restart said."""
+        if last is not None:
+            hq.update_stamp_file().write_text(json.dumps({"last_success": hq.time.time() - last * 3600}))
+        if interval is not None:
+            (paths.state_dir() / "config.json").write_text(json.dumps({"version": 1, "projects_dir": "~",
+                                                                       "hq_update_interval_hours": interval}))
+        write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
+        starts_then = []
+        update = mock.Mock(side_effect=lambda: starts_then.append(self.starts()) or list(warnings))
+        with mock.patch.object(hq, "update_claude", update):
+            self.assertTrue(hq.restart_now(update=True, force_update=force)["resumed"])
+        said = [c.args[0] for c in hq._say.call_args_list]
+        return update, starts_then, said
+
+    def test_updates_run_before_the_resume_that_applies_them(self):
+        # "Restart to apply changes": the resumed Claude loads what the update installed.
+        update, starts_then, said = self.restart_with_updates()
+        update.assert_called_once_with()
+        self.assertEqual(starts_then, [[]])
+        (start,) = self.starts()
+        self.assertIn("--resume", start)
+        self.assertTrue(any(line.startswith("updates took") for line in said))
+
+    def test_updates_are_skipped_when_they_ran_recently(self):
+        update, _, said = self.restart_with_updates(last=1)
+        update.assert_not_called()
+        (skipped,) = [line for line in said if line.startswith("updates skipped")]
+        self.assertIn("1.0h ago", skipped)
+        self.assertIn("hq_update_interval_hours", skipped)
+        self.assertIn("--update", skipped)
+        self.assertEqual(len(self.starts()), 1)  # the restart itself goes on
+
+    def test_updates_run_once_the_interval_has_passed_and_are_stamped(self):
+        before = hq.time.time()
+        update, _, _ = self.restart_with_updates(last=7)
+        update.assert_called_once_with()
+        self.assertGreaterEqual(json.loads(hq.update_stamp_file().read_text())["last_success"], before)
+
+    def test_update_forces_them_however_recent(self):
+        update, _, said = self.restart_with_updates(last=0.1, force=True)
+        update.assert_called_once_with()
+        self.assertTrue(any("--update" in line and "forced" in line for line in said))
+
+    def test_an_interval_of_zero_always_updates(self):
+        update, _, _ = self.restart_with_updates(last=0.01, interval=0)
+        update.assert_called_once_with()
+
+    def test_the_interval_comes_from_the_config(self):
+        update, _, said = self.restart_with_updates(last=20, interval=24)
+        update.assert_not_called()
+        self.assertTrue(any("under hq_update_interval_hours (24)" in line for line in said))
+
+    def test_a_run_with_warnings_is_not_stamped(self):
+        update, _, _ = self.restart_with_updates(last=7, warnings=["claude update failed: boom"])
+        update.assert_called_once_with()
+        self.assertLess(json.loads(hq.update_stamp_file().read_text())["last_success"], hq.time.time() - 6 * 3600)
+
+    def test_a_stamp_that_cannot_be_written_never_stops_the_restart(self):
+        with mock.patch.object(hq.os, "replace", side_effect=OSError("read-only file system")):
+            update, _, said = self.restart_with_updates()
+        update.assert_called_once_with()
+        self.assertEqual(len(self.starts()), 1)  # exited and resumed all the same
+        (warning,) = [line for line in said if line.startswith("warning:")]
+        self.assertIn("hq-update.json", warning)
+        self.assertIn("read-only file system", warning)
+
+    def test_no_update_skips_them_however_old(self):
+        with mock.patch.object(hq, "update_claude") as update:
+            write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
+                                           {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE,
+                                           ON_EXIT])
+            hq.restart_now(update=False)
+        update.assert_not_called()
+
+    def test_restart_passes_update_to_the_child(self):
+        with mock.patch.object(hq.subprocess, "Popen") as popen:
+            popen.return_value.pid = 4242
+            hq.restart(force_update=True)
+        self.assertEqual(popen.call_args.args[0][-4:], ["hq", "restart", "--child", "--update"])
 
     def test_fresh_hq_records_its_session(self):
         write_scenario(self.tmp.name, [{"match": ["agent", "get", "w8:p1"], "stdout": "", "exit": 1},
@@ -394,6 +495,11 @@ class HqCliTest(unittest.TestCase):
         a = p.parse_args(["hq", "restart", "--no-update"])
         self.assertEqual((a.action, a.no_update, a.child), ("restart", True, False))
         self.assertFalse(p.parse_args(["hq", "restart"]).no_update)
+        a = p.parse_args(["hq", "restart", "--update"])
+        self.assertEqual((a.update, a.no_update), (True, False))
+        self.assertFalse(p.parse_args(["hq", "restart"]).update)
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            p.parse_args(["hq", "restart", "--update", "--no-update"])
 
 
 if __name__ == "__main__":

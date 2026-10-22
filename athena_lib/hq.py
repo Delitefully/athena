@@ -1,4 +1,5 @@
 """The chief of staff's own space: create it once, then focus it, and restart its Claude in place."""
+import contextlib
 import json
 import os
 import shlex
@@ -8,7 +9,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from athena_lib import board, dash, handoff, herdr, paths, retire
+from athena_lib import board, config, dash, handoff, herdr, paths, retire
 
 
 def _file():
@@ -311,6 +312,53 @@ def update_claude():
     return warnings
 
 
+def update_stamp_file():
+    return paths.ensure() / "hq-update.json"
+
+
+def _last_update():
+    """When the updates last ran without a warning (epoch seconds), or None."""
+    try:
+        return float(json.loads(update_stamp_file().read_text())["last_success"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _stamp_update():
+    """Record a run with no warnings. A stamp that cannot be written is a warning: the next restart updates again."""
+    target = update_stamp_file()
+    tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+    try:
+        tmp.write_text(json.dumps({"last_success": time.time()}) + "\n")
+        os.replace(tmp, target)
+    except OSError as exc:
+        _say(f"warning: could not write {target} ({exc}); the next restart updates again")
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _update_interval_hours():
+    default = config.DEFAULTS["hq_update_interval_hours"]
+    try:
+        hours = float(config.get("hq_update_interval_hours"))
+    except (config.ConfigError, TypeError, ValueError):
+        return default
+    return hours if hours >= 0 else default
+
+
+def _why_skip_updates():
+    """Why the updates can wait this time, or None when they are due: they ran without a warning within the
+    configured interval (0: always update)."""
+    hours, last = _update_interval_hours(), _last_update()
+    if not hours or last is None:
+        return None
+    ago = (time.time() - last) / 3600
+    if 0 <= ago < hours:
+        return (f"the last successful run was {ago:.1f}h ago, under hq_update_interval_hours ({hours:g}); "
+                "`athena hq restart --update` forces them")
+    return None
+
+
 def _wait_idle():
     """When HQ runs the restart about itself it is still finishing that turn: /exit typed now would be queued."""
     wait = int(float(os.environ.get("ATHENA_HQ_IDLE_WAIT") or 300) * 1000)
@@ -322,16 +370,19 @@ def _wait_idle():
         return False
 
 
-def restart_now(update=True) -> dict:
-    """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane."""
+def restart_now(update=True, force_update=False) -> dict:
+    """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane.
+
+    The updates are skipped when they ran without a warning within config hq_update_interval_hours, unless
+    `force_update`; `update=False` skips them whatever."""
     _lock()
     try:
-        return _restart(update)
+        return _restart(update, force_update)
     finally:
         _unlock()
 
 
-def _restart(update):
+def _restart(update, force_update=False):
     record = load()
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
@@ -340,8 +391,15 @@ def _restart(update):
 
     def took(since):
         return f"{time.monotonic() - since:.1f}s"
-    if update:
-        update_claude()
+    skip = None if force_update else _why_skip_updates() if update else "--no-update"
+    if skip:
+        _say(f"updates skipped: {skip}")
+    else:
+        if force_update:
+            _say("updates forced by --update")
+        # Before the exit: the resume that follows is the restart that applies what they installed.
+        if not update_claude():
+            _stamp_update()
         _say(f"updates took {took(began)}")
     session = _session() or record.get("session")
     if retire.agent_owned(name):
@@ -388,7 +446,7 @@ def _fallback(why):
     return {**result, "fallback": True, "reason": why}
 
 
-def restart(update=True) -> dict:
+def restart(update=True, force_update=False) -> dict:
     """Start the restart detached and return at once: when HQ runs this about itself, exiting HQ must not kill it."""
     pid = _holder()
     if pid:
@@ -397,6 +455,8 @@ def restart(update=True) -> dict:
     argv = [sys.executable, str(paths.PLUGIN_ROOT / "bin" / "athena"), "hq", "restart", "--child"]
     if not update:
         argv.append("--no-update")
+    elif force_update:
+        argv.append("--update")
     with open(log, "a") as out:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
                                 cwd=str(paths.PLUGIN_ROOT))
