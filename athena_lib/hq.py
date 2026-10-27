@@ -104,6 +104,19 @@ def _register_resume(pane, session, args):
         pass
 
 
+def sync_session(session) -> bool:
+    """Record `session`, the conversation herdr says HQ's Claude has open, as HQ's in hq.json, and give herdr its
+    resume command for it, when hq.json holds another: after a /clear the id changes while HQ runs, and a later
+    resume (doctor's, or herdr's after a restart) must bring back the conversation HQ was on. True when it changed."""
+    record = load()
+    if not session or not record or session == record.get("session"):
+        return False
+    record["session"] = session
+    _file().write_text(json.dumps(record, indent=2))
+    _register_resume(record.get("pane"), session, record.get("claude_args") or _claude_args(write=False))
+    return True
+
+
 LABEL = "athena"
 
 
@@ -181,6 +194,7 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> d
     current = load()
     session = current.get("session")
     if current.get("pane") and _alive(current["pane"]):
+        sync_session(_session())
         keep_label(current, owned=True)
         if focus and current.get("workspace"):
             herdr.call("workspace", "focus", current["workspace"])

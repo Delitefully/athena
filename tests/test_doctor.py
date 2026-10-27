@@ -461,6 +461,32 @@ class RoundOneTest(Fixture):
         self.assertIn("did not run: boom", err.getvalue())
 
 
+class ClearTest(Fixture):
+    def test_after_a_clear_a_crash_resumes_the_conversation_hq_was_on(self):
+        # The human ran /clear in HQ: herdr reports the new id while hq.json still holds the old one.
+        self.scenario(RUNNING, {"match": ["agent", "get", "w8:p1"], "stdout": {"result": {"agent": {
+            "name": "athena", "agent_status": "idle", "agent_session": {"kind": "id", "value": "post-clear"}}}}})
+        health = self.run_doctor()
+        self.assertTrue(health["ok"], health)
+        record = json.loads((self.state / "hq.json").read_text())
+        self.assertEqual(record["session"], "post-clear")
+        (report,) = [c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]]
+        self.assertEqual(report[report.index("--") + 1:report.index("--") + 4], ["claude", "--resume", "post-clear"])
+        self.assertEqual(self.starts(), [])
+        # Then HQ crashes: doctor resumes the post-clear conversation, not the stale one.
+        self.scenario(RUNNING, {**hq_agent(), "after": ["agent", "start"]}, GONE, HQ_SPACE)
+        self.run_doctor()
+        (start,) = self.starts()
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "post-clear"])
+
+    def test_an_unchanged_session_is_not_rewritten(self):
+        self.scenario(RUNNING, hq_agent())
+        before = (self.state / "hq.json").read_text()
+        self.run_doctor()
+        self.assertEqual((self.state / "hq.json").read_text(), before)
+        self.assertEqual([c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]], [])
+
+
 class CliTest(Fixture):
     def test_exit_code_and_quiet_output(self):
         import contextlib

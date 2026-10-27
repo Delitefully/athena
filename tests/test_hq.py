@@ -175,6 +175,17 @@ class HqTest(unittest.TestCase):
         self.assertTrue(hq.hq(start_board=False, fresh=False)["missing"])
         self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]], [])
 
+    def test_athena_hq_on_a_live_hq_records_its_current_conversation(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8", "session": "pre-clear",
+                                                            "claude_args": ["--name", "athena"]}))
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
+            "agent": "claude", "name": "athena", "agent_session": {"kind": "id", "value": "post-clear"}}}}}])
+        hq.hq(start_board=False)
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "post-clear")
+        (report,) = [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "report-agent-session"]]
+        self.assertEqual(report[report.index("--") + 1:], ["claude", "--resume", "post-clear", "--name", "athena"])
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]], [])
+
     def test_keep_label_renames_drifted_space_and_pane(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
         write_scenario(self.tmp.name, [

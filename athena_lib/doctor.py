@@ -230,6 +230,9 @@ class Doctor:
             return None
         agent = self.hq_agent()
         if agent:
+            live = agent.get("agent_session") or {}
+            if live.get("kind") == "id" and hq.sync_session(live.get("value")):
+                self.act(f"hq: recorded HQ's conversation {live['value']} (it changed while HQ ran, as after /clear)")
             self.repaired("hq")
             self.record("hq", True, f"{agent.get('agent_status') or 'running'} in pane {record.get('pane')}")
             return agent

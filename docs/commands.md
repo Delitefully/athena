@@ -23,7 +23,7 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 | herdr | `herdr status server` says not running | starts the herdr service, else `herdr server` detached |
 | dashboard | `dash.pid` dead or `/healthz` silent | starts the dashboard service, else `athena dash on` bound to no HQ |
 | board | no board watcher | starts the board service, else `athena board on`'s watcher |
-| HQ | HQ's pane runs no `athena` agent | after 90 s (herdr resumes its own agents first), resumes HQ's conversation in its space or a new one; never a fresh one. No known conversation: flagged |
+| HQ | HQ's pane runs no `athena` agent (while it runs, doctor records the conversation herdr says it has open in `hq.json`, so a crash after a `/clear` resumes the right one) | after 90 s (herdr resumes its own agents first), resumes HQ's conversation in its space or a new one; never a fresh one. No known conversation: flagged |
 | watch | `watch.json` not written for 5 min while HQ runs | `athena hq restart --no-update` at HQ's next idle: the resumed HQ starts the watch mod again |
 | messaging sockets | a live session's socket file is gone | HQ: `athena hq restart --no-update`, unattended; a worker: exits it and resumes its conversation in its pane. Only when idle with an empty input box, never with background work running (the dialog is cancelled), and never a fresh HQ: with no known conversation, it is flagged |
 | resumed sessions | herdr resumed HQ, or a worker mid-turn | HQ gets its start routine; the worker is told to carry on, once. A blocked or done worker is left alone |
