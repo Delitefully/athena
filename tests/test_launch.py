@@ -14,6 +14,7 @@ from athena_lib import cli, config, hq, launch, paths
 CREATED = {"result": {"workspace": {"workspace_id": "w1"}, "root_pane": {"pane_id": "w1:p1", "terminal_id": "t1"}}}
 STOPPED = {"status": "not_running", "running": False}
 RUNNING = {"status": "running", "running": True, "version": "0.9.3"}
+HEALTHY = {"ok": True, "checks": {}, "actions": []}
 
 
 class LaunchTest(unittest.TestCase):
@@ -26,7 +27,8 @@ class LaunchTest(unittest.TestCase):
         self.projects = Path(self.tmp.name) / "code"
         self.projects.mkdir()
         config.write({**config.DEFAULTS, "projects_dir": str(self.projects)})
-        self.patches = [mock.patch.object(hq.board, "start_watcher"), mock.patch.object(hq.dash, "start")]
+        self.patches = [mock.patch.object(hq.board, "start_watcher"), mock.patch.object(hq.dash, "start"),
+                        mock.patch.object(cli.doctor, "run", return_value=HEALTHY)]
         for p in self.patches:
             p.start()
 
@@ -46,6 +48,22 @@ class LaunchTest(unittest.TestCase):
                 redirect_stdout(out), redirect_stderr(err):
             code = cli.main(list(argv))
         return code, out.getvalue(), err.getvalue(), execvp
+
+    def test_athena_runs_doctor_before_it_attaches_and_says_what_it_did(self):
+        write_scenario(self.tmp.name, [{"match": ["status", "server", "--json"], "stdout": RUNNING},
+                                       {"match": ["workspace", "create"], "stdout": CREATED}])
+        found = {"ok": False, "actions": ["dash: started the dashboard at http://127.0.0.1:2843/"],
+                 "checks": {"board": {"ok": False, "detail": "the board watcher is not running"}}}
+        with mock.patch.object(cli.doctor, "run", return_value=found) as run:
+            code, _, err, execvp = self.athena()
+        self.assertEqual(code, 0, err)
+        run.assert_called_once_with(fix=True)
+        execvp.assert_called_once()
+        self.assertIn("athena doctor: did: dash: started the dashboard", err)
+        self.assertIn("athena doctor: BAD board", err)
+        with mock.patch.object(cli.doctor, "run") as run:
+            self.athena("hq", "--no-doctor")
+        run.assert_not_called()
 
     def test_a_plain_terminal_starts_herdr_opens_hq_and_attaches(self):
         write_scenario(self.tmp.name, [
@@ -129,7 +147,8 @@ class FirstRunTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.env.set("HERDR_ENV", "1")
         os.environ.pop("ATHENA_WORKTREE_ROOT", None)
-        self.patches = [mock.patch.object(hq.board, "start_watcher"), mock.patch.object(hq.dash, "start")]
+        self.patches = [mock.patch.object(hq.board, "start_watcher"), mock.patch.object(hq.dash, "start"),
+                        mock.patch.object(cli.doctor, "run", return_value=HEALTHY)]
         for p in self.patches:
             p.start()
         write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])

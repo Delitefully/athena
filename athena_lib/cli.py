@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from athena_lib import (asks, board, brief, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch,
+from athena_lib import (asks, board, brief, config, dash, doctor, gitops, handoff, herdr, hookstatus, hq, init, launch,
                         ledger, pr, requestlog, retire, service, slack, sockets, spawn, status, watch)
 
 REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
@@ -569,12 +569,27 @@ def cmd_hq(a):
         print("athena: starting herdr")
         launch.start_server()
     result = hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash)
+    if not a.no_doctor:
+        # `athena` = attach + doctor: whatever else died (the dashboard, the board, a socket) is seen to now.
+        health = doctor.run(fix=True)
+        for line in doctor.render(health, quiet=True)[1:]:
+            print(f"athena doctor: {line}", file=sys.stderr)
     if not attach:
         _print(result)
         return 0
     print(f"athena: HQ is {'open' if result.get('created') else 'ready'} in space {result.get('workspace')}; attaching to herdr")
     launch.attach()
     return 0
+
+
+def cmd_doctor(a):
+    health = doctor.run(fix=a.fix)
+    if a.json:
+        _print(health)
+    else:
+        for line in doctor.render(health, quiet=a.quiet):
+            print(line)
+    return 0 if health.get("ok", True) else 1
 
 
 def cmd_whoami(a):
@@ -818,7 +833,24 @@ def parser():
     s.add_argument("--no-board", action="store_true")
     s.add_argument("--no-dash", action="store_true")
     s.add_argument("--no-attach", action="store_true", help="outside herdr: open HQ but do not attach this terminal")
+    s.add_argument("--no-doctor", action="store_true", help="skip the doctor pass a bare `athena` runs before attaching")
     s.set_defaults(func=cmd_hq)
+
+    s = sub.add_parser("doctor", help="check herdr, the dashboard, the board, the watch, HQ and the messaging sockets; "
+                                      "--fix repairs what it safely can; writes health.json",
+                       description="athena doctor: one pass over everything athena needs running. Checks herdr's "
+                                   "server, the dashboard, the board watcher, HQ (alive, its watch, its socket, its "
+                                   "context), each live worker's socket, free disk and memory, and writes health.json "
+                                   "in the state dir for the dashboard's health dot. --fix also repairs: starts what "
+                                   "died, resumes HQ on its saved conversation (never a fresh one), restarts a session "
+                                   "whose socket is gone on its conversation, at idle and never while someone types in "
+                                   "it. A repair that keeps failing backs off and stops after 3 tries in an hour. "
+                                   "The doctor service (athena service install) runs `doctor --fix --quiet` every minute. "
+                                   "Exit 1 when something is wrong.")
+    s.add_argument("--fix", action="store_true", help="repair what it safely can")
+    s.add_argument("--quiet", action="store_true", help="print only what it did and what is wrong")
+    s.add_argument("--json", action="store_true", help="print health.json's content")
+    s.set_defaults(func=cmd_doctor)
 
     sub.add_parser("init", help="check herdr, claude, gh and git, ask for your folders and merge rules, write config.json "
                                 "(athena init -h)")

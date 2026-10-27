@@ -141,7 +141,7 @@ def _helpers(start_board, start_dash):
         board.start_watcher()
     if start_dash:
         try:
-            dash.start()
+            dash.start(hq=0)  # runs until stopped: no longer tied to HQ's process
         except Exception as exc:
             print(f"dashboard not started: {exc}", file=sys.stderr)
 

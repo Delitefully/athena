@@ -146,6 +146,16 @@ class HookStatusTest(unittest.TestCase):
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "waiting"}, "abc-1")
         self.assertEqual(self.status("abc-1")["state"], "done")
 
+    def test_a_resume_records_the_state_it_resumed_from(self):
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        hookstatus.apply({"hook_event_name": "SessionStart", "source": "resume", "session_id": "s2"}, "abc-1")
+        st = self.status("abc-1")
+        self.assertEqual((st["state"], st["source"], st["resumed_from"]), ("idle", "resume", "working"))
+        hookstatus.apply({"hook_event_name": "SessionStart", "source": "startup"}, "abc-2")
+        self.assertNotIn("resumed_from", self.status("abc-2"))
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        self.assertNotIn("source", self.status("abc-1"))  # only the SessionStart record says how it started
+
     def test_session_end_exited(self):
         hookstatus.apply({"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}, "abc-1")
         self.assertEqual(self.status("abc-1")["state"], "exited")
@@ -304,6 +314,16 @@ class HqResumeHookTest(unittest.TestCase):
         hookstatus.register_hq_resume({"hook_event_name": "Stop", "session_id": "hq-2"},
                                       {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
         self.assertEqual(self.reports(), [])
+
+    def test_hqs_start_is_recorded_for_doctor(self):
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "hq-2", "source": "resume"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
+        start = json.loads((paths.state_dir() / "hq-start.json").read_text())
+        self.assertEqual((start["source"], start["session_id"]), ("resume", "hq-2"))
+        (paths.state_dir() / "hq-start.json").unlink()
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "x", "source": "resume"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w9:p9"})  # not HQ's pane
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
 
     def test_an_hq_json_without_args_registers_nothing(self):
         (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1"}))

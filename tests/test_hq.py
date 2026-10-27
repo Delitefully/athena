@@ -30,7 +30,7 @@ class HqTest(unittest.TestCase):
         with mock.patch.object(hq.board, "start_watcher") as board, mock.patch.object(hq.dash, "start") as start:
             hq.hq(cwd=str(self.cwd))
         board.assert_called_once_with()
-        start.assert_called_once_with()
+        start.assert_called_once_with(hq=0)  # the dashboard outlives HQ
 
     def test_a_dashboard_failure_does_not_stop_hq(self):
         write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])

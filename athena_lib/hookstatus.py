@@ -229,6 +229,12 @@ def apply(event, name, gated=False):
         "report": report, "last_report": report or prev.get("last_report"),
         "session_id": event.get("session_id") or prev.get("session_id"), **gate_fields,
     }
+    if kind == "SessionStart":
+        # How the session started (startup, resume, clear, compact), and on a resume the state it was in: doctor
+        # tells a worker herdr resumed mid-turn to carry on, and no other.
+        data["source"] = event.get("source")
+        if event.get("source") == "resume":
+            data["resumed_from"] = prev.get("state")
     _write(name, data)
     return {**data, "gate": decision} if decision else data
 
@@ -294,6 +300,12 @@ def register_hq_resume(event, env):
     except (OSError, ValueError):
         return
     pane, args = record.get("pane"), record.get("claude_args")
+    if pane and env.get("HERDR_PANE_ID") == pane:
+        # For doctor: a resumed HQ that no one sent its start routine gets it.
+        target = paths.state_dir() / "hq-start.json"
+        tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+        tmp.write_text(json.dumps({"source": event.get("source"), "session_id": sid, "ts": time.time()}))
+        os.replace(tmp, target)
     if pane and args and env.get("HERDR_PANE_ID") == pane:
         _register(pane, sid, args)
 
