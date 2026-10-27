@@ -131,12 +131,18 @@ def _forget_session(old):
 
 
 def _restore_session(old):
-    """The fresh HQ never started: the old conversation is HQ's again, to resume."""
+    """herdr says the fresh HQ did not start: the old conversation is HQ's again, to resume, unless athena's hook
+    already saw the fresh one start (hq-start.json names another id, which herdr was told to resume): then that one
+    stays HQ's, and hq.json names none, so `own_session` reads it from hq-start.json. Returns the id HQ resumes on."""
+    vouched = _hq_start().get("session_id")
+    if vouched and vouched != old:
+        return vouched
     record = load()
     record["session"] = old
     _file().write_text(json.dumps(record, indent=2))
     if old:
         _vouch(old, "resume")
+    return old
 
 
 def own_session(record=None):
@@ -732,8 +738,9 @@ def _rotate():
         _start_agent(pane)
     except herdr.HerdrError as exc:
         if not retire.agent_owned(name):
-            _restore_session(old)
-            msg = f"starting the fresh HQ failed ({exc}); run `athena hq` to start one, then point it at {handoff.handoff_file()}"
+            kept = _restore_session(old)
+            msg = (f"starting the fresh HQ failed ({exc}); `athena hq` brings HQ back on conversation "
+                   f"{kept or 'unknown'}. The handoff for a fresh HQ is at {handoff.handoff_file()}")
             _say("FAILED: " + msg)
             _notify("athena: HQ rotation failed", msg)
             raise RestartError(msg)

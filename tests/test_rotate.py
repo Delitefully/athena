@@ -358,10 +358,27 @@ class RotateTest(Fixture):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "trust dialog"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1},
                                        {**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
-        with self.assertRaises(hq.RestartError):
+        with self.assertRaises(hq.RestartError) as raised:
             hq.rotate_now()
+        self.assertIn("brings HQ back on conversation old", str(raised.exception))
         self.assertEqual(json.loads((self.state / "hq.json").read_text())["session"], "old")
         self.assertEqual(json.loads((self.state / "hq-start.json").read_text())["session_id"], "old")
+
+    def test_a_fresh_hq_the_hook_saw_start_stays_hqs_when_herdr_reports_a_failed_start(self):
+        # herdr's start call failed, but the fresh Claude came up far enough for athena's hook to vouch for it.
+        def start_agent(pane, *extra):
+            (self.state / "hq-start.json").write_text(json.dumps({"source": "startup", "session_id": "sess-new",
+                                                                 "ts": 2}))
+            raise hq.herdr.HerdrError("agent_not_ready", "slow")
+        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
+        with mock.patch.object(hq, "_start_agent", side_effect=start_agent):
+            with self.assertRaises(hq.RestartError) as raised:
+                hq.rotate_now()
+        self.assertEqual(json.loads((self.state / "hq-start.json").read_text())["session_id"], "sess-new")
+        self.assertEqual(hq.own_session(), "sess-new")
+        self.assertTrue(hq.sync_session("sess-new"))  # herdr bringing HQ back on it is accepted
+        self.assertIn("conversation sess-new", str(raised.exception))
+        self.assertNotIn("to start one", str(raised.exception))
 
     def test_a_busy_hq_is_not_rotated(self):
         err = json.dumps({"error": {"code": "timeout", "message": "still blocked"}})
