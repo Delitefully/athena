@@ -37,6 +37,18 @@ athena        # starts herdr if needed, opens the athena space, attaches
 Then tell athena what to start: "start abc-101 and abc-102". Detach with `ctrl+b q`; everything keeps running,
 and `athena` brings you back.
 
+To keep athena running on its own, install it as login services:
+
+```sh
+athena service install --dry-run   # prints every file it would write and every command it would run
+athena service install             # herdr, the dashboard, the board, and `athena doctor` every minute
+```
+
+herdr's server, the dashboard and the board then restart after a crash and come back after a reboot, and quitting
+the terminal only detaches. `athena doctor` checks them every minute, resumes athena's own conversation if its
+Claude died (never a fresh one), and shows what it could not fix on the dashboard's health dot. launchd on macOS,
+systemd user units on Linux; `athena service uninstall` removes them.
+
 ## Using it day to day
 
 - **Start work:** tell athena the tickets. It reads Linear, writes a brief, shows a launch card and starts a worker.
@@ -49,6 +61,8 @@ and `athena` brings you back.
 - **`athena hq rotate`**: replace a long HQ conversation with a fresh one that starts from a handoff written from athena's state, instead of compacting it again.
 - **Every request is an item:** what you ask HQ for becomes a named item on the dashboard, so nothing is kept only in chat. `athena item` lists them; [Items](docs/items.md) says how they work.
 - **`athena dash open`:** the dashboard in your browser: what needs you, what is ready for you to read, what is in flight, and what was done today, with a full view per item.
+- **`athena doctor`:** one line per part athena needs and whether it runs; `--fix` repairs what it safely can.
+- **Fewer questions:** athena does the routine steps in [`never-ask.md`](skills/athena/never-ask.md) itself (rebases, CI reruns, sign-ins you approve in the browser, restarting its own processes) and always asks about the rest. Add your own lines to `never-ask.md` in the state dir; when you give the same answer twice, athena offers to make it a rule there.
 - **Remote Control:** athena's own session always connects to Remote Control, so you can reach it from your phone or claude.ai/code; workers never do, whatever `remoteControlAtStartup` says in `~/.claude/settings.json`. A worker that was already running keeps its connection until it next starts.
 
 ## Learn more

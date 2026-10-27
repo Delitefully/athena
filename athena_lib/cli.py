@@ -9,8 +9,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from athena_lib import (asks, board, brief, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch,
-                        ledger, pr, requestlog, retire, slack, sockets, spawn, status, watch)
+from athena_lib import (asks, board, brief, config, dash, doctor, gitops, handoff, herdr, hookstatus, hq, init, launch,
+                        ledger, pr, requestlog, retire, service, slack, sockets, spawn, status, watch)
 
 REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
 REVIEW_FAILS_BEFORE_RESTART = 2  # failed rounds after which a worker restarts fresh rather than being nudged again
@@ -194,16 +194,19 @@ def cmd_board(a):
 
 
 def _dash_line(rec, note=""):
-    hq = f", lives while HQ pid {rec['hq_pid']} does" if rec.get("hq_pid") else ", no HQ found: it runs until `athena dash off`"
+    hq = f", lives while HQ pid {rec['hq_pid']} does" if rec.get("hq_pid") else ", runs until `athena dash off`"
     return f"dash {rec['url']} pid {rec['pid']}{hq}{note}"
 
 
 def cmd_dash(a):
     if a.action in ("on", "open"):
-        rec = dash.start()
+        rec = dash.start(hq=0)  # bound to no HQ: athena doctor and the dash service keep it up
         print(_dash_line(rec, "" if rec["started"] else " (already running)"))
         if a.action == "open":
             subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", rec["url"]], check=False)
+    elif a.action == "run":
+        rec = dash.run()  # returns only when a dashboard already runs: this process became the dashboard otherwise
+        print(f"dash already runs: {_dash_line(rec)}", file=sys.stderr)
     elif a.action == "off":
         rec = dash.stop()
         print(f"dash off (stopped pid {rec['pid']})" if rec else "dash off")
@@ -554,7 +557,7 @@ def cmd_hq(a):
         return 0
     if a.action == "restart":
         if a.child:
-            _print(hq.restart_now(update=not a.no_update, force_update=a.update))
+            _print(hq.restart_now(update=not a.no_update, force_update=a.update, unattended=a.unattended))
         else:
             print(hq.restart(update=not a.no_update, force_update=a.update)["message"])
         return 0
@@ -566,6 +569,14 @@ def cmd_hq(a):
         print("athena: starting herdr")
         launch.start_server()
     result = hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash)
+    if not a.no_doctor:
+        # `athena` = attach + doctor: whatever else died (the dashboard, the board, a socket) is seen to now.
+        try:
+            health = doctor.run(fix=True)
+        except Exception as exc:  # doctor never stands between the human and HQ
+            health = {"actions": [], "checks": {"doctor": {"ok": False, "detail": f"did not run: {exc}"}}}
+        for line in doctor.render(health, quiet=True)[1:]:
+            print(f"athena doctor: {line}", file=sys.stderr)
     if not attach:
         _print(result)
         return 0
@@ -574,12 +585,54 @@ def cmd_hq(a):
     return 0
 
 
+def cmd_doctor(a):
+    health = doctor.run(fix=a.fix)
+    if a.json:
+        _print(health)
+    else:
+        for line in doctor.render(health, quiet=a.quiet):
+            print(line)
+    return 0 if health.get("ok", True) else 1
+
+
 def cmd_whoami(a):
     """The worker this session is: ATHENA_WORKER, else the live worker whose worktree holds the cwd. Exit 1: none."""
     name = hookstatus.worker_name(os.environ, os.getcwd())
     if not name:
         return 1
     print(name)
+    return 0
+
+
+def cmd_service(a):
+    if a.action == "status":
+        rows = service.status(a.platform, a.instance)
+        if a.json:
+            _print(rows)
+            return 0
+        for r in rows:
+            print(f"{r['job']:<7} {r['name']:<28} {'installed' if r['installed'] else 'not installed':<14} "
+                  f"{'loaded' if r['loaded'] else 'not loaded'}")
+        return 0
+    fn = service.install if a.action == "install" else service.uninstall
+    result = fn(a.platform, a.instance, dry_run=a.dry_run)
+    if a.dry_run:
+        return 0
+    if a.json:
+        _print(result)
+        return 0
+    if a.action == "install":
+        for path, change in result["files"].items():
+            print(f"{change:<9} {path}")
+    else:
+        for path in result["removed"]:
+            print(f"removed   {path}")
+        if not result["removed"] and not result["ran"]:
+            print("nothing installed")
+    for cmd in result["ran"]:
+        print(f"ran       {cmd}")
+    for note in result.get("notes", []):
+        print(f"note: {note}")
     return 0
 
 
@@ -643,8 +696,8 @@ def parser():
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_board)
 
-    s = sub.add_parser("dash", help="the dashboard on 127.0.0.1: on, off, show, open")
-    s.add_argument("action", choices=["on", "off", "show", "open"], nargs="?", default="show")
+    s = sub.add_parser("dash", help="the dashboard on 127.0.0.1: on, off, show, open; run (foreground, for a service)")
+    s.add_argument("action", choices=["on", "off", "show", "open", "run"], nargs="?", default="show")
     s.set_defaults(func=cmd_dash)
 
     s = sub.add_parser("watch", help="print one line per change (the athena-watch mod runs it in HQ; Monitor is the fallback)")
@@ -778,18 +831,51 @@ def parser():
     s.add_argument("--if-context-over", type=float, metavar="PCT",
                    help="rotate: only when HQ's context (read from its transcript) is at least PCT%% full")
     s.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--unattended", action="store_true", help=argparse.SUPPRESS)  # doctor's: no fresh HQ, no task stop
     s.add_argument("--cwd")
     s.add_argument("--no-focus", action="store_true")
     s.add_argument("--no-board", action="store_true")
     s.add_argument("--no-dash", action="store_true")
     s.add_argument("--no-attach", action="store_true", help="outside herdr: open HQ but do not attach this terminal")
+    s.add_argument("--no-doctor", action="store_true", help="skip the doctor pass a bare `athena` runs before attaching")
     s.set_defaults(func=cmd_hq)
+
+    s = sub.add_parser("doctor", help="check herdr, the dashboard, the board, the watch, HQ and the messaging sockets; "
+                                      "--fix repairs what it safely can; writes health.json",
+                       description="athena doctor: one pass over everything athena needs running. Checks herdr's "
+                                   "server, the dashboard, the board watcher, HQ (alive, its watch, its socket, its "
+                                   "context), each live worker's socket, free disk and memory, and writes health.json "
+                                   "in the state dir for the dashboard's health dot. --fix also repairs: starts what "
+                                   "died, resumes HQ on its saved conversation (never a fresh one), restarts a session "
+                                   "whose socket is gone on its conversation, at idle and never while someone types in "
+                                   "it. A repair that keeps failing backs off and stops after 3 tries in an hour. "
+                                   "The doctor service (athena service install) runs `doctor --fix --quiet` every minute. "
+                                   "Exit 1 when something is wrong.")
+    s.add_argument("--fix", action="store_true", help="repair what it safely can")
+    s.add_argument("--quiet", action="store_true", help="print only what it did and what is wrong")
+    s.add_argument("--json", action="store_true", help="print health.json's content")
+    s.set_defaults(func=cmd_doctor)
 
     sub.add_parser("init", help="check herdr, claude, gh and git, ask for your folders and merge rules, write config.json "
                                 "(athena init -h)")
 
     s = sub.add_parser("whoami", help="print the worker this session is (ATHENA_WORKER, else by its worktree); exit 1 if none")
     s.set_defaults(func=cmd_whoami)
+
+    s = sub.add_parser("service", help="herdr, the dashboard, the board and doctor as login services (launchd, systemd): "
+                                       "install, uninstall, status; --dry-run prints what it would write and run",
+                       description="athena service: run herdr's server, the dashboard and the board watcher as user "
+                                   "services that restart after a crash and come back after a reboot, and `athena "
+                                   "doctor --fix` every minute. launchd agents on macOS, systemd user units on Linux. "
+                                   "Install and uninstall are idempotent. Each job carries this shell's athena "
+                                   "environment (ATHENA_STATE_DIR, ATHENA_HERDR, ...), so use --instance for a second "
+                                   "install against another state dir and herdr session.")
+    s.add_argument("action", choices=["install", "uninstall", "status"], nargs="?", default="status")
+    s.add_argument("--dry-run", action="store_true", help="print the files and commands; write and run nothing")
+    s.add_argument("--instance", help="a second install beside the default one: its jobs are athena.<instance>.<job>")
+    s.add_argument("--platform", choices=["launchd", "systemd"], help="default: launchd on macOS, systemd on Linux")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_service)
 
     s = sub.add_parser("config", help="the effective config and where each value comes from: show, path")
     s.add_argument("action", choices=["show", "path"], nargs="?", default="show")
@@ -818,7 +904,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, hq.ResumeError, service.ServiceError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 

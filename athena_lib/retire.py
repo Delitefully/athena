@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import time
 
-from athena_lib import dashstate, gitops, herdr, ledger
+from athena_lib import composer, dashstate, gitops, herdr, ledger
 
 
 class RetireError(Exception):
@@ -69,16 +69,27 @@ def _screen(name) -> str:
         return ""
 
 
-def exit_claude(name, grace) -> bool:
+class BackgroundWork(Exception):
+    """An unattended exit met Claude's "Background work is running" dialog and cancelled it: subagents, monitors or
+    background shells would have been stopped."""
+
+
+def exit_claude(name, grace, stop_tasks=True) -> bool:
     """Type /exit into the agent's Claude, then press Enter only on a screen that asks for exactly that.
 
     The single Enter that `agent prompt` sends can leave /exit sitting in the slash-command menu, and a Claude
     with background work running answers /exit with a confirmation dialog: both get one Enter (see
-    `exit_screen`). Polls every 0.2s for up to `grace` seconds, and always looks once more after a key.
-    True when the Claude is gone.
+    `exit_screen`), the dialog only when `stop_tasks`. Unattended exits (athena doctor) pass `stop_tasks=False`:
+    the dialog is cancelled with Esc and BackgroundWork raised, so its subagents and monitors keep running.
+    Polls every 0.2s for up to `grace` seconds, and always looks once more after a key.
+    True when the Claude is gone. Nothing is typed unless the input box is seen empty (`composer.typing`): /exit
+    would join unsent text. That returns False, as a Claude that did not exit; callers that care ask
+    `composer.typing` first.
     """
     if not agent_owned(name):
         return True
+    if composer.typing(name):
+        return False
     try:
         herdr.call("agent", "prompt", name, "/exit", timeout=15)
     except herdr.HerdrError:
@@ -86,7 +97,15 @@ def exit_claude(name, grace) -> bool:
     deadline, presses = time.monotonic() + grace, 0
     while agent_owned(name):
         pressed = False
-        if presses < 3 and exit_screen(_screen(name)) in ("confirm", "submit"):
+        seen = exit_screen(_screen(name)) if presses < 3 else None
+        if seen == "confirm" and not stop_tasks:
+            try:
+                herdr.call("agent", "send-keys", name, "esc", timeout=15)
+            except herdr.HerdrError:
+                pass
+            raise BackgroundWork(f"{name} has background work running (subagents, monitors or shells); its exit "
+                                 "was cancelled so they keep running")
+        if seen in ("confirm", "submit"):
             try:
                 herdr.call("agent", "send-keys", name, "enter", timeout=15)
             except herdr.HerdrError:
@@ -101,8 +120,11 @@ def exit_claude(name, grace) -> bool:
 def stop_claude(worker) -> bool:
     """Exit the worker's Claude before its checkout is removed, so nothing writes into a directory being deleted.
 
-    /exit as `exit_claude` sends it, then close the pane when it is ours. True when the Claude is gone.
+    /exit as `exit_claude` sends it, then close the pane when it is ours. True when the Claude is gone. A pane
+    someone is typing in is left alone: False.
     """
+    if composer.typing(worker["name"]):
+        return False
     if exit_claude(worker["name"], float(os.environ.get("ATHENA_EXIT_GRACE", "5"))):
         return True
     if worker.get("pane") and workspace_owned(worker.get("workspace"), worker.get("path")):
@@ -203,6 +225,9 @@ def retire(name, force=False, keep_worktree=False) -> dict:
                     herdr.call("pane", "close", worker["pane"], timeout=15)
                 except herdr.HerdrError:
                     pass
+        elif not force and composer.typing(name):
+            raise RetireError(f"someone is typing in {name}'s pane and has not sent it; {name} stays tracked. Retry "
+                              "once the input box is empty, or retire with --force.")
         elif not stop_claude(worker) and not force and exists and not keep_worktree:
             # Only refuse when its checkout is about to be removed under a running Claude.
             ledger.append("update", name, cleanup_error="claude did not exit")

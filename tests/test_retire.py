@@ -167,7 +167,8 @@ class RetireTest(unittest.TestCase):
 
     def test_retire_sends_enter_when_exit_sits_in_the_menu(self):
         # /exit typed but not submitted: the agent is still there after the prompt, gone after one more Enter.
-        write_scenario(self.tmp.name, [{"match": ["agent", "read", "abc-1"], "stdout": MENU}] + self.gone_after(2))
+        write_scenario(self.tmp.name, [{"match": ["agent", "read", "abc-1"], "stdout": MENU,
+                                        "after": ["agent", "prompt", "abc-1", "/exit"]}] + self.gone_after(2))
         retire.retire("abc-1")
         calls = logged_calls(self.tmp.name)
         self.assertIn(["agent", "send-keys", "abc-1", "enter"], calls)
@@ -213,6 +214,9 @@ GONE = {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"ag
         "exit": 1}
 
 
+EXIT_SENT = ["agent", "prompt", "w", "/exit"]  # screens that show only once /exit was typed
+
+
 class ExitTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -228,28 +232,37 @@ class ExitTest(unittest.TestCase):
 
     def test_the_background_work_dialog_is_confirmed_with_one_enter(self):
         write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, self.owned,
-                                       {"match": ["agent", "read", "w"], "stdout": DIALOG}])
+                                       {"match": ["agent", "read", "w"], "stdout": DIALOG, "after": EXIT_SENT}])
         self.assertTrue(retire.exit_claude("w", 5))
         self.assertEqual(self.presses(), [["agent", "send-keys", "w", "enter"]])
         calls = logged_calls(self.tmp.name)
         self.assertLess(calls.index(["agent", "prompt", "w", "/exit"]), calls.index(self.presses()[0]))
 
     def test_any_other_dialog_gets_no_key(self):
-        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read", "w"], "stdout": PERMISSION}])
+        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read", "w"], "stdout": PERMISSION,
+                                                    "after": EXIT_SENT}])
         self.assertFalse(retire.exit_claude("w", 0.3))
         self.assertEqual(self.presses(), [])
 
     def test_an_unreadable_screen_gets_no_key(self):
-        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read"], "stdout": "", "exit": 1}])
+        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read"], "stdout": "", "exit": 1,
+                                                    "after": EXIT_SENT}])
         self.assertFalse(retire.exit_claude("w", 0.3))
         self.assertEqual(self.presses(), [])
 
     def test_a_claude_on_its_way_out_gets_no_more_keys(self):
         # The dialog stays in the scrollback after Claude exits; herdr notices a moment later.
         write_scenario(self.tmp.name, [{**self.owned, "times": 3}, GONE,
-                                       {"match": ["agent", "read", "w"], "stdout": EXITED}])
+                                       {"match": ["agent", "read", "w"], "stdout": EXITED, "after": EXIT_SENT}])
         self.assertTrue(retire.exit_claude("w", 5))
         self.assertEqual(self.presses(), [])
+
+    def test_unattended_exit_cancels_the_background_work_dialog(self):
+        write_scenario(self.tmp.name, [self.owned, {"match": ["agent", "read", "w"], "stdout": DIALOG,
+                                                    "after": EXIT_SENT}])
+        with self.assertRaises(retire.BackgroundWork):
+            retire.exit_claude("w", 5, stop_tasks=False)
+        self.assertEqual(self.presses(), [["agent", "send-keys", "w", "esc"]])
 
     def test_exit_screen_reads_the_bottom_of_the_screen(self):
         self.assertEqual(retire.exit_screen(DIALOG), "confirm")

@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
@@ -239,3 +241,28 @@ class SyncTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaimTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def test_a_foreground_watcher_records_itself(self):
+        with mock.patch.object(board, "running_pid", return_value=None):
+            self.assertTrue(board.claim())
+        self.assertEqual((paths.state_dir() / "board.pid").read_text(), str(os.getpid()))
+
+    def test_a_second_watcher_leaves_at_once(self):
+        with mock.patch.object(board, "running_pid", return_value=4242), mock.patch.object(board, "sync") as sync, \
+                mock.patch("sys.stderr"):
+            board.watch()
+        sync.assert_not_called()
+
+    def test_the_watcher_athena_board_on_started_is_itself(self):
+        with mock.patch.object(board, "running_pid", return_value=os.getpid()):
+            self.assertTrue(board.claim())

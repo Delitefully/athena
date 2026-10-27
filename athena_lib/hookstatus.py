@@ -229,6 +229,12 @@ def apply(event, name, gated=False):
         "report": report, "last_report": report or prev.get("last_report"),
         "session_id": event.get("session_id") or prev.get("session_id"), **gate_fields,
     }
+    if kind == "SessionStart":
+        # How the session started (startup, resume, clear, compact), and on a resume the state it was in: doctor
+        # tells a worker herdr resumed mid-turn to carry on, and no other.
+        data["source"] = event.get("source")
+        if event.get("source") == "resume":
+            data["resumed_from"] = prev.get("state")
     _write(name, data)
     return {**data, "gate": decision} if decision else data
 
@@ -284,18 +290,42 @@ def log_request(event, env):
     return requestlog.record(event.get("prompt"), event.get("session_id"))
 
 
-def register_hq_resume(event, env):
-    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json."""
+def hq_owns(event, env, record) -> bool:
+    """Whether a SessionStart is HQ's own Claude, not a `claude -p` HQ ran from its Bash tool: that one inherits
+    ATHENA_ROLE=hq and HERDR_PANE_ID, may resume or compact a conversation of its own, and must never become the one
+    herdr or doctor resumes. It is HQ's when it comes from HQ's pane and is the session hq.json knows (a resume and a
+    compaction keep their id), or the first one, while hq.json knows none, or the new id a /clear made in HQ's own
+    Claude: a /clear is told apart from a nested session by `nested()` (process ancestry), not by its id. hq.json
+    itself is recorded by athena doctor and `athena hq` from herdr, never by this hook."""
     sid = _session_started(event)
     if not sid or env.get("ATHENA_ROLE") != "hq":
-        return
+        return False
+    pane = record.get("pane")
+    if not pane or env.get("HERDR_PANE_ID") != pane:
+        return False
+    known = record.get("session")
+    if not known or sid == known:
+        return True
+    return event.get("source") == "clear" and not nested()
+
+
+def register_hq_resume(event, env):
+    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json. Only HQ's own
+    session counts (`hq_owns`); this hook never writes hq.json."""
     try:
         record = json.loads((paths.state_dir() / "hq.json").read_text())
     except (OSError, ValueError):
         return
-    pane, args = record.get("pane"), record.get("claude_args")
-    if pane and args and env.get("HERDR_PANE_ID") == pane:
-        _register(pane, sid, args)
+    if not isinstance(record, dict) or not hq_owns(event, env, record):
+        return
+    sid = _session_started(event)
+    # For doctor: a resumed HQ that no one sent its start routine gets it.
+    target = paths.state_dir() / "hq-start.json"
+    tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+    tmp.write_text(json.dumps({"source": event.get("source"), "session_id": sid, "ts": time.time()}))
+    os.replace(tmp, target)
+    if record.get("claude_args"):
+        _register(record["pane"], sid, record["claude_args"])
 
 
 def main():

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -145,6 +146,16 @@ class HookStatusTest(unittest.TestCase):
         hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": 'ATHENA-REPORT {"status":"DONE"}'}, "abc-1")
         hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "waiting"}, "abc-1")
         self.assertEqual(self.status("abc-1")["state"], "done")
+
+    def test_a_resume_records_the_state_it_resumed_from(self):
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        hookstatus.apply({"hook_event_name": "SessionStart", "source": "resume", "session_id": "s2"}, "abc-1")
+        st = self.status("abc-1")
+        self.assertEqual((st["state"], st["source"], st["resumed_from"]), ("idle", "resume", "working"))
+        hookstatus.apply({"hook_event_name": "SessionStart", "source": "startup"}, "abc-2")
+        self.assertNotIn("resumed_from", self.status("abc-2"))
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        self.assertNotIn("source", self.status("abc-1"))  # only the SessionStart record says how it started
 
     def test_session_end_exited(self):
         hookstatus.apply({"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}, "abc-1")
@@ -304,6 +315,92 @@ class HqResumeHookTest(unittest.TestCase):
         hookstatus.register_hq_resume({"hook_event_name": "Stop", "session_id": "hq-2"},
                                       {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
         self.assertEqual(self.reports(), [])
+
+    def test_hqs_start_is_recorded_for_doctor(self):
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "hq-2", "source": "resume"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"})
+        start = json.loads((paths.state_dir() / "hq-start.json").read_text())
+        self.assertEqual((start["source"], start["session_id"]), ("resume", "hq-2"))
+        (paths.state_dir() / "hq-start.json").unlink()
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "x", "source": "resume"},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w9:p9"})  # not HQ's pane
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def hq_session(self, session):
+        (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1", "claude_args": HQ_ARGS,
+                                                               "session": session}))
+
+    def start(self, sid, source, pane="w1:p1"):
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": sid, "source": source},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": pane})
+
+    def test_a_nested_claude_started_from_hqs_bash_is_never_hq(self):
+        # `claude -p` from HQ's Bash tool inherits ATHENA_ROLE=hq and HERDR_PANE_ID: a startup next to HQ's known
+        # session is that, not HQ.
+        self.hq_session("hq-1")
+        self.start("nested-9", "startup")
+        self.assertEqual(self.reports(), [])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_a_nested_resume_or_compaction_never_moves_hqs_session(self):
+        # `claude -p --resume X` from HQ's Bash, or a nested session that compacts: same env, same pane, another id.
+        for source in ("resume", "compact", "clear", "startup"):
+            self.hq_session("hq-1")
+            with mock.patch.object(hookstatus, "nested", return_value=True):  # another Claude above it
+                self.start("nested-9", source)
+            self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1", source)
+        self.assertEqual(self.reports(), [])
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_hqs_own_clear_registers_its_new_id_with_herdr(self):
+        self.hq_session("hq-1")
+        with mock.patch.object(hookstatus, "nested", return_value=False):
+            self.start("post-clear", "clear")
+        (report,) = self.reports()
+        self.assertEqual(report[report.index("--") + 1:report.index("--") + 3], ["claude", "--resume"])
+        self.assertEqual(report[report.index("--") + 3], "post-clear")
+        self.assertEqual(json.loads((paths.state_dir() / "hq-start.json").read_text())["session_id"], "post-clear")
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")  # doctor's to record
+
+    def test_a_nested_clear_is_not_hqs(self):
+        self.hq_session("hq-1")
+        with mock.patch.object(hookstatus, "nested", return_value=True):
+            self.start("nested-9", "clear")
+        self.assertEqual(self.reports(), [])
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_a_nested_clear_through_the_hook_entry_registers_nothing(self):
+        # The whole hook, as Claude runs it: main() drops a nested HQ session before anything else.
+        self.hq_session("hq-1")
+        payload = {"hook_event_name": "SessionStart", "session_id": "nested-9", "source": "clear",
+                   "cwd": str(self.home)}
+        with mock.patch.object(hookstatus, "nested", return_value=True), \
+                mock.patch.dict(os.environ, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"}), \
+                mock.patch.object(hookstatus.sys, "stdin", io.StringIO(json.dumps(payload))):
+            hookstatus.main()
+        self.assertEqual(self.reports(), [])
+
+    def test_hqs_own_resume_and_compaction_keep_its_id_and_count(self):
+        for source in ("resume", "compact"):
+            self.hq_session("hq-1")
+            self.start("hq-1", source)
+            self.assertEqual(json.loads((paths.state_dir() / "hq-start.json").read_text())["source"], source)
+        self.assertEqual(len(self.reports()), 2)
+
+    def test_the_known_session_or_the_first_one_is_hq(self):
+        self.hq_session("hq-1")
+        self.start("hq-1", "startup")
+        self.hq_session(None)
+        self.start("hq-new", "startup")
+        self.assertEqual(len(self.reports()), 2)
+        self.assertIsNone(json.loads((paths.state_dir() / "hq.json").read_text())["session"])  # the hook never writes it
+
+    def test_another_pane_is_never_hq(self):
+        self.hq_session("hq-1")
+        self.start("hq-1", "resume", pane="w9:p1")
+        self.assertEqual(self.reports(), [])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
 
     def test_an_hq_json_without_args_registers_nothing(self):
         (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1"}))

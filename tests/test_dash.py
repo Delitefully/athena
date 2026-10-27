@@ -107,6 +107,29 @@ class LifecycleTest(unittest.TestCase):
             os.kill(first["pid"], 0)
         self.assertIsNone(dash.stop(), "off is idempotent")
 
+    def test_run_becomes_the_server_in_the_foreground_for_a_service(self):
+        import subprocess
+        import sys
+        athena = [sys.executable, str(paths.PLUGIN_ROOT / "bin" / "athena")]
+        dash.binary()  # built here, so the wait below is for the start alone
+        proc = subprocess.Popen(athena + ["dash", "run"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not dash._health(self.port):
+                time.sleep(0.05)
+            rec = dash.running()
+            self.assertIsNotNone(rec)
+            self.assertEqual(rec["pid"], proc.pid)  # exec'd in place: the service manager supervises the server itself
+            self.assertIsNone(rec["hq_pid"])  # bound to no HQ
+            self.assertEqual(json.loads(self.fetch("/healthz"))["pid"], proc.pid)
+            second = subprocess.run(athena + ["dash", "run"], capture_output=True, text=True, timeout=30)
+            self.assertEqual(second.returncode, 0)
+            self.assertIn("already runs", second.stderr)
+            self.assertIsNone(proc.poll())
+        finally:
+            dash.stop()
+            proc.wait(timeout=5)
+
     def test_a_second_on_adopts_a_server_it_did_not_record(self):
         first = dash.start()
         (paths.state_dir() / "dash.pid").unlink()  # as when two `dash on` raced and one lost

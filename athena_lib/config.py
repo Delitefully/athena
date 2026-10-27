@@ -37,6 +37,9 @@ DEFAULTS = {
     # `athena hq restart` skips `claude update` and the plugin updates when they last ran without a warning less than
     # this many hours ago (`--update` forces them). 0: update on every restart.
     "hq_update_interval_hours": 6,
+    # Permission rules (`Bash(gh pr ready *)`) added to HQ's own settings alone, never a worker's: the never-ask
+    # steps only HQ takes. Set by the human alone; nothing in athena writes it.
+    "hq_allow": [],
 }
 
 # Migration only: the values an install from before config.json ran with.
@@ -59,7 +62,7 @@ ENV = {
 PATH_KEYS = ("projects_dir", "worktree_root")
 # Written only when set.
 OPTIONAL_KEYS = ("slack_channels", "slack_ext_channels", "slack_allow_bots", "slack_dm_active_minutes",
-                 "open_prs_channel", "ci_repos", "watch_main_moved", "hq_update_interval_hours")
+                 "open_prs_channel", "ci_repos", "watch_main_moved", "hq_update_interval_hours", "hq_allow")
 LIST_KEYS = ("human_merge_repos", "reapproval_repos")
 
 

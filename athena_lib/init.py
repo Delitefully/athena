@@ -238,6 +238,8 @@ def main(argv=None, ask=input) -> int:
         print(f"athena cannot start until these are fixed: {', '.join(failed)}")
         return 1
     print("next: run `athena` to open HQ (it starts herdr if needed)")
+    print("to keep athena running after a crash or a reboot: `athena service install --dry-run`, then without "
+          "--dry-run (login services for herdr, the dashboard, the board and athena doctor)")
     return 0
 
 

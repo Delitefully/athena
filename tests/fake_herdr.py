@@ -6,7 +6,8 @@ the first rule in FAKE_HERDR_SCENARIO (a JSON list) whose "match" list is a pref
 {"match": ["agent", "start"], "stdout": {...} or "text", "stderr": "...", "exit": 0, "times": 1}.
 A rule with "times" is used that many times, then skipped. A rule with "after" (an argv prefix) applies only once
 an earlier call with that prefix is in the log, so a scenario can change state: an agent that is gone after
-`agent send-keys`. Unmatched calls print {"result": {}}.
+`agent send-keys`. Unmatched calls print {"result": {}}, but an unmatched `agent read` prints an idle Claude's screen
+with an empty input box (tests/fixtures/prompt-empty.ansi), as a live Claude shows.
 """
 import json
 import os
@@ -46,6 +47,10 @@ def main():
         if rule.get("stderr"):
             sys.stderr.write(rule["stderr"])
         sys.exit(rule.get("exit", 0))
+    if argv[:2] == ["agent", "read"]:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "prompt-empty.ansi")) as f:
+            sys.stdout.write(f.read())
+        return
     sys.stdout.write(json.dumps({"result": {}}))
 
 
