@@ -818,7 +818,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, hq.ResumeError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 

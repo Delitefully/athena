@@ -88,6 +88,65 @@ class HqTest(unittest.TestCase):
         self.assertNotIn(["workspace", "create"], verbs)
         self.assertIn(["agent", "start"], verbs)
 
+    def test_a_surviving_space_resumes_hqs_conversation_never_a_fresh_one(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8", "session": "sess-9"}))
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}},
+        ])
+        result = hq.hq(start_board=False)
+        self.assertTrue(result["resumed"])
+        calls = logged_calls(self.tmp.name)
+        (start,) = [c for c in calls if c[:2] == ["agent", "start"]]
+        claude = start[start.index("--") + 1:]
+        self.assertEqual(claude[:2], ["--resume", "sess-9"])
+        self.assertEqual(start[start.index("--pane") + 1], "w8:p1")
+        (prompt,) = [c for c in calls if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(prompt[3], hq.RESTART_ROUTINE)
+        self.assertIn("routine_at", json.loads((paths.state_dir() / "hq.json").read_text()))
+
+    def test_a_lost_space_is_recreated_on_the_same_conversation(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w3:p1", "workspace": "w3", "session": "sess-9",
+                                                            "cwd": str(self.cwd)}))
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get"], "stdout": "", "stderr": '{"error":{"code":"not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "create"], "stdout": CREATED},
+        ])
+        result = hq.hq(start_board=False, focus=False)
+        self.assertTrue(result["created"])
+        calls = logged_calls(self.tmp.name)
+        create = next(c for c in calls if c[:2] == ["workspace", "create"])
+        self.assertEqual(create[create.index("--cwd") + 1], os.path.realpath(self.cwd))
+        (start,) = [c for c in calls if c[:2] == ["agent", "start"]]
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "sess-9"])
+        record = json.loads((paths.state_dir() / "hq.json").read_text())
+        self.assertEqual((record["pane"], record["session"]), ("w8:p1", "sess-9"))
+
+    def test_a_resume_that_fails_starts_nothing_fresh(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8", "session": "sess-9"}))
+        err = json.dumps({"error": {"code": "agent_exited", "message": "No conversation found"}})
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}},
+            {"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1},
+        ])
+        with self.assertRaises(hq.ResumeError) as caught:
+            hq.hq(start_board=False)
+        self.assertIn("claude --resume sess-9", str(caught.exception))
+        starts = [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]]
+        self.assertEqual(len(starts), 1)
+        self.assertIn("--resume", starts[0])
+
+    def test_doctor_never_starts_an_hq_with_no_conversation(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}},
+        ])
+        self.assertTrue(hq.hq(start_board=False, fresh=False)["missing"])
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"]], [])
+
     def test_keep_label_renames_drifted_space_and_pane(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
         write_scenario(self.tmp.name, [
@@ -214,18 +273,27 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(any(c[:2] == ["notification", "show"] for c in self.calls()))
         self.assertFalse(hq.lock_file().exists())
 
-    def test_a_failed_resume_falls_back_to_a_fresh_hq_and_says_so(self):
+    def test_a_failed_resume_starts_no_fresh_hq_and_says_so(self):
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "no session"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1, "times": 1},
                                        {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
-        result = hq.restart_now(update=False)
-        self.assertTrue(result["fallback"])
-        first, second = self.starts()
-        self.assertIn("--resume", first)
-        self.assertNotIn("--resume", second)
-        self.assertEqual(second[second.index("--pane") + 1], "w8:p1")
+        with self.assertRaises(hq.RestartError) as raised:
+            hq.restart_now(update=False)
+        self.assertIn("claude --resume sess-1", str(raised.exception))
+        (only,) = self.starts()
+        self.assertIn("--resume", only)
         self.assertTrue(any(c[:2] == ["notification", "show"] for c in self.calls()))
         self.assertNotIn(["workspace", "create"], [c[:2] for c in self.calls()])
+        self.assertFalse(hq.lock_file().exists())
+
+    def test_no_known_conversation_starts_a_fresh_hq_and_says_so(self):
+        (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [GONE, HQ_SPACE])
+        with mock.patch.object(hq, "_session", return_value=None):
+            result = hq.restart_now(update=False)
+        self.assertTrue(result["fallback"])
+        (only,) = self.starts()
+        self.assertNotIn("--resume", only)
 
     def test_a_resume_that_came_up_late_is_not_started_twice(self):
         err = json.dumps({"error": {"code": "cli_timeout", "message": "slow"}})
@@ -462,7 +530,9 @@ class RestartTest(unittest.TestCase):
         hq.hq(start_board=False)
         calls = self.calls()
         (start,) = self.starts()
-        args = start[start.index("--") + 1:]
+        claude = start[start.index("--") + 1:]
+        self.assertEqual(claude[:2], ["--resume", "old"])  # hq.json knew HQ's conversation
+        args = claude[2:]
         (report,) = [c for c in calls if c[:2] == ["pane", "report-agent-session"]]
         self.assertEqual(report[2], "w8:p1")
         self.assertEqual(report[report.index("--source") + 1], "athena")

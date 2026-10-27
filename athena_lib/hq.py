@@ -123,10 +123,16 @@ def _workspace_is_hq(record) -> bool:
     return ws.get("label") == LABEL
 
 
-def _routine():
-    herdr.call("agent", "prompt", paths.hq_name(),
+def _routine(text=None):
+    """Prompt HQ's start routine (a fresh HQ's, or `text`), and note when in hq.json: doctor sends the resumed
+    routine only to an HQ that started after the last one went out."""
+    herdr.call("agent", "prompt", paths.hq_name(), text or
                "Start your HQ routine: run `athena status`, check the athena-watch mod runs `athena watch` (Monitor only as the "
                "skill's fallback), then tell me what is live and wait.")
+    record = load()
+    if record:
+        record["routine_at"] = time.time()
+        _file().write_text(json.dumps(record, indent=2))
 
 
 def _helpers(start_board, start_dash):
@@ -140,43 +146,70 @@ def _helpers(start_board, start_dash):
             print(f"dashboard not started: {exc}", file=sys.stderr)
 
 
-def hq(cwd=None, focus=True, start_board=True, start_dash=None) -> dict:
+class ResumeError(Exception):
+    """HQ's conversation could not be resumed. athena never starts a fresh one in its place on its own."""
+
+
+def _resume_agent(pane, session):
+    """Start HQ's Claude in `pane` on its saved conversation. herdr giving up on the wait while the Claude came up
+    counts as started."""
+    try:
+        _start_agent(pane, "--resume", session)
+    except herdr.HerdrError as exc:
+        if not retire.agent_owned(paths.hq_name()):
+            raise ResumeError(f"resuming HQ's conversation {session} failed ({exc}); it is still there "
+                              f"(claude --resume {session}). Start a fresh HQ on purpose with `athena hq rotate`.")
+
+
+def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> dict:
+    """Create or focus HQ. An HQ whose Claude is gone is brought back on its saved conversation (`--resume`), in its
+    surviving space or in a new one when the space went too; a fresh conversation starts only for an HQ that never
+    had one, and never when `fresh` is False (doctor), which returns {"missing": True} instead."""
     start_dash = start_board if start_dash is None else start_dash
     current = load()
+    session = current.get("session")
     if current.get("pane") and _alive(current["pane"]):
         keep_label(current, owned=True)
         if focus and current.get("workspace"):
             herdr.call("workspace", "focus", current["workspace"])
         _helpers(start_board, start_dash)
         return {**current, "created": False}
+    if not session and not fresh:
+        return {**current, "created": False, "missing": True}
     if current.get("pane") and _workspace_is_hq(current):
-        # The hq space survived but its Claude did not (exited, or a herdr restart): restart it there.
-        _start_agent(current["pane"])
+        # The hq space survived but its Claude did not (exited, or a herdr restart): bring it back there.
+        if session:
+            _resume_agent(current["pane"], session)
+        else:
+            _start_agent(current["pane"])
         _remember_session(current)
         keep_label(current, owned=True)
-        _routine()
+        _routine(RESTART_ROUTINE if session else None)
         if focus:
             herdr.call("workspace", "focus", current["workspace"])
         _helpers(start_board, start_dash)
-        return {**current, "created": False, "restarted": True}
-    cwd = os.path.realpath(os.path.expanduser(cwd or paths.projects_dir()))
+        return {**load(), "created": False, "restarted": True, "resumed": bool(session)}
+    cwd = os.path.realpath(os.path.expanduser(cwd or current.get("cwd") or paths.projects_dir()))
     claim = paths.claim_file(cwd)
     claim.parent.mkdir(parents=True, exist_ok=True)
     claim.write_text("hq\n")
     try:
         created = herdr.call("workspace", "create", "--cwd", cwd, "--label", LABEL, "--focus" if focus else "--no-focus")
         pane = created["root_pane"]["pane_id"]
-        _start_agent(pane)
+        if session:
+            _resume_agent(pane, session)
+        else:
+            _start_agent(pane)
     finally:
         claim.unlink(missing_ok=True)
-    record = {"pane": pane, "workspace": created["workspace"]["workspace_id"],
+    record = {**current, "pane": pane, "workspace": created["workspace"]["workspace_id"],
               "terminal": created["root_pane"].get("terminal_id"), "cwd": cwd}
     _file().write_text(json.dumps(record, indent=2))
     _remember_session(record)
     keep_label(record, owned=True)
-    _routine()
+    _routine(RESTART_ROUTINE if session else None)
     _helpers(start_board, start_dash)
-    return {**record, "created": True}
+    return {**load(), "created": True, "resumed": bool(session)}
 
 
 RESTART_ROUTINE = ("HQ restarted: run your session-start routine (athena status --pr; the athena-watch mod restarts "
@@ -431,13 +464,18 @@ def _restart(update, force_update=False):
             _start_agent(pane, "--resume", session)
         except herdr.HerdrError as exc:
             if not retire.agent_owned(name):
-                return _fallback(f"resuming conversation {session} failed ({exc})")
+                msg = (f"resuming conversation {session} failed ({exc}); nothing was started in its place. It is still "
+                       f"there (claude --resume {session}); `athena doctor` tries again, or start a fresh HQ on purpose "
+                       "with `athena hq rotate`")
+                _say("FAILED: " + msg)
+                _notify("athena: HQ not resumed", msg)
+                raise RestartError(msg)
             _say(f"herdr gave up waiting ({exc}), but the resumed Claude is up")
     else:
         return _fallback("no conversation id was known for HQ")
     _remember_session(load())
     keep_label(owned=True)
-    herdr.call("agent", "prompt", name, RESTART_ROUTINE)
+    _routine(RESTART_ROUTINE)
     _say(f"HQ resumed conversation {session} in pane {pane} in {took(resuming)}; the restart took {took(began)} in all")
     return {"resumed": True, "session": session, "pane": pane}
 
@@ -587,7 +625,7 @@ def _rotate():
         _say("herdr does not report the fresh HQ's conversation id yet; hq.json records none until a restart or "
              "`athena hq` sees it")
     keep_label(owned=True)
-    herdr.call("agent", "prompt", name, _rotate_prompt())
+    _routine(_rotate_prompt())
     threads = handoff.threads_file()
     if threads.exists():
         os.replace(threads, threads.with_name("threads.prev.md"))  # its threads are in the handoff now
