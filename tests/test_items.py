@@ -267,6 +267,44 @@ class ReviewRound1Test(Base):
         self.assertEqual(asks.show(out.strip())["kind"], "result")
 
 
+class ReviewRound2Test(Base):
+    BROKEN = '{"next": 3, "items": [{"id": "a1", "text": "Ship?"'  # cut off mid-write, or broken by hand
+
+    def test_a_failed_read_in_done_changes_nothing(self):
+        a1 = asks.add("Re-run it?", name="Flaky e2e", options=["Re-run", "Leave it"], rec="re-run", auto=True, now=T)
+        good = asks.asks_file().read_text()
+        answer(1, a1, ts=T, discuss=True)
+        asks.asks_file().write_text(self.BROKEN)
+        with self.assertRaises(asks.AskError):
+            asks.done(a1, keep=True, now=T + 60)
+        self.assertEqual(asks.fold(asks._lines())[1]["status"], "queued")  # the Discuss is not used up
+        asks.asks_file().write_text(good)  # repaired: the retry finds the answer and turns the default off
+        self.assertEqual(asks.done(a1, keep=True, now=T + 120)["done"], [1])
+        self.assertNotIn("auto", asks.show(a1))
+
+    def test_migrate_never_saves_over_an_unreadable_file(self):
+        asks.asks_file().write_text(self.BROKEN)
+        legacy = paths.state_dir() / "needs-you.md"
+        legacy.write_text("- Start ABC-111 now?\n")
+        # through add
+        code, _, err = self.cli("item", "add", "Next?", "--name", "Next one")
+        self.assertEqual(code, 2)
+        self.assertIn("unreadable", err)
+        self.assertEqual(asks.asks_file().read_text(), self.BROKEN)
+        self.assertTrue(legacy.exists())
+        # through the read path: nothing written, nothing raised
+        self.assertEqual(asks.items(), [])
+        self.assertEqual(asks.asks_file().read_text(), self.BROKEN)
+        # through the watch: told, never fatal, nothing written
+        from athena_lib import watch
+        out = io.StringIO()
+        with redirect_stdout(out):
+            watch.migrate_legacy(tagged=True)
+        self.assertIn("needs-you.md not migrated", out.getvalue())
+        self.assertEqual(asks.asks_file().read_text(), self.BROKEN)
+        self.assertTrue(legacy.exists())
+
+
 class MigrationTest(Base):
     def test_a_real_shaped_needs_you_json_loses_nothing(self):
         shutil.copy(FIXTURE, asks.asks_file())  # a copy: never the live one

@@ -177,7 +177,8 @@ def _legacy_lines(text):
 
 def migrate():
     """Import needs-you.md's lines as asks (a question when one has a `?`, else a note), then rename it
-    needs-you.md.migrated. Run before every read, so a line written there out of habit is picked up too."""
+    needs-you.md.migrated. Run before every read, so a line written there out of habit is picked up too. Raises
+    AskError, writing nothing and leaving needs-you.md, when needs-you.json is there but unreadable."""
     legacy = _legacy_file()
     if not legacy.exists():
         return []
@@ -186,7 +187,7 @@ def migrate():
             text = legacy.read_text()
         except OSError:
             return []
-        data = _read()
+        data = _read(strict=True)
         have = {i.get("text") for i in data["items"]}
         added = []
         for line in _legacy_lines(text):
@@ -312,7 +313,10 @@ def archived() -> list:
 def migrate_items(dry_run=False):
     """Bring every item in needs-you.json up to items (plan §3), once, keeping each as it was, its id included; a copy
     of the file from before goes to needs-you.json.v1. Returns {before, after, changed}: counts, and the ids touched."""
-    migrate()
+    try:
+        migrate()
+    except AskError:
+        pass  # needs-you.json is unreadable: below writes nothing either, and readers see no items
     with _locked():
         try:
             raw = json.loads(asks_file().read_text())
@@ -963,15 +967,17 @@ def done(item_id, keep=False, note="", now=None):
     with _locked():
         settled = [a for a in _settled(now) if a["item"] == item_id]
         seqs = [a["seq"] for a in settled]
-        if seqs:
-            _append([{"seq": s, "ts": now, "status": "done"} for s in seqs])
-        try:
+        try:  # read before anything is marked: a failed read changes nothing, and a retry finds the answers settled
             data = _read(strict=True)
         except AskError:
-            if item_id.startswith(("w-", "pr:")):
-                _compact(now)
-                return {"item": item_id, "resolved": False, "done": seqs}  # its answers are done; no item to write
-            raise
+            if not item_id.startswith(("w-", "pr:")):
+                raise
+            data = None  # a worker's or a PR's answers: no item to write
+        if seqs:
+            _append([{"seq": s, "ts": now, "status": "done"} for s in seqs])
+        if data is None:
+            _compact(now)
+            return {"item": item_id, "resolved": False, "done": seqs}
         item = next((i for i in data["items"] if i.get("id") == item_id), None)
         if item is not None and is_open(item):
             normalize(item)

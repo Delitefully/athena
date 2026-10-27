@@ -692,6 +692,15 @@ def emit(lines, snap, tagged=False, last_status=None, prev=None):
     return record
 
 
+def migrate_legacy(tagged=False):
+    """needs-you.md, once, into needs-you.json. A failure (needs-you.json unreadable: nothing is written) is told,
+    never fatal."""
+    try:
+        asks.migrate()
+    except (OSError, ValueError, asks.AskError) as exc:
+        report_error(f"needs-you.md not migrated: {exc}", tagged=tagged)
+
+
 def report_error(exc, tagged=False):
     if tagged:
         print(json.dumps({"line": f"watch error: {exc}", "wake": True}), flush=True)
@@ -865,10 +874,7 @@ def run(interval=20, fetch_every=120, tagged=False):
     knock_start(slackbell)
     if not slackbell.off:
         slackbell = slack.Background(slackbell)  # its HTTP calls never hold up the dash-queue ring or a tick
-    try:
-        asks.migrate()  # needs-you.md, once, into needs-you.json
-    except (OSError, ValueError) as exc:
-        report_error(f"needs-you.md not migrated: {exc}", tagged=tagged)
+    migrate_legacy(tagged)
     while True:
         fetch = time.time() - last_fetch >= fetch_every
         if fetch:
