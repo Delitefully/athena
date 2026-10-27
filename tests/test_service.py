@@ -95,6 +95,12 @@ class PlistTest(Fixture):
         for p in jobs.values():
             self.assertIn("/usr/bin", p["EnvironmentVariables"]["PATH"].split(":"))
 
+    def test_doctors_agent_abandons_its_process_group(self):
+        self.install()
+        jobs = self.plists()
+        self.assertIs(jobs["doctor"]["AbandonProcessGroup"], True)  # a detached HQ restart outlives doctor
+        self.assertNotIn("AbandonProcessGroup", jobs["herdr"])
+
     def test_an_instance_runs_beside_the_default(self):
         self.install(instance="lt")
         self.assertEqual(self.plists("lt")["herdr"]["Label"], "athena.lt.herdr")
@@ -234,6 +240,13 @@ class SystemdTest(Fixture):
         self.assertEqual(calls[0], ["--user", "daemon-reload"])
         self.assertEqual([c[-1] for c in calls[1:]], ["athena-herdr.service", "athena-dash.service",
                                                        "athena-board.service", "athena-doctor.timer"])
+
+    def test_doctor_leaves_what_it_started_running_when_it_exits(self):
+        self.install("systemd")
+        doctor = self.unit_text("athena-doctor.service")
+        self.assertIn("KillMode=process\n", doctor)
+        for job in ("herdr", "dash", "board"):
+            self.assertNotIn("KillMode", self.unit_text(f"athena-{job}.service"))
 
     def test_quoting(self):
         self.assertEqual(service._systemd_quote("/a b/c"), '"/a b/c"')

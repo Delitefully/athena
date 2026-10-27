@@ -46,6 +46,8 @@ CAFFEINATE_SECONDS = 180
 ROTATE_ASK = ("athena doctor: your context is {ctx}. Write your in-flight threads (what you promised, what you wait "
               "on, what is half done) to {threads}, then run `athena hq rotate`. It rotates once you are idle, never "
               "while the human is typing.")
+NO_SESSION = ("HQ's conversation id is not known, and doctor never starts a fresh HQ: restart it by hand "
+              "(`athena hq restart`)")
 CONTINUE = ("athena doctor: herdr restarted and resumed this session in the middle of your turn. Carry on from where "
             "you were, by your brief.")
 
@@ -129,7 +131,14 @@ class Doctor:
         self.state.setdefault("attempts", {}).setdefault(subject, []).append(self.now)
 
     def repaired(self, subject):
-        self.state.setdefault("attempts", {}).pop(subject, None)
+        """`subject` is up. Its repairs stay counted for ATTEMPT_WINDOW: a part that fails again right after each
+        repair (a watch that stalls every few minutes) is still held to ATTEMPTS_MAX an hour, then flagged."""
+        attempts = self.state.setdefault("attempts", {})
+        tries = [t for t in attempts.get(subject, []) if self.now - t < ATTEMPT_WINDOW]
+        if tries:
+            attempts[subject] = tries
+        else:
+            attempts.pop(subject, None)
         self.up(subject)
 
     def repair(self, name, subject, fn, what):
@@ -264,21 +273,32 @@ class Doctor:
         if self.down_for("watch") < _grace():
             self.record("watch", False, what)
             return
+        if not self.hq_session():
+            self.record("watch", False, f"{what}; {NO_SESSION}")
+            return
         if not self.idle(agent):
             self.record("watch", False, f"{what}; HQ is restarted at its next idle")
             return
         self.repair("watch", "watch", lambda: self._restart_hq("restarting HQ on its conversation, which starts the "
                                                              "athena-watch mod again"), what)
 
+    def hq_session(self):
+        """HQ's conversation id, as herdr or hq.json knows it; None when neither does."""
+        return hq._session() or self.hq_record().get("session")
+
     def _restart_hq(self, why):
-        result = hq.restart(update=False)  # detached; waits for idle and an empty input box itself
+        # Detached; it waits for idle and an empty input box itself. Unattended: with no known conversation, or with
+        # background work running in HQ, it leaves HQ as it is (never a fresh HQ, never "Exit and stop tasks").
+        result = hq.restart(update=False, unattended=True)
         return f"{why} (pid {result['pid']})"
 
     def check_sockets(self, agent):
         if agent:
             path = sockets.hq_missing()
             if path:
-                if self.down_for("socket:hq") >= _grace() and not self.idle(agent):
+                if self.down_for("socket:hq") >= _grace() and not self.hq_session():
+                    self.record("socket:hq", False, f"HQ's messaging socket is gone ({path}); {NO_SESSION}")
+                elif self.down_for("socket:hq") >= _grace() and not self.idle(agent):
                     self.record("socket:hq", False, f"HQ's messaging socket is gone ({path}); HQ is restarted at its "
                                                     "next idle")
                 elif self.down_for("socket:hq") >= _grace():
@@ -321,7 +341,11 @@ class Doctor:
         args = hookstatus._resume_args(name, w)
         if not session or not args or not w.get("pane"):
             raise RuntimeError(f"{name}'s conversation or start command is not known")
-        if not retire.exit_claude(name, float(os.environ.get("ATHENA_EXIT_GRACE") or 20)):
+        try:
+            exited = retire.exit_claude(name, float(os.environ.get("ATHENA_EXIT_GRACE") or 20), stop_tasks=False)
+        except retire.BackgroundWork as exc:
+            raise RuntimeError(f"{exc}; tried again later") from exc
+        if not exited:
             raise RuntimeError(f"{name}'s Claude did not exit")
         herdr.call("agent", "start", name, "--kind", "claude", "--pane", w["pane"], "--timeout", "120000", "--",
                    "--resume", session, *args, timeout=200)
@@ -412,19 +436,28 @@ class Doctor:
 
     # -- the tick
 
+    def guard(self, name, fn, *args):
+        """Run one check: whatever it raises (a herdr call that failed, say) is that check's finding, and the
+        rest still run, so health.json is always written."""
+        try:
+            return fn(*args)
+        except Exception as exc:
+            self.record(name, False, f"the check failed: {exc}")
+            return None
+
     def run(self) -> dict:
-        if self.check_herdr():
-            agent = self.check_hq()
-            self.check_watch(agent)
-            self.check_sockets(agent)
-            self.check_routine(agent)
-            self.check_resumed_workers()
-            self.check_context(agent)
-        self.check_dash()
-        self.check_board()
-        self.check_disk()
-        self.check_memory()
-        self.caffeinate()
+        if self.guard("herdr", self.check_herdr):
+            agent = self.guard("hq", self.check_hq)
+            self.guard("watch", self.check_watch, agent)
+            self.guard("sockets", self.check_sockets, agent)
+            self.guard("hq routine", self.check_routine, agent)
+            self.guard("resumed workers", self.check_resumed_workers)
+            self.guard("hq context", self.check_context, agent)
+        self.guard("dash", self.check_dash)
+        self.guard("board", self.check_board)
+        self.guard("disk", self.check_disk)
+        self.guard("memory", self.check_memory)
+        self.guard("caffeinate", self.caffeinate)
         return self.finish()
 
     def finish(self) -> dict:

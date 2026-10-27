@@ -61,23 +61,25 @@ def _rule(line) -> bool:
 
 
 def typed(screen):
-    """The text in the input box of `screen` (an ANSI screen read), "" when the box is empty (a dim placeholder
-    counts as empty), or None when no input box shows, as under a permission dialog."""
+    """The text in the input box of `screen` (an ANSI screen read): "" when the box is empty (a dim placeholder or a
+    drawn cursor counts as empty), or None when the screen shows no box athena recognises. Only the bottom box counts:
+    the last two rules, with a `❯` (or `>`) prompt on the first line between them. Anything else, such as a
+    permission dialog, bash mode's `!` prompt or a screen that could not be read, is None."""
     lines = (screen or "").splitlines()
     rules = [i for i, line in enumerate(lines) if _rule(line)]
-    for top, bottom in reversed(list(zip(rules, rules[1:]))):
-        box = lines[top + 1:bottom]
-        if not box or not _plain(box[0]).lstrip().startswith(_PROMPT):
-            continue
-        parts = []
-        for n, line in enumerate(box):
-            text = _plain(_undimmed(line)).replace("\xa0", " ").strip()
-            if n == 0:
-                text = text[1:].strip() if text.startswith(_PROMPT) else text
-            if text:
-                parts.append(text)
-        return " ".join(parts)
-    return None
+    if len(rules) < 2:
+        return None
+    box = lines[rules[-2] + 1:rules[-1]]
+    if not box or not _plain(box[0]).lstrip().startswith(_PROMPT):
+        return None
+    parts = []
+    for n, line in enumerate(box):
+        text = _plain(_undimmed(line)).replace("\xa0", " ").strip()
+        if n == 0:
+            text = text[1:].strip() if text.startswith(_PROMPT) else text
+        if text:
+            parts.append(text)
+    return " ".join(parts)
 
 
 def screen(name) -> str:
@@ -89,13 +91,15 @@ def screen(name) -> str:
 
 
 def typing(name) -> bool:
-    """Whether someone has typed into the agent's input box and not sent it."""
-    return bool(typed(screen(name)))
+    """Whether athena must not type into the agent's pane: someone typed into its input box and has not sent it, or
+    the box cannot be read or is not one athena recognises (fail closed: a screen that could not be read, a dialog,
+    bash mode). Only an input box seen empty is safe."""
+    return typed(screen(name)) != ""
 
 
 def wait_clear(name, wait=None) -> bool:
     """Wait up to `wait` seconds (env ATHENA_TYPING_WAIT, 120 by default) for the input box to be empty.
-    True when nothing is typed there."""
+    True once the box is seen empty."""
     wait = float(os.environ.get("ATHENA_TYPING_WAIT") or 120) if wait is None else wait
     deadline = time.monotonic() + wait
     while typing(name):

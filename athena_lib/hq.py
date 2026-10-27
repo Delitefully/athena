@@ -208,10 +208,18 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> d
     try:
         created = herdr.call("workspace", "create", "--cwd", cwd, "--label", LABEL, "--focus" if focus else "--no-focus")
         pane = created["root_pane"]["pane_id"]
-        if session:
-            _resume_agent(pane, session)
-        else:
-            _start_agent(pane)
+        try:
+            if session:
+                _resume_agent(pane, session)
+            else:
+                _start_agent(pane)
+        except (ResumeError, herdr.HerdrError):
+            # Never leave the space behind: hq.json does not know it, so every retry would make another.
+            try:
+                herdr.call("workspace", "close", created["workspace"]["workspace_id"], timeout=30)
+            except herdr.HerdrError:
+                pass
+            raise
     finally:
         claim.unlink(missing_ok=True)
     record = {**current, "pane": pane, "workspace": created["workspace"]["workspace_id"],
@@ -415,19 +423,21 @@ def _wait_idle():
         return False
 
 
-def restart_now(update=True, force_update=False) -> dict:
+def restart_now(update=True, force_update=False, unattended=False) -> dict:
     """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane.
 
     The updates are skipped when they ran without a warning within config hq_update_interval_hours, unless
-    `force_update`; `update=False` skips them whatever."""
+    `force_update`; `update=False` skips them whatever. `unattended` (athena doctor) never starts a fresh HQ and
+    never stops HQ's background work: with no known conversation, or with subagents, monitors or shells running, it
+    leaves HQ as it is and fails."""
     _lock()
     try:
-        return _restart(update, force_update)
+        return _restart(update, force_update, unattended)
     finally:
         _unlock()
 
 
-def _restart(update, force_update=False):
+def _restart(update, force_update=False, unattended=False):
     record = load()
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
@@ -447,6 +457,12 @@ def _restart(update, force_update=False):
             _stamp_update()
         _say(f"updates took {took(began)}")
     session = _session() or record.get("session")
+    if unattended and not session:
+        msg = (f"HQ's conversation id is not known ({name} in pane {pane}); an unattended restart never starts a fresh "
+               "HQ, so nothing was restarted. Run `athena hq restart` by hand")
+        _say("FAILED: " + msg)
+        _notify("athena: HQ restart skipped", msg)
+        raise RestartError(msg)
     if retire.agent_owned(name):
         if not _wait_idle():
             # Typing /exit and Enter into a permission dialog would answer it.
@@ -461,7 +477,14 @@ def _restart(update, force_update=False):
             raise RestartError(msg)
         grace = float(os.environ.get("ATHENA_EXIT_GRACE") or 20)
         exiting = time.monotonic()
-        if not retire.exit_claude(name, grace):
+        try:
+            exited = retire.exit_claude(name, grace, stop_tasks=not unattended)
+        except retire.BackgroundWork as exc:
+            msg = f"{exc}; HQ was not restarted. Doctor tries again later"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ restart skipped", msg)
+            raise RestartError(msg)
+        if not exited:
             msg = f"HQ's Claude ({name} in pane {pane}) did not exit; it is still running and nothing was restarted"
             _say("FAILED: " + msg)
             _notify("athena: HQ restart failed", msg)
@@ -501,8 +524,9 @@ def _fallback(why):
     return {**result, "fallback": True, "reason": why}
 
 
-def restart(update=True, force_update=False) -> dict:
-    """Start the restart detached and return at once: when HQ runs this about itself, exiting HQ must not kill it."""
+def restart(update=True, force_update=False, unattended=False) -> dict:
+    """Start the restart detached and return at once: when HQ runs this about itself, exiting HQ must not kill it.
+    `unattended`: see restart_now."""
     pid = _holder()
     if pid:
         raise RestartError(f"an HQ restart is already running (pid {pid}); see {_log_file()}")
@@ -512,6 +536,8 @@ def restart(update=True, force_update=False) -> dict:
         argv.append("--no-update")
     elif force_update:
         argv.append("--update")
+    if unattended:
+        argv.append("--unattended")
     with open(log, "a") as out:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
                                 cwd=str(paths.PLUGIN_ROOT))

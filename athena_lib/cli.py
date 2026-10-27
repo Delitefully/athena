@@ -557,7 +557,7 @@ def cmd_hq(a):
         return 0
     if a.action == "restart":
         if a.child:
-            _print(hq.restart_now(update=not a.no_update, force_update=a.update))
+            _print(hq.restart_now(update=not a.no_update, force_update=a.update, unattended=a.unattended))
         else:
             print(hq.restart(update=not a.no_update, force_update=a.update)["message"])
         return 0
@@ -571,7 +571,10 @@ def cmd_hq(a):
     result = hq.hq(cwd=a.cwd, focus=not a.no_focus, start_board=not a.no_board, start_dash=not a.no_dash)
     if not a.no_doctor:
         # `athena` = attach + doctor: whatever else died (the dashboard, the board, a socket) is seen to now.
-        health = doctor.run(fix=True)
+        try:
+            health = doctor.run(fix=True)
+        except Exception as exc:  # doctor never stands between the human and HQ
+            health = {"actions": [], "checks": {"doctor": {"ok": False, "detail": f"did not run: {exc}"}}}
         for line in doctor.render(health, quiet=True)[1:]:
             print(f"athena doctor: {line}", file=sys.stderr)
     if not attach:
@@ -828,6 +831,7 @@ def parser():
     s.add_argument("--if-context-over", type=float, metavar="PCT",
                    help="rotate: only when HQ's context (read from its transcript) is at least PCT%% full")
     s.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--unattended", action="store_true", help=argparse.SUPPRESS)  # doctor's: no fresh HQ, no task stop
     s.add_argument("--cwd")
     s.add_argument("--no-focus", action="store_true")
     s.add_argument("--no-board", action="store_true")

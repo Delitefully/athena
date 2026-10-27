@@ -148,6 +148,9 @@ def plist(job, instance=None, argv=None, env=None) -> bytes:
             "StandardErrorPath": str(log_file(job)), "RunAtLoad": True}
     if job == "doctor":
         data["StartInterval"] = 60
+        # What doctor starts outlives it: a detached HQ restart, a dashboard or board it started by hand, caffeinate.
+        # launchd would otherwise kill whatever is left in the job's process group when doctor exits.
+        data["AbandonProcessGroup"] = True
     else:
         # Restarted after a crash, never after a clean stop (`herdr server stop`, a second watcher leaving).
         data["KeepAlive"] = {"SuccessfulExit": False}
@@ -175,7 +178,9 @@ def units(job, instance=None, argv=None, env=None) -> dict:
     lines += [f"StandardOutput=append:{log_file(job)}", f"StandardError=append:{log_file(job)}"]
     name = unit(job, instance)
     if job == "doctor":
-        lines += ["Type=oneshot"]
+        # KillMode=process: when doctor exits, systemd stops doctor alone, not the detached HQ restart, dashboard,
+        # board or caffeinate it started, which share its cgroup whatever their session.
+        lines += ["Type=oneshot", "KillMode=process"]
         timer = ["[Unit]", f"Description=athena {DESCRIPTIONS[job]}", "", "[Timer]", "OnBootSec=60",
                  "OnUnitActiveSec=60", "AccuracySec=5", f"Unit={name}.service", "", "[Install]",
                  "WantedBy=timers.target"]

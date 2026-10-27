@@ -55,6 +55,47 @@ class TypedTest(unittest.TestCase):
         self.assertEqual(composer.typed(screen), "")
 
 
+class FailClosedTest(unittest.TestCase):
+    """Only an input box seen empty is safe to type into: anything unread or unrecognised counts as typing."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def screen_is(self, stdout, **rule):
+        write_scenario(self.tmp.name, [{"match": ["agent", "read", "w"], "stdout": stdout, **rule}])
+        return composer.typing("w")
+
+    def test_an_unreadable_screen_is_typing(self):
+        self.assertTrue(self.screen_is("", exit=1))
+        self.assertTrue(self.screen_is(""))
+
+    def test_bash_mode_is_typing_even_with_nothing_after_its_prompt(self):
+        self.assertTrue(self.screen_is("\n".join([RULE, "!\xa0", RULE])))
+        self.assertTrue(self.screen_is("\n".join([RULE, "!\xa0rm -rf build", RULE])))
+
+    def test_a_dialog_is_typing(self):
+        self.assertTrue(self.screen_is("Do you want to proceed?\n❯ 1. Yes\n  2. No\n"))
+
+    def test_an_old_box_in_the_scrollback_does_not_count(self):
+        screen = "\n".join([RULE, "❯\xa0\x1b[2mTry this\x1b[0m", RULE, "output", RULE, "!\xa0ls", RULE])
+        self.assertIsNone(composer.typed(screen))
+        self.assertTrue(self.screen_is(screen))
+
+    def test_only_an_empty_box_is_safe(self):
+        self.assertFalse(self.screen_is(EMPTY))
+
+    def test_exit_claude_sends_nothing_into_an_unreadable_pane(self):
+        write_scenario(self.tmp.name, [{"match": ["agent", "get", "w"], "stdout": {"result": {"agent": {"name": "w"}}}},
+                                       {"match": ["agent", "read", "w"], "stdout": "", "exit": 1}])
+        self.assertFalse(retire.exit_claude("w", 0))
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]], [])
+
+
 class GuardFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

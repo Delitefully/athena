@@ -199,7 +199,7 @@ class RepairTest(Fixture):
         self.tick_watch(ago=20 * 60)
         self.scenario(RUNNING, hq_agent())
         health = self.run_doctor()
-        self.mocks["restart"].assert_called_once_with(update=False)
+        self.mocks["restart"].assert_called_once_with(update=False, unattended=True)
         self.assertTrue(health["checks"]["watch"]["fixed"])
         self.assert_left_alone("restart")
 
@@ -215,7 +215,7 @@ class RepairTest(Fixture):
         self.mocks["hq_socket"].return_value = "/tmp/cc-socks/1.sock"
         self.scenario(RUNNING, hq_agent())
         health = self.run_doctor()
-        self.mocks["restart"].assert_called_once_with(update=False)
+        self.mocks["restart"].assert_called_once_with(update=False, unattended=True)
         self.assertTrue(health["checks"]["socket:hq"]["fixed"])
 
     def test_a_workers_dead_socket_restarts_it_in_place_on_its_conversation(self):
@@ -385,6 +385,80 @@ class FlagsTest(Fixture):
             with mock.patch.object(doctor, "_alive", return_value=False):
                 self.run_doctor()  # on battery: none
             spawn.assert_called_once_with()
+
+
+class RoundOneTest(Fixture):
+    """The findings of review round 1, one test each."""
+
+    def test_the_cap_holds_across_healthy_ticks(self):
+        # A watch that stalls again a few minutes after each repair: at most 3 restarts an hour, then flagged.
+        self.scenario(RUNNING, hq_agent())
+        now = time.time()
+        for minute in range(0, 60, 3):
+            stale = (minute // 3) % 2 == 0
+            self.tick_watch(ago=-minute * 60 + (20 * 60 if stale else 0))
+            with mock.patch.object(doctor.time, "time", return_value=now + minute * 60):
+                health = self.run_doctor()
+        self.assertEqual(self.mocks["restart"].call_count, 3)
+        self.tick_watch(ago=-60 * 60 + 20 * 60)
+        with mock.patch.object(doctor.time, "time", return_value=now + 59 * 60):
+            health = self.run_doctor()
+        self.assertIn("gave up", health["checks"]["watch"]["detail"])
+        self.assertEqual(self.mocks["restart"].call_count, 3)
+
+    def test_no_known_conversation_means_no_restart_for_the_watch_or_the_socket(self):
+        (self.state / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8", "routine_at": time.time()}))
+        no_session = {"match": ["agent", "get"], "stdout": {"result": {"agent": {"name": "athena",
+                                                                                  "agent_status": "idle"}}}}
+        self.tick_watch(ago=20 * 60)
+        self.mocks["hq_socket"].return_value = "/tmp/cc-socks/1.sock"
+        self.scenario(RUNNING, no_session)
+        health = self.run_doctor()
+        self.mocks["restart"].assert_not_called()
+        for check in ("watch", "socket:hq"):
+            self.assertIn("never starts a fresh HQ", health["checks"][check]["detail"])
+
+    def test_a_worker_with_background_work_is_not_exited(self):
+        from tests.test_retire import DIALOG
+        ledger.append("spawn", "abc-1", repo="/r", branch="you/abc-1", path="/w/abc-1", pane="w5:p1",
+                      claude_args=["--name", "abc-1"])
+        hookstatus.apply({"hook_event_name": "SessionStart", "session_id": "w-sess"}, "abc-1")
+        self.mocks["worker_socket"].side_effect = lambda name: "/tmp/cc-socks/2.sock"
+        self.scenario(RUNNING, hq_agent(), worker_agent("abc-1"),
+                      {"match": ["agent", "read", "abc-1"], "stdout": DIALOG, "after": ["agent", "prompt", "abc-1", "/exit"]})
+        health = self.run_doctor()
+        self.assertIn(["agent", "send-keys", "abc-1", "esc"], self.calls())
+        self.assertNotIn(["agent", "send-keys", "abc-1", "enter"], self.calls())
+        self.assertEqual(self.starts(), [])
+        self.assertIn("background work", health["checks"]["socket:abc-1"]["detail"])
+
+    def test_a_herdr_prompt_that_fails_never_stops_the_run(self):
+        self.mocks["context"].return_value = {"percent": 72.0, "tokens": 144000, "window": 200000}
+        self.dash["running"] = None
+        err = '{"error":{"code":"agent_not_ready","message":"busy"}}'
+        self.scenario(RUNNING, hq_agent(), {"match": ["agent", "prompt"], "stdout": "", "stderr": err, "exit": 1})
+        health = self.run_doctor()
+        self.assertIn("the check failed", health["checks"]["hq context"]["detail"])
+        self.mocks["dash_start"].assert_called_once_with(hq=0)  # the parts after it still ran
+        self.assertIn("board", health["checks"])
+        self.assertTrue((self.state / "health.json").exists())
+        self.assertTrue((self.state / "doctor.json").exists())
+
+    def test_a_bare_athena_attaches_when_doctor_breaks(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        from athena_lib import launch
+        self.scenario(RUNNING, hq_agent())
+        with mock.patch.object(cli.doctor, "run", side_effect=RuntimeError("boom")), \
+                mock.patch.object(launch.sys.stdin, "isatty", return_value=True), \
+                mock.patch.object(launch, "can_attach", return_value=True), \
+                mock.patch.object(launch, "server_running", return_value=True), \
+                mock.patch.object(launch.os, "execvp") as execvp, mock.patch.object(hq.board, "start_watcher"), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            code = cli.main(["hq"])
+        self.assertEqual(code, 0)
+        execvp.assert_called_once()
+        self.assertIn("did not run: boom", err.getvalue())
 
 
 class CliTest(Fixture):

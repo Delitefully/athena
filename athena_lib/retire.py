@@ -69,14 +69,22 @@ def _screen(name) -> str:
         return ""
 
 
-def exit_claude(name, grace) -> bool:
+class BackgroundWork(Exception):
+    """An unattended exit met Claude's "Background work is running" dialog and cancelled it: subagents, monitors or
+    background shells would have been stopped."""
+
+
+def exit_claude(name, grace, stop_tasks=True) -> bool:
     """Type /exit into the agent's Claude, then press Enter only on a screen that asks for exactly that.
 
     The single Enter that `agent prompt` sends can leave /exit sitting in the slash-command menu, and a Claude
     with background work running answers /exit with a confirmation dialog: both get one Enter (see
-    `exit_screen`). Polls every 0.2s for up to `grace` seconds, and always looks once more after a key.
-    True when the Claude is gone. Nothing is typed while the input box holds text someone has not sent: /exit
-    would join it. That returns False, as a Claude that did not exit; callers that care ask `composer.typing` first.
+    `exit_screen`), the dialog only when `stop_tasks`. Unattended exits (athena doctor) pass `stop_tasks=False`:
+    the dialog is cancelled with Esc and BackgroundWork raised, so its subagents and monitors keep running.
+    Polls every 0.2s for up to `grace` seconds, and always looks once more after a key.
+    True when the Claude is gone. Nothing is typed unless the input box is seen empty (`composer.typing`): /exit
+    would join unsent text. That returns False, as a Claude that did not exit; callers that care ask
+    `composer.typing` first.
     """
     if not agent_owned(name):
         return True
@@ -89,7 +97,15 @@ def exit_claude(name, grace) -> bool:
     deadline, presses = time.monotonic() + grace, 0
     while agent_owned(name):
         pressed = False
-        if presses < 3 and exit_screen(_screen(name)) in ("confirm", "submit"):
+        seen = exit_screen(_screen(name)) if presses < 3 else None
+        if seen == "confirm" and not stop_tasks:
+            try:
+                herdr.call("agent", "send-keys", name, "esc", timeout=15)
+            except herdr.HerdrError:
+                pass
+            raise BackgroundWork(f"{name} has background work running (subagents, monitors or shells); its exit "
+                                 "was cancelled so they keep running")
+        if seen in ("confirm", "submit"):
             try:
                 herdr.call("agent", "send-keys", name, "enter", timeout=15)
             except herdr.HerdrError:

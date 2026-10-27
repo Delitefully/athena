@@ -150,6 +150,22 @@ class HqTest(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn("--resume", starts[0])
 
+    def test_a_failed_resume_in_a_new_space_closes_that_space(self):
+        (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w3:p1", "workspace": "w3", "session": "sess-9",
+                                                            "cwd": str(self.cwd)}))
+        err = json.dumps({"error": {"code": "agent_exited", "message": "No conversation found"}})
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "get"], "stdout": "", "stderr": '{"error":{"code":"not_found","message":"x"}}', "exit": 1},
+            {"match": ["workspace", "create"], "stdout": CREATED},
+            {"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1},
+        ])
+        with self.assertRaises(hq.ResumeError):
+            hq.hq(start_board=False, focus=False)
+        self.assertIn(["workspace", "close", "w8"], [c[:3] for c in logged_calls(self.tmp.name)])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["workspace"], "w3")
+        self.assertFalse(paths.claim_file(str(self.cwd)).exists())
+
     def test_doctor_never_starts_an_hq_with_no_conversation(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
         write_scenario(self.tmp.name, [
@@ -195,7 +211,7 @@ def alive(session="sess-1", after=None):
 GONE = {"match": ["agent", "get"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1}
 HQ_SPACE = {"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "athena"}}}}
 # HQ normally has watches running, so /exit brings up the background-work dialog.
-ON_EXIT = {"match": ["agent", "read", "athena"], "stdout": DIALOG}
+ON_EXIT = {"match": ["agent", "read", "athena"], "stdout": DIALOG, "after": ["agent", "prompt", "athena", "/exit"]}
 
 
 class RestartTest(unittest.TestCase):
@@ -315,6 +331,33 @@ class RestartTest(unittest.TestCase):
         result = hq.restart_now(update=False)
         self.assertTrue(result["resumed"])
         self.assertEqual(len(self.starts()), 1)
+
+    def test_unattended_never_starts_a_fresh_hq(self):
+        (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
+        write_scenario(self.tmp.name, [{"match": ["agent", "get", "athena"],
+                                        "stdout": {"result": {"agent": {"name": "athena"}}}}, HQ_SPACE])
+        with self.assertRaises(hq.RestartError) as raised:
+            hq.restart_now(update=False, unattended=True)
+        self.assertIn("never starts a fresh HQ", str(raised.exception))
+        self.assertNotIn(["agent", "prompt", "athena", "/exit"], self.calls())
+        self.assertEqual(self.starts(), [])
+        self.assertFalse(hq.lock_file().exists())
+
+    def test_unattended_leaves_hqs_background_work_running(self):
+        write_scenario(self.tmp.name, [alive("sess-1"), HQ_SPACE, ON_EXIT])
+        with self.assertRaises(hq.RestartError) as raised:
+            hq.restart_now(update=False, unattended=True)
+        self.assertIn("background work", str(raised.exception))
+        self.assertIn(["agent", "send-keys", "athena", "esc"], self.calls())
+        self.assertNotIn(["agent", "send-keys", "athena", "enter"], self.calls())
+        self.assertEqual(self.starts(), [])
+        self.assertTrue(any(c[:2] == ["notification", "show"] for c in self.calls()))
+
+    def test_the_detached_child_is_told_unattended(self):
+        with mock.patch.object(hq.subprocess, "Popen") as popen:
+            popen.return_value.pid = 7
+            hq.restart(update=False, unattended=True)
+        self.assertEqual(popen.call_args.args[0][-3:], ["--child", "--no-update", "--unattended"])
 
     def test_lock_refuses_a_second_restart(self):
         hq.lock_file().write_text(str(os.getpid()))
