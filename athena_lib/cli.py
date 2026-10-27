@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from athena_lib import (asks, board, brief, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch,
-                        ledger, pr, requestlog, retire, slack, sockets, spawn, status, watch)
+                        ledger, pr, requestlog, retire, service, slack, sockets, spawn, status, watch)
 
 REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
 REVIEW_FAILS_BEFORE_RESTART = 2  # failed rounds after which a worker restarts fresh rather than being nudged again
@@ -586,6 +586,38 @@ def cmd_whoami(a):
     return 0
 
 
+def cmd_service(a):
+    if a.action == "status":
+        rows = service.status(a.platform, a.instance)
+        if a.json:
+            _print(rows)
+            return 0
+        for r in rows:
+            print(f"{r['job']:<7} {r['name']:<28} {'installed' if r['installed'] else 'not installed':<14} "
+                  f"{'loaded' if r['loaded'] else 'not loaded'}")
+        return 0
+    fn = service.install if a.action == "install" else service.uninstall
+    result = fn(a.platform, a.instance, dry_run=a.dry_run)
+    if a.dry_run:
+        return 0
+    if a.json:
+        _print(result)
+        return 0
+    if a.action == "install":
+        for path, change in result["files"].items():
+            print(f"{change:<9} {path}")
+    else:
+        for path in result["removed"]:
+            print(f"removed   {path}")
+        if not result["removed"] and not result["ran"]:
+            print("nothing installed")
+    for cmd in result["ran"]:
+        print(f"ran       {cmd}")
+    for note in result.get("notes", []):
+        print(f"note: {note}")
+    return 0
+
+
 def cmd_config(a):
     if a.action == "path":
         print(config.config_file())
@@ -794,6 +826,21 @@ def parser():
     s = sub.add_parser("whoami", help="print the worker this session is (ATHENA_WORKER, else by its worktree); exit 1 if none")
     s.set_defaults(func=cmd_whoami)
 
+    s = sub.add_parser("service", help="herdr, the dashboard, the board and doctor as login services (launchd, systemd): "
+                                       "install, uninstall, status; --dry-run prints what it would write and run",
+                       description="athena service: run herdr's server, the dashboard and the board watcher as user "
+                                   "services that restart after a crash and come back after a reboot, and `athena "
+                                   "doctor --fix` every minute. launchd agents on macOS, systemd user units on Linux. "
+                                   "Install and uninstall are idempotent. Each job carries this shell's athena "
+                                   "environment (ATHENA_STATE_DIR, ATHENA_HERDR, ...), so use --instance for a second "
+                                   "install against another state dir and herdr session.")
+    s.add_argument("action", choices=["install", "uninstall", "status"], nargs="?", default="status")
+    s.add_argument("--dry-run", action="store_true", help="print the files and commands; write and run nothing")
+    s.add_argument("--instance", help="a second install beside the default one: its jobs are athena.<instance>.<job>")
+    s.add_argument("--platform", choices=["launchd", "systemd"], help="default: launchd on macOS, systemd on Linux")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_service)
+
     s = sub.add_parser("config", help="the effective config and where each value comes from: show, path")
     s.add_argument("action", choices=["show", "path"], nargs="?", default="show")
     s.set_defaults(func=cmd_config)
@@ -821,7 +868,7 @@ def main(argv=None):
         p.error("--workflow-size needs --ultracode")
     try:
         return args.func(args)
-    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, hq.ResumeError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
+    except (asks.AskError, spawn.SpawnError, retire.RetireError, dash.DashError, hq.RestartError, hq.ResumeError, service.ServiceError, herdr.HerdrError, config.ConfigError, gitops.GitError, RuntimeError, OSError) as exc:
         print(f"athena {args.cmd}: {exc}", file=sys.stderr)
         return 2
 
