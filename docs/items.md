@@ -70,7 +70,8 @@ An item's full view has a "Don't ask me this again" box beside its answers. Tick
 
 Every prompt you type into HQ is logged by a hook, outside the model, in `requests.jsonl` (private, mode 0600), each
 with an id such as `r42`. Prompts athena submits itself (the watch mod's wakes, the start, restart and rotation
-routines, cron prompts, slash commands, messages from other sessions) are left out.
+routines, cron prompts, slash commands, messages from other sessions) are left out, and so is anything that starts
+with `<` (how Claude Code wraps those): a request pasted as HTML is not logged, and the weekly check cannot see it.
 
 - `athena item requests [--days N]` lists the logged requests and the item that holds each.
 - `athena item check [--days 7]` lists the requests with no item: what would have fallen through. HQ runs it weekly

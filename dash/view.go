@@ -443,11 +443,11 @@ func placeItems(v *View, s Snapshot, now float64) {
 			continue
 		}
 		if ap, ok := auto[a.ID]; ok || a.Applied != nil {
-			label := a.option(ap.Option).Label
+			label, verb := a.option(ap.Option).Label, "athena is taking the rec on its own: " // queued: HQ has yet to act
 			if a.Applied != nil {
-				label = a.Applied.Label
+				label, verb = a.Applied.Label, "athena took the rec on its own: "
 			}
-			it.Icon, it.Badge, it.Label = "ready", true, "athena took the rec on its own: "+label
+			it.Icon, it.Badge, it.Label = "ready", true, verb+label
 			acts.Done, acts.Undo = true, label
 			v.Ready = append(v.Ready, it)
 			continue

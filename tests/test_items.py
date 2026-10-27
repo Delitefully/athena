@@ -78,7 +78,7 @@ class NamesAndKindsTest(Base):
         self.assertEqual(asks.show(asks.add("Ship?", next="reviewer", name="Some item"))["next"], "reviewer")
 
     def test_a_derived_name_reads_like_one(self):
-        self.assertEqual(asks.derive_name("Clairic: file a ticket to test it?"), "Clairic file ticket test")
+        self.assertEqual(asks.derive_name("Orbit: file a ticket to test it?"), "Orbit file ticket test")
         self.assertEqual(asks.derive_name("Copilot catalog hosts: list copilot.cloud.microsoft? (rec B)"), "Copilot catalog hosts")
         self.assertEqual(asks.derive_name("Re-enable auto-merge on **Dependabot** bundle #7012?"), "Re-enable auto-merge Dependabot")  # 32 characters at most
         self.assertEqual(asks.derive_name("Merge [the PR](https://github.com/a/b/pull/1) now?"), "Merge PR")

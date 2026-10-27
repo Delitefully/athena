@@ -153,7 +153,7 @@ func TestTheServerAppliesADueDefaultOnceAndShowsIt(t *testing.T) {
 	}
 	main, view, _ := srv.snapshot()
 	r := find(view.Ready, "Export queue start")
-	if r.Label != "athena took the rec on its own: After ABC-101" || r.Actions == nil || !r.Actions.Done || r.Actions.Undo != "After ABC-101" {
+	if r.Label != "athena is taking the rec on its own: After ABC-101" || r.Actions == nil || !r.Actions.Done || r.Actions.Undo != "After ABC-101" {
 		t.Fatalf("a1 %+v", r)
 	}
 	if !strings.Contains(string(main), `data-option="undo-default" data-tip="Undo After ABC-101: athena takes it back"`) {
