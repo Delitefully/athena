@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, slack, spawn, status
+from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, slack, sockets, spawn, status
 from athena_lib.retire import workspace_owned
 
 
@@ -452,7 +452,8 @@ def _quiet(line, ctx):
         if "comments_all" in now and (now.get("comments") or 0) <= (before.get("comments") or 0):
             return "bot or author comments only"
         return None
-    m = re.match(r"^(\S+) (?:state \S+->exited(?: \(.*\))?|gone from the ledger|pr conflicts #\d+)$", line)
+    m = re.match(r"^(\S+) (?:state \S+->exited(?: \(.*\))?|gone from the ledger|pr conflicts #\d+|messaging socket missing)$",
+                 line)
     if m:
         return "retired via athena retire" if ctx.retired(m.group(1)) else None
     m = re.match(r"^(\S+) report (\S+)$", line)
@@ -699,10 +700,15 @@ def report_error(exc, tagged=False):
 
 
 def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
-    workers, mains, repos = {}, {}, {}
+    workers, mains, repos, dead = {}, {}, {}, {}
     before = (prev or {}).get("workers", {})
+    hq_socket = sockets.hq_missing()
+    if hq_socket:
+        dead[paths.hq_name()] = hq_socket
     for w in ledger.live():
         s = status.collect(w, with_pr=with_pr)
+        if s.get("socket_missing"):
+            dead[w["name"]] = s["socket_missing"]
         pr_state = s["pr"] if s["pr"] is not None else (before.get(w["name"]) or {}).get("pr")
         repo = w.get("repo")
         if pr_state and "requested" in pr_state:
@@ -719,7 +725,7 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
                 gitops.git(repo, "fetch", "--quiet", "origin", check=False)
             default = gitops.default_branch(repo)
             mains[repo] = gitops.git(repo, "rev-parse", f"origin/{default}", check=False)
-    return {"workers": workers, "mains": mains, "repos": repos}
+    return {"workers": workers, "mains": mains, "repos": repos, "sockets": dead}
 
 
 def step(prev, fetch=False, with_pr=True):
@@ -737,6 +743,9 @@ def step(prev, fetch=False, with_pr=True):
                 lines.append(f"{r['name']} goal not sent: {r['problem']}")
     cur = snapshot(fetch=fetch, with_pr=with_pr, prev=prev)
     cur["missing"] = missing
+    # Told when a session's socket goes, and again only after it came back: also on a restarted watch's first tick.
+    gone = (prev or {}).get("sockets") or {}
+    lines += [f"{name} messaging socket missing" for name in cur.get("sockets") or {} if name not in gone]
     cur["dash"] = _dash_url()
     if fetch:
         follow(cur, prev)

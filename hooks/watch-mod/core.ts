@@ -118,6 +118,7 @@ const EXACT = [
   `${NAME} review comments \\+\\d{1,4}`,
   `[A-Za-z0-9._-]{1,64} main moved [0-9a-f]{7}\\.\\.[0-9a-f]{7}`,
   `${NAME} gone from the ledger`,
+  `${NAME} messaging socket missing`,
   `${NAME} new worker \\(${STATE}(?:, startup prompt)?\\)`,
   `${NAME} goal sent`,
   `watch error: exited \\(${EXIT}\\); restarting`,

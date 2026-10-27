@@ -21,7 +21,7 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 |---|---|
 | `athena preflight <repo>` | Main checkout clean, on main, fast-forwarded |
 | `athena spawn --repo --branch --name --brief --goal ...` | Worktree space, worker Claude (`--name`, `worker.md`, per-worker settings), then its `/goal` |
-| `athena status [--json] [--pr]` | Merged status: ATHENA-REPORT, hook state, git, PR, herdr |
+| `athena status [--json] [--pr]` | Merged status: ATHENA-REPORT, hook state, git, PR, herdr. Flags HQ or a worker whose messaging socket is missing (a live session SendMessage can't reach; see [Troubleshooting](troubleshooting.md)) |
 | `athena board on\|off\|toggle\|sync\|show` | Attach columns beside hq; a watcher keeps them in step with width and workers |
 | `athena dash on\|off\|show\|open` | The dashboard on 127.0.0.1; `show` prints its URL and pid |
 | `athena watch [--tagged]` | One line per change; also saves its snapshot to `watch.json` for the dashboard. The watch mod runs it `--tagged` (JSON lines: each change marked wake or not, and the status band's board); plain output is for the Monitor fallback |

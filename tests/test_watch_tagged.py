@@ -29,6 +29,7 @@ WAKE = [
     "stack o/web#41: OPEN base=a MERGEABLE -> MERGED base=a UNKNOWN",
     "stack o/web#42: OPEN base=a MERGEABLE -> OPEN base=a CONFLICTING",
     "abc-1 gone from the ledger",
+    "abc-1 messaging socket missing",
     "abc-1 new worker (blocked, startup prompt)",
     "abc-1 new worker (exited)",
     "abc-1 goal not sent: herdr has no pane w9:p1",
