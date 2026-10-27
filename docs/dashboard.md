@@ -9,6 +9,8 @@
   <img src="../assets/dashboard.png" alt="athena dash: needs you, ready for you, in flight and done today, each row led by its name" width="960">
 </picture>
 
+<img src="../assets/dashboard-item.png" alt="an item's full view: your words, where it stands, the decision brief with the rec marked, an embedded preview" width="460"> <img src="../assets/dashboard-phone.png" alt="the dash at phone width, light and dark, and an item's full view" width="500">
+
 The page has two columns: yours (**Needs you**, **Ready for you**) and everyone else's move (**Awaiting review**, **In flight**, **Done today**, folded). A row leads with its name (an item's 2 to 4 words, a worker's title), then the call or where it stands, with its age or due date on the right (`2h`, `7d`, `due tmrw`, `overdue 3h`); the label, ticket, repo and PR are in the line under it. The header's dot is athena doctor's last check, from `health.json`: green `all ok`, red with what is wrong, or grey `health unknown` while there is no check or the last is over 3 minutes old (never green then). Every PR athena follows (a live worker's, a stacked one from `stack.json`, a retired worker's while still open) has one row, and its label says whose move it is, as `who · what`:
 
 | Whose move | Label | Section |
