@@ -1,9 +1,9 @@
 {
-  "description": "athena worker status: writes ~/.local/state/athena/workers/<name>.json for athena worker sessions only, and tells herdr how to resume a worker or HQ. The athena-watch mod runs athena watch in the HQ session only.",
+  "description": "athena worker status: writes ~/.local/state/athena/workers/<name>.json for athena worker sessions only, tells herdr how to resume a worker or HQ, and logs what the human types into HQ (requests.jsonl). The athena-watch mod runs athena watch in the HQ session only.",
   "modules": ["./watch-mod/register.tsx"],
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\" SessionStart", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\" UserPromptSubmit", "timeout": 10 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
     "Notification": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/worker-status\"", "timeout": 10 }] }]

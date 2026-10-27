@@ -10,7 +10,7 @@ from tests.test_herdr import logged_calls, write_scenario
 from tests.test_hq import GONE, HQ_SPACE, ON_EXIT, alive
 from athena_lib import asks, cli, handoff, hq, ledger, paths
 
-HEADINGS = ["## Fleet", "## PRs", "## Open asks", "## In-flight threads", "## Notes tail", "## Standing orders"]
+HEADINGS = ["## Fleet", "## PRs", "## Open items", "## In-flight threads", "## Notes tail", "## Standing orders"]
 
 
 def row(name, state="working", pr=None):
@@ -61,7 +61,7 @@ class HandoffTest(Fixture):
         self.assertIn("abc-2", fleet)
         prs = text.split("## PRs")[1].split("## ")[0]
         self.assertIn("https://github.com/o/r/pull/41", prs)
-        self.assertIn("a1", text.split("## Open asks")[1])
+        self.assertIn("a1", text.split("## Open items")[1])
         self.assertIn("Merge acme/web#906", text)
         self.assertIn("waiting on Ana", text)
         notes = text.split("## Notes tail")[1].split("## ")[0]

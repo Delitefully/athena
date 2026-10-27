@@ -39,6 +39,8 @@ class AsksTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_cli(self, *argv):
+        if argv[:1] == ("add",) and "--name" not in argv:
+            argv = (*argv, "--name", "Test item")  # test_add_requires_a_name checks it is required
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["ask", *argv])
@@ -51,10 +53,10 @@ class AsksTest(unittest.TestCase):
         self.assertEqual(self.run_cli("add", "FYI: the quota resets at 14:00")[1], "a2\n")
         item = asks.show("a1")
         self.assertEqual({k: item[k] for k in ("kind", "text", "why", "pr")},
-                         {"kind": "question", "text": "Close ABC-4550 as a duplicate?", "why": "Same stack trace.", "pr": "acme/web#7"})
+                         {"kind": "decision", "text": "Close ABC-4550 as a duplicate?", "why": "Same stack trace.", "pr": "acme/web#7"})
         self.assertEqual(item["options"], [{"id": "close-it", "label": "Close it", "do": "reply", "icon": "check"},
                                            {"id": "not-now", "label": "Not now", "do": "dismiss", "icon": "x"}])
-        self.assertEqual(asks.show("a2")["kind"], "note")
+        self.assertEqual(asks.show("a2")["kind"], "result")
         code, out, _ = self.run_cli("show", "a2")
         self.assertEqual(json.loads(out)["id"], "a2")
         self.assertEqual(self.run_cli("show", "a9")[0], 2)
@@ -119,7 +121,7 @@ class AsksTest(unittest.TestCase):
         self.assertEqual(asks.migrate(), ["a1", "a2", "a3", "a4"])
         got = asks.items()
         self.assertEqual([(i["id"], i["kind"]) for i in got],
-                         [("a1", "question"), ("a2", "note"), ("a3", "note"), ("a4", "question")])
+                         [("a1", "decision"), ("a2", "result"), ("a3", "result"), ("a4", "decision")])
         self.assertEqual(got[1]["text"], "Approve and merge ABC-452: https://github.com/acme/web/pull/907")
         self.assertFalse((paths.state_dir() / "needs-you.md").exists())
         self.assertTrue((paths.state_dir() / "needs-you.md.migrated").exists())
@@ -155,7 +157,7 @@ class AsksTest(unittest.TestCase):
         got = asks.queue(now=T + asks.SETTLE)
         self.assertEqual([e["seq"] for e in got], [1, 2, 3, 4])
         self.assertEqual(got[0]["option"], {"id": "close-it", "label": "Close it", "do": "reply", "icon": "check"})
-        self.assertEqual(got[0]["ask"], {"kind": "question", "text": "Close ABC-4550?"})
+        self.assertEqual(got[0]["ask"], {"name": "Close ABC-4550", "kind": "decision", "text": "Close ABC-4550?"})
         self.assertEqual(got[1]["option"]["do"], "dismiss")
         self.assertEqual((got[2]["worker"], got[2]["reply"]), ("abc-1", "rebase first, then ask me"))
         self.assertTrue(got[3]["discuss"])
@@ -169,7 +171,7 @@ class AsksTest(unittest.TestCase):
                                 "url": "https://github.com/acme/web/pull/906",
                                 "option": {"id": "recheck", "label": "Re-check and fix", "do": "reply"}}])
         # HQ marks it done by its item, as any answer: the pill stops showing "re-checking…".
-        self.assertEqual(asks.done("pr:acme/web#906", now=T + asks.SETTLE), {"item": "pr:acme/web#906", "removed": False, "done": [1]})
+        self.assertEqual(asks.done("pr:acme/web#906", now=T + asks.SETTLE), {"item": "pr:acme/web#906", "resolved": False, "done": [1]})
         self.assertEqual([e["seq"] for e in asks.queue(now=T + 3 + asks.SETTLE)], [2])
         code, out, _ = self.run_cli("done", "pr:acme/web#907")
         self.assertEqual((code, json.loads(out)["done"]), (0, [2]))
@@ -188,13 +190,13 @@ class AsksTest(unittest.TestCase):
         answer(3, a1)
         answer(4, a1, ts=T + 3, discuss=True)  # given after athena read the queue: not done yet
         result = asks.done(a1, now=T + asks.SETTLE)
-        self.assertEqual(result, {"item": a1, "removed": True, "done": [3]})
+        self.assertEqual(result, {"item": a1, "resolved": True, "done": [3]})
         self.assertEqual([i["id"] for i in asks.items()], [a2])
         folded = asks.fold(asks._lines())
         self.assertEqual({s: a["status"] for s, a in folded.items()}, {2: "cancelled", 3: "done", 4: "queued"})
         # --keep: its answers are done, the ask stays on the dashboard.
         self.assertEqual(asks.done(a1, keep=True, now=T + 3 + asks.SETTLE)["done"], [4])
-        self.assertEqual(asks.done(a2, keep=True, now=T)["removed"], False)
+        self.assertEqual(asks.done(a2, keep=True, now=T)["resolved"], False)
         self.assertEqual([i["id"] for i in asks.items()], [a2])
 
     def test_compaction_keeps_the_highest_seq(self):
@@ -210,7 +212,7 @@ class AsksTest(unittest.TestCase):
         code, out, _ = self.run_cli("queue")
         self.assertEqual((code, [e["seq"] for e in json.loads(out)]), (0, [1]))
         code, out, _ = self.run_cli("done", a1)
-        self.assertEqual(json.loads(out), {"item": a1, "removed": True, "done": [1]})
+        self.assertEqual(json.loads(out), {"item": a1, "resolved": True, "done": [1]})
         self.assertEqual(json.loads(self.run_cli("queue")[1]), [])
 
 
@@ -252,6 +254,8 @@ class AskDetailTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_cli(self, *argv, stdin=""):
+        if argv[:1] == ("add",) and "--name" not in argv:
+            argv = (*argv, "--name", "Test item")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err), mock.patch("sys.stdin", io.StringIO(stdin)):
             code = cli.main(["ask", *argv])
@@ -361,11 +365,14 @@ class AskDetailTest(unittest.TestCase):
         for d in (asks.previews_dir(), root, root / "My-site", root / "My-site" / "css"):
             self.assertEqual(d.stat().st_mode & 0o777, 0o700, d)
         self.assertEqual((root / "mock.html").stat().st_mode & 0o777, 0o600)
-        # Done removes the copy with the ask; --keep keeps both.
+        # A resolved item keeps its copy for its full view; the copy goes when the item is archived.
         asks.done("a1", keep=True)
         self.assertTrue(root.exists())
-        asks.done("a1")
+        asks.done("a1", now=T)
+        self.assertTrue(root.exists())
+        asks.add("Next?", now=T + asks.KEEP_RESOLVED + 60)  # any later write archives what resolved long ago
         self.assertFalse(root.exists())
+        self.assertEqual([i["id"] for i in asks.archived()], ["a1"])
 
     def test_a_preview_refuses_symlinks_and_size(self):
         (self.src / "secret").write_text("token")

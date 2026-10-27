@@ -1,0 +1,381 @@
+{
+  "next": 154,
+  "items": [
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1000)",
+      "created": 1792000000,
+      "id": "a79",
+      "kind": "question",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "text": "Re-enable auto-merge on the dependency bundle #712? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1001)",
+      "created": 1792003600,
+      "id": "a80",
+      "kind": "question",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "text": "Build ABC-4685, the group-policy dashboard part? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1002)",
+      "created": 1792007200,
+      "id": "a83",
+      "kind": "note",
+      "options": [],
+      "text": "File tickets for the DLP quick wins",
+      "why": "For your information."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1003)",
+      "created": 1792010800,
+      "id": "a88",
+      "kind": "question",
+      "options": [],
+      "text": "The staging service has a password in plain text in a shared repo? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1004)",
+      "created": 1792014400,
+      "id": "a90",
+      "kind": "question",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "text": "File a ticket to test the extraction model on catalog fields? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1005)",
+      "created": 1792018000,
+      "id": "a91",
+      "kind": "note",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "text": "Publish the research report as a page",
+      "why": "For your information."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1006)",
+      "created": 1792021600,
+      "id": "a94",
+      "kind": "question",
+      "options": [],
+      "text": "Close ABC-4550 as a duplicate of ABC-4566? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1007)",
+      "created": 1792025200,
+      "id": "a99",
+      "kind": "question",
+      "options": [],
+      "text": "Merge acme/web#906 before the 2.4 cut? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1008)",
+      "created": 1792028800,
+      "id": "a101",
+      "kind": "note",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "text": "Copilot catalog hosts: list both web domains",
+      "why": "For your information."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1009)",
+      "created": 1792032400,
+      "id": "a102",
+      "kind": "question",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "text": "Start ABC-111 now or after ABC-101 merges? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1010)",
+      "created": 1792036000,
+      "id": "a105",
+      "kind": "question",
+      "options": [],
+      "text": "Disk is at 91%: clean up old worktrees? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1011)",
+      "created": 1792039600,
+      "id": "a110",
+      "kind": "note",
+      "options": [],
+      "text": "Meeting request for the customer's engineer on Wednesday or Thursday",
+      "why": "For your information."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1012)",
+      "created": 1792043200,
+      "id": "a112",
+      "kind": "question",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "pr": "acme/web#912",
+      "text": "Answer the customer's sign-in question? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1013)",
+      "created": 1792046800,
+      "id": "a113",
+      "kind": "question",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "pr": "acme/web#913",
+      "text": "Retire the idle export worker? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1014)",
+      "created": 1792050400,
+      "id": "a116",
+      "kind": "note",
+      "options": [],
+      "pr": "acme/web#914",
+      "text": "Turn on the nightly CodeQL run again",
+      "why": "For your information."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1015)",
+      "created": 1792054000,
+      "id": "a121",
+      "kind": "question",
+      "options": [],
+      "pr": "acme/web#915",
+      "text": "Rotate the CI deploy key? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1016)",
+      "created": 1792057600,
+      "id": "a123",
+      "kind": "question",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "pr": "acme/web#916",
+      "text": "Move the docs site to the new domain? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "body": "**Recommendation: yes.**\n\n| Option | Cost |\n|---|---|\n| Yes | an hour |\n| No | none |\n\n- Evidence: [run](https://github.com/acme/web/actions/runs/1017)",
+      "created": 1792061200,
+      "id": "a124",
+      "kind": "note",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "pr": "acme/web#917",
+      "text": "Drop the old feature flag",
+      "why": "For your information."
+    },
+    {
+      "created": 1792064800,
+      "id": "a127",
+      "kind": "question",
+      "options": [],
+      "text": "Upgrade herdr at a quiet moment? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792068400,
+      "id": "a132",
+      "kind": "question",
+      "options": [],
+      "text": "Rename the billing export step? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792072000,
+      "id": "a134",
+      "kind": "note",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "text": "Ship the palette film cut",
+      "why": "For your information."
+    },
+    {
+      "created": 1792075600,
+      "id": "a135",
+      "kind": "question",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "text": "Pick the review team for acme/api? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792079200,
+      "id": "a138",
+      "kind": "question",
+      "options": [],
+      "text": "Archive the stale design branch? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792082800,
+      "id": "a143",
+      "kind": "note",
+      "options": [],
+      "text": "Re-run the flaky e2e suite on main",
+      "why": "For your information."
+    },
+    {
+      "created": 1792086400,
+      "id": "a145",
+      "kind": "question",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Yes",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "not-now",
+          "label": "Not now",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "pr": "acme/web#924",
+      "text": "Write the release notes for 2.4? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792090000,
+      "id": "a146",
+      "kind": "question",
+      "options": [
+        {
+          "id": "build-it",
+          "label": "Build it",
+          "do": "reply"
+        }
+      ],
+      "pr": "acme/web#925",
+      "text": "Schedule the restack of the M2 chain? (rec yes)",
+      "why": "Found during the weekly sweep; it waits on your call."
+    },
+    {
+      "created": 1792093600,
+      "id": "a149",
+      "kind": "note",
+      "options": [],
+      "pr": "acme/web#926",
+      "text": "Confirm the weekend on-call swap",
+      "why": "For your information."
+    }
+  ]
+}

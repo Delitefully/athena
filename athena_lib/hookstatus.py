@@ -75,8 +75,9 @@ def apply(event, name):
         state, report = "working", None
     elif kind == "Stop":
         message = event.get("last_assistant_message") or ""
-        summary = message.strip()[-SUMMARY_LIMIT:]
         report = parse_report(message)
+        cut = message.rfind("ATHENA-REPORT ") if report else -1
+        summary = (message[:cut] if cut >= 0 else message).strip()[-SUMMARY_LIMIT:]  # the prose, never the report's JSON
         status = (report or {}).get("status", "").upper()
         state = "done" if status in DONE else "blocked" if status in BLOCKED else "idle"
     elif kind == "Notification":
@@ -143,6 +144,14 @@ def register_resume(event, name, env):
         _register(w["pane"], sid, args)
 
 
+def log_request(event, env):
+    """HQ's UserPromptSubmit: what the human typed goes to the request log (requestlog.py)."""
+    if event.get("hook_event_name") != "UserPromptSubmit" or env.get("ATHENA_ROLE") != "hq":
+        return None
+    from athena_lib import requestlog
+    return requestlog.record(event.get("prompt"), event.get("session_id"))
+
+
 def register_hq_resume(event, env):
     """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json."""
     sid = _session_started(event)
@@ -170,6 +179,7 @@ def main():
             register_resume(event, name, os.environ)
         else:
             register_hq_resume(event, os.environ)
+            log_request(event, os.environ)
     except Exception:  # a hook must never break the session
         pass
 
