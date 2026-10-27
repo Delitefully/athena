@@ -348,6 +348,53 @@ class StatusDetailTest(Base):
             self.assertEqual(self.cli("status", "abc-9")[0], 2)
 
 
+class WeekTest(Base):
+    """Plan §6, "Your week, replayed", through the CLI HQ runs (the dash's side is dash/week_test.go)."""
+
+    def test_a_one_off_question(self):
+        rid = hookstatus.log_request({"hook_event_name": "UserPromptSubmit", "prompt": "is system one on vertex?",
+                                      "session_id": "s"}, {"ATHENA_ROLE": "hq"})
+        self.assertEqual([r["id"] for r in requestlog.check()], [rid])  # until it is filed, the check finds it
+        code, out, _ = self.cli("item", "add", "Checking Vertex, Foundry and Bedrock", "--name", "System One on clouds",
+                                "--kind", "request", "--request", rid, "--words", "is system one on vertex?")
+        a1 = out.strip()
+        self.assertEqual(requestlog.check(), [])
+        self.cli("item", "edit", a1, "--kind", "result", "--next", "you", "--title", "None of them carry System One")
+        self.assertEqual(asks.show(a1)["kind"], "result")
+        # The human clicks Done on the dashboard (dash/items.go); a resolved item stays for search, then archives.
+        asks.done(a1, note="you marked it done")
+        self.assertEqual(asks.items(), [])
+        self.assertEqual(requestlog.check(), [])
+
+    def test_a_build_resolves_when_the_human_merged_it(self):
+        a1 = asks.add("Feature flag no, shared UI no: take all recs?", name="Palette plan", options=["Take all recs"],
+                      rec="take-all-recs", auto=True)
+        answer(1, a1, option="take-all-recs")
+        self.assertEqual(asks.queue(now=T + 60)[0]["ask"]["rec"], "take-all-recs")
+        asks.done(a1, now=T + 60)
+        a2 = asks.add("Building the palette", kind="request", name="⌘K palette", workers=["abc-7"], pr="acme/web#70")
+        self.assertEqual(asks.show(a2)["next"], "athena")
+        asks.done(a2, note="you merged it")
+        self.assertEqual(asks.show(a2)["resolved_note"], "you merged it")
+
+    def test_a_weekend_away_never_defaults_a_customer_call(self):
+        with self.assertRaises(asks.AskError):
+            asks.add("Send the drafted reply?", name="Customer reply", options=["Send"], rec="send", auto=True,
+                     stakes=["customer"])
+        a1 = asks.add("Send the drafted reply?", name="Customer reply", options=["Send"], rec="send", stakes=["customer"])
+        self.assertNotIn("auto", asks.show(a1))
+
+    def test_a_customer_thread_is_a_promise_with_a_due_date(self):
+        code, out, _ = self.cli("item", "add", "Confirm the customer's engineer for Wed 11:30", "--name", "Customer meeting",
+                                "--kind", "promise", "--next", "you", "--due", "2026-10-28T11:30",
+                                "--body", "**Draft reply:** Wednesday 11:30 works.")
+        a1 = out.strip()
+        self.assertIn("due Wed 28 Oct 11:30", self.cli("item")[1])
+        self.assertIn("due Wed 28 Oct 11:30", handoff.build(dry_run=True))
+        self.cli("item", "done", a1, "--resolution", "you posted the reply")
+        self.assertEqual(asks.show(a1)["resolved_note"], "you posted the reply")
+
+
 class HandoffTest(Base):
     def test_every_open_item_is_in_the_handoff_by_name(self):
         for n in range(40):
