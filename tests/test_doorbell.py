@@ -16,10 +16,12 @@ ME = "U0ME0000"
 
 
 def _runs(*runs, event="push"):
-    """gh's answer for failed runs given as (id, workflow) or (id, workflow, attempt)."""
+    """gh's answer for completed runs, newest first, given as (id, workflow), (id, workflow, attempt) or
+    (id, workflow, attempt, conclusion); a run is a failure unless it says otherwise."""
     return mock.Mock(returncode=0, stdout=json.dumps([
         {"databaseId": r[0], "workflowName": r[1], "attempt": r[2] if len(r) > 2 else 1, "event": event,
-         "createdAt": "2099-01-01T00:00:00Z"} for r in runs]), stderr="")
+         "conclusion": r[3] if len(r) > 3 else "failure", "createdAt": "2099-01-01T00:00:00Z"} for r in runs]),
+        stderr="")
 
 
 class CiFailuresTest(unittest.TestCase):
@@ -42,40 +44,44 @@ class CiFailuresTest(unittest.TestCase):
             lines = watch.ci_failures([self.repo])
         return lines, run
 
-    def test_asks_gh_for_failed_runs_on_the_default_branch(self):
+    def test_asks_gh_for_completed_runs_on_the_default_branch(self):
         _, run = self.check(_runs())
         argv = run.call_args[0][0]
         self.assertEqual(argv[:3], ["gh", "run", "list"])
-        for pair in (["-R", "acme/platform"], ["--branch", "main"], ["--status", "failure"]):
+        self.assertIn("conclusion", argv[argv.index("--json") + 1])
+        for pair in (["-R", "acme/platform"], ["--branch", "main"], ["--status", "completed"]):
             self.assertIn(pair[1], argv[argv.index(pair[0]):argv.index(pair[0]) + 2])
 
     def test_the_first_look_records_the_failures_without_telling_them(self):
-        lines, _ = self.check(_runs((11, "CI"), (10, "Deploy")))
+        lines, _ = self.check(_runs((11, "CI"), (10, "Deploy"), (9, "Lint", 1, "success")))
         self.assertEqual(lines, [])
-        lines, _ = self.check(_runs((12, "CI"), (11, "CI"), (10, "Deploy")))
-        self.assertEqual(lines, ["platform main ci failed CI 12"])
+        # CI and Deploy were failing already: their incidents are open, so more failures are repeats.
+        lines, _ = self.check(_runs((12, "CI"), (11, "CI"), (10, "Deploy"), (9, "Lint", 1, "success")))
+        self.assertEqual(lines, [])
+        lines, _ = self.check(_runs((13, "Lint"), (12, "CI"), (11, "CI"), (10, "Deploy")))
+        self.assertEqual(lines, ["platform main ci failed Lint 13"])
 
     def test_each_failed_run_is_told_once_across_restarts(self):
-        self.check(_runs((10, "CI")))
-        lines, _ = self.check(_runs((11, "CI / build (linux)"), (10, "CI")))
+        self.check(_runs((10, "CI", 1, "success")))
+        lines, _ = self.check(_runs((11, "CI / build (linux)"), (10, "CI", 1, "success")))
         self.assertEqual(lines, ["platform main ci failed CI-build-linux 11"])
         # A restarted watch keeps nothing in memory: what it told lives in the state dir.
         watch._SLUGS.clear()
-        lines, _ = self.check(_runs((11, "CI / build (linux)"), (10, "CI")))
+        lines, _ = self.check(_runs((11, "CI / build (linux)"), (10, "CI", 1, "success")))
         self.assertEqual(lines, [])
         self.assertTrue((paths.state_dir() / "ci-failed.json").is_file())
 
     def test_a_rerun_that_fails_again_is_told_with_its_attempt(self):
-        self.check(_runs((10, "CI")))
-        lines, _ = self.check(_runs((11, "CI"), (10, "CI")))
+        self.check(_runs((10, "CI", 1, "success")))
+        lines, _ = self.check(_runs((11, "CI"), (10, "CI", 1, "success")))
         self.assertEqual(lines, ["platform main ci failed CI 11"])
-        lines, _ = self.check(_runs((11, "CI", 2), (10, "CI")))
+        lines, _ = self.check(_runs((11, "CI", 2), (10, "CI", 1, "success")))
         self.assertEqual(lines, ["platform main ci failed CI 11 (attempt 2)"])
-        lines, _ = self.check(_runs((11, "CI", 2), (10, "CI")))
+        lines, _ = self.check(_runs((11, "CI", 2), (10, "CI", 1, "success")))
         self.assertEqual(lines, [])
 
     def test_a_pull_request_run_from_a_forks_main_is_not_main_failing(self):
-        self.check(_runs((10, "CI")))
+        self.check(_runs((10, "CI", 1, "success")))
         lines, _ = self.check(_runs((12, "CI"), event="pull_request"))
         self.assertEqual(lines, [])
         lines, _ = self.check(_runs((13, "Nightly"), event="schedule"))
@@ -100,6 +106,81 @@ class CiFailuresTest(unittest.TestCase):
             lines, run = self.check(_runs((10, "CI")))
         self.assertEqual(lines, [])
         run.assert_not_called()
+
+    def suppressed(self):
+        log = paths.state_dir() / "logs" / "watch-suppressed.log"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def test_one_incident_per_workflow_not_per_run(self):
+        self.check(_runs((10, "CodeQL", 1, "success")))
+        lines, _ = self.check(_runs((11, "CodeQL"), (10, "CodeQL", 1, "success")))
+        self.assertEqual(lines, ["platform main ci failed CodeQL 11"])
+        # Every later push fails the same workflow: the incident counts them and HQ hears nothing.
+        for n in range(12, 20):
+            lines, _ = self.check(_runs(*[(i, "CodeQL") for i in range(n, 10, -1)], (10, "CodeQL", 1, "success")))
+            self.assertEqual(lines, [], n)
+        logged = self.suppressed()
+        self.assertEqual(len(logged), 8)
+        self.assertIn("platform main ci failed CodeQL 19", logged[-1])
+        self.assertIn("CI incident open since run 11: 9 failed runs", logged[-1])
+        incident = json.loads((paths.state_dir() / "ci-failed.json").read_text())["acme/platform"]["incidents"]
+        self.assertEqual(incident["CodeQL"]["run"], 11)
+        self.assertEqual(incident["CodeQL"]["runs"], 9)
+
+    def test_another_workflow_failing_is_its_own_incident(self):
+        self.check(_runs((10, "CI", 1, "success"), (9, "Deploy", 1, "success")))
+        lines, _ = self.check(_runs((11, "CI"), (10, "CI", 1, "success"), (9, "Deploy", 1, "success")))
+        self.assertEqual(lines, ["platform main ci failed CI 11"])
+        lines, _ = self.check(_runs((13, "Deploy"), (12, "CI"), (11, "CI"), (9, "Deploy", 1, "success")))
+        self.assertEqual(lines, ["platform main ci failed Deploy 13"])
+
+    def test_recovery_closes_the_incident_and_a_new_failure_opens_another(self):
+        self.check(_runs((10, "CI", 1, "success")))
+        lines, _ = self.check(_runs((11, "CI"), (10, "CI", 1, "success")))
+        self.assertEqual(lines, ["platform main ci failed CI 11"])
+        lines, _ = self.check(_runs((12, "CI", 1, "success"), (11, "CI")))
+        self.assertEqual(lines, ["platform main ci recovered CI"])
+        self.assertEqual(watch.classify("platform main ci recovered CI"), "status")  # shown, never a wake
+        lines, _ = self.check(_runs((12, "CI", 1, "success"), (11, "CI")))
+        self.assertEqual(lines, [])
+        lines, _ = self.check(_runs((13, "CI"), (12, "CI", 1, "success"), (11, "CI")))
+        self.assertEqual(lines, ["platform main ci failed CI 13"])
+
+    def test_a_cancelled_run_neither_opens_nor_closes_an_incident(self):
+        self.check(_runs((10, "CI", 1, "success")))
+        self.check(_runs((11, "CI"), (10, "CI", 1, "success")))
+        lines, _ = self.check(_runs((12, "CI", 1, "cancelled"), (11, "CI"), (10, "CI", 1, "success")))
+        self.assertEqual(lines, [])
+        lines, _ = self.check(_runs((13, "CI"), (12, "CI", 1, "cancelled"), (11, "CI")))
+        self.assertEqual(lines, [])  # still the same incident
+
+    def test_a_state_file_from_before_incidents_keeps_its_runs(self):
+        paths.ensure()
+        (paths.state_dir() / "ci-failed.json").write_text(json.dumps({"acme/platform": ["10.1"]}))
+        lines, _ = self.check(_runs((10, "CI")))
+        self.assertEqual(lines, [])  # run 10 was told before the upgrade
+        lines, _ = self.check(_runs((11, "CI"), (10, "CI")))
+        self.assertEqual(lines, ["platform main ci failed CI 11"])
+        lines, _ = self.check(_runs((12, "CI"), (11, "CI"), (10, "CI")))
+        self.assertEqual(lines, [])
+
+    def test_repeat_ticks_are_quiet_end_to_end(self):
+        """Through the watch's own emit: a repeat failure prints nothing in either mode, and wakes no one."""
+        self.check(_runs((10, "CI", 1, "success")))
+        lines, _ = self.check(_runs((11, "CI"), (10, "CI", 1, "success")))
+        for tagged in (False, True):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                watch.emit(lines, {"workers": {}}, tagged=tagged)
+            first = out.getvalue()
+            self.assertIn("platform main ci failed CI 11", first)
+        repeat, _ = self.check(_runs((12, "CI"), (11, "CI"), (10, "CI", 1, "success")))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            last = watch.emit(repeat, {"workers": {}}, tagged=True)
+            watch.emit(repeat, {"workers": {}}, tagged=True, last_status=last)
+        self.assertNotIn("ci failed", out.getvalue())
+        self.assertEqual(out.getvalue().count("\n"), 1)  # the status record once, then nothing
 
     def test_the_line_wakes_hq(self):
         self.assertEqual(watch.classify("platform main ci failed CI 12"), "wake")
@@ -141,8 +222,8 @@ class CiReposTest(unittest.TestCase):
 
     def test_a_configured_slug_is_checked_on_its_default_branch_with_no_worker(self):
         config.config_file().write_text(json.dumps({"ci_repos": ["acme/platform"]}))
-        self.assertEqual(self.look(watch.ci_targets([]), {"acme/platform": [(10, "CI")]}), [])
-        lines = self.look(watch.ci_targets([]), {"acme/platform": [(11, "CI"), (10, "CI")]})
+        self.assertEqual(self.look(watch.ci_targets([]), {"acme/platform": [(10, "CI", 1, "success")]}), [])
+        lines = self.look(watch.ci_targets([]), {"acme/platform": [(11, "CI"), (10, "CI", 1, "success")]})
         self.assertEqual(lines, ["platform main ci failed CI 11"])
         runs = [a for a in self.asked if a[:3] == ["gh", "run", "list"]]
         self.assertEqual(runs[-1][runs[-1].index("--branch") + 1], "trunk")

@@ -343,15 +343,16 @@ def default_branch(slug):
     return branch if re.fullmatch(r"[\w./-]{1,100}", branch) else None
 
 
-def failed_runs(slug, branch, limit=20):
-    """The latest failed workflow runs on `branch`, newest first: [{"id", "attempt", "workflow", "created"}], or
-    None when gh cannot say (rate limit, network). A pull request's run is left out: its head branch can be a
-    fork's `main`."""
+def completed_runs(slug, branch, limit=40):
+    """The latest completed workflow runs on `branch`, newest first: [{"id", "attempt", "workflow", "created",
+    "conclusion"}], or None when gh cannot say (rate limit, network). A pull request's run is left out: its head
+    branch can be a fork's `main`."""
     if not is_slug(slug):
         return None
     try:
-        proc = subprocess.run(["gh", "run", "list", "-R", slug, "--branch", branch, "--status", "failure",
-                               "--limit", str(limit), "--json", "databaseId,attempt,event,workflowName,createdAt"],
+        proc = subprocess.run(["gh", "run", "list", "-R", slug, "--branch", branch, "--status", "completed",
+                               "--limit", str(limit), "--json",
+                               "databaseId,attempt,event,workflowName,createdAt,conclusion"],
                               capture_output=True, text=True, timeout=30)
         rows = json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):
@@ -359,7 +360,8 @@ def failed_runs(slug, branch, limit=20):
     if not isinstance(rows, list):
         return None
     return [{"id": r["databaseId"], "attempt": r["attempt"] if isinstance(r.get("attempt"), int) else 1,
-             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt")}
+             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt"),
+             "conclusion": str(r.get("conclusion") or "").lower()}
             for r in rows if isinstance(r, dict) and isinstance(r.get("databaseId"), int)
             and not str(r.get("event") or "").startswith("pull_request")]
 

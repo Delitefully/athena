@@ -315,11 +315,34 @@ def _run_key(run) -> str:
     return f"{run['id']}.{run['attempt']}"
 
 
+def _ci_state(value) -> dict:
+    """One repo's entry in ci-failed.json: the failed runs told or recorded, and the open incidents by workflow. An
+    entry from before incidents (a bare list of runs) keeps its runs and opens none."""
+    if isinstance(value, list):
+        return {"runs": [str(k) for k in value], "incidents": {}}
+    if not isinstance(value, dict):
+        return {"runs": [], "incidents": {}}
+    incidents = value.get("incidents") if isinstance(value.get("incidents"), dict) else {}
+    return {"runs": [str(k) for k in value.get("runs") or []],
+            "incidents": {k: v for k, v in incidents.items() if isinstance(v, dict)}}
+
+
+CI_FAILED = ("failure", "timed_out", "startup_failure")
+CI_PASSED = ("success",)
+
+
 def ci_failures(repos) -> list:
-    """`<repo> main ci failed <workflow> <run-id>` once per failed run on each repo's default branch (a local path, or
-    an owner/name from ci_targets: `<repo>` is its last part), and again with
-    ` (attempt <n>)` when a rerun fails too. The runs told live in ci-failed.json in the state dir, so a restarted
-    watch tells none twice; a repo looked at for the first time records its failures without telling them."""
+    """One incident per failing workflow on each repo's default branch (a local path, or an owner/name from
+    ci_targets: `<repo>` is its last part), not one per run.
+
+    The first failed run of a workflow opens its incident and says `<repo> main ci failed <workflow> <run-id>`. More
+    failed runs of that workflow while it is open say nothing to HQ: each goes to logs/watch-suppressed.log, and the
+    incident counts it. A rerun of the run that opened it failing again is told, ` (attempt <n>)` added, since HQ
+    asked for it. The workflow's newest completed run passing closes the incident with `<repo> main ci recovered
+    <workflow>`, a status line. ci-failed.json in the state dir keeps the runs seen and the open incidents, so a
+    restarted watch tells nothing twice; a repo looked at for the first time records its failures, and opens an
+    incident for each workflow whose newest run failed, without telling them. A failure older than a day that the
+    watch missed while it was off is recorded, not told."""
     try:
         seen = json.loads(_ci_file().read_text())
     except (OSError, ValueError):
@@ -332,24 +355,52 @@ def ci_failures(repos) -> list:
         branch = (gitops.default_branch(repo) if local else _slug_default_branch(slug)) if slug else None
         if not branch:
             continue
-        runs = pr.failed_runs(slug, branch)
+        runs = pr.completed_runs(slug, branch)
         if runs is None:
             continue
-        key = slug.lower()
-        known = seen.get(key) if isinstance(seen.get(key), list) else None
-        if known is None:
-            seen[key] = [_run_key(r) for r in runs][:_CI_KEEP]
+        name, key = os.path.basename(repo), slug.lower()
+        first = key not in seen
+        state = _ci_state(seen.get(key))
+        known, incidents = state["runs"], state["incidents"]
+        newest = {}
+        for r in runs:  # newest first: the first run of each workflow is its newest
+            newest.setdefault(safe_workflow(r["workflow"]), r)
+        failed = [r for r in runs if r["conclusion"] in CI_FAILED]
+        if first:
+            known = [_run_key(r) for r in failed][:_CI_KEEP]
+            for wf, r in newest.items():
+                if r["conclusion"] in CI_FAILED:
+                    incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1}
+            seen[key] = {"runs": known, "incidents": incidents}
             changed = True
             continue
-        for r in reversed(runs):  # oldest first
+        for r in reversed(failed):  # oldest first
             if _run_key(r) in known:
                 continue
             known.append(_run_key(r))
             changed = True
-            if _age(r["created"]) <= _CI_FRESH:
-                again = f" (attempt {r['attempt']})" if r["attempt"] > 1 else ""
-                lines.append(f"{os.path.basename(repo)} main ci failed {safe_workflow(r['workflow'])} {r['id']}{again}")
-        seen[key] = known[-_CI_KEEP:]
+            wf = safe_workflow(r["workflow"])
+            line = f"{name} main ci failed {wf} {r['id']}"
+            open_ = incidents.get(wf)
+            if open_ is None:
+                incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1}
+                if _age(r["created"]) <= _CI_FRESH:
+                    lines.append(line)
+            elif r["id"] == open_.get("run") and r["attempt"] > 1:
+                open_["runs"] = int(open_.get("runs") or 1) + 1
+                if _age(r["created"]) <= _CI_FRESH:
+                    lines.append(f"{line} (attempt {r['attempt']})")
+            else:
+                open_["runs"] = int(open_.get("runs") or 1) + 1
+                suppress(line + (f" (attempt {r['attempt']})" if r["attempt"] > 1 else ""),
+                         f"CI incident open since run {open_.get('run')}: {open_['runs']} failed runs")
+        for wf in list(incidents):
+            r = newest.get(wf)
+            if r and r["conclusion"] in CI_PASSED:
+                del incidents[wf]
+                changed = True
+                lines.append(f"{name} main ci recovered {wf}")
+        seen[key] = {"runs": known[-_CI_KEEP:], "incidents": incidents}
     if changed:
         paths.ensure()
         tmp = _ci_file().with_suffix(".json.tmp%d" % os.getpid())
@@ -366,6 +417,7 @@ _ROUTINE = [
     re.compile(r"^\S+ goal sent$"),
     re.compile(r"^\S+ pr mergeable #\d+$"),
     re.compile(r"^\S+ new worker \((working|idle|done|starting|unknown)[,)]"),
+    re.compile(r"^\S+ main ci recovered \S+$"),
 ]
 _WAKE = [
     re.compile(r"^\S+ report \S+$"),
