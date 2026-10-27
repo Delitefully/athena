@@ -342,13 +342,21 @@ class HqResumeHookTest(unittest.TestCase):
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
         self.assertFalse((paths.state_dir() / "hq-start.json").exists())
 
-    def test_hqs_own_resume_clear_or_compaction_is_hq_and_becomes_its_session(self):
-        for n, source in enumerate(("resume", "clear", "compact")):
+    def test_a_nested_resume_or_compaction_never_moves_hqs_session(self):
+        # `claude -p --resume X` from HQ's Bash, or a nested session that compacts: same env, same pane, another id.
+        for source in ("resume", "compact", "clear", "startup"):
             self.hq_session("hq-1")
-            self.start(f"hq-{n + 2}", source)
-            self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], f"hq-{n + 2}")
+            self.start("nested-9", source)
+            self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1", source)
+        self.assertEqual(self.reports(), [])
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_hqs_own_resume_and_compaction_keep_its_id_and_count(self):
+        for source in ("resume", "compact"):
+            self.hq_session("hq-1")
+            self.start("hq-1", source)
             self.assertEqual(json.loads((paths.state_dir() / "hq-start.json").read_text())["source"], source)
-        self.assertEqual(len(self.reports()), 3)
+        self.assertEqual(len(self.reports()), 2)
 
     def test_the_known_session_or_the_first_one_is_hq(self):
         self.hq_session("hq-1")
@@ -356,11 +364,11 @@ class HqResumeHookTest(unittest.TestCase):
         self.hq_session(None)
         self.start("hq-new", "startup")
         self.assertEqual(len(self.reports()), 2)
-        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-new")
+        self.assertIsNone(json.loads((paths.state_dir() / "hq.json").read_text())["session"])  # the hook never writes it
 
     def test_another_pane_is_never_hq(self):
         self.hq_session("hq-1")
-        self.start("hq-2", "resume", pane="w9:p1")
+        self.start("hq-1", "resume", pane="w9:p1")
         self.assertEqual(self.reports(), [])
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
 

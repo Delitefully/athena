@@ -1,6 +1,7 @@
 """What sits in a Claude session's input box: the text someone typed there and has not sent yet.
 
-Claude Code draws its input box between two horizontal rules, the first line starting with `❯`. With nothing typed
+Claude Code draws its input box between two horizontal rules (the top one carrying the session's name when it was
+started with `--name`, as HQ and every worker are), the first line starting with `❯`. With nothing typed
 it shows a placeholder in dim (SGR 2), which a plain-text read cannot tell from typed text, so the screen is read
 with its ANSI styling (`herdr agent read --format ansi`) and dim spans are dropped, as are inverse ones (a drawn
 cursor). A one-letter message under the cursor reads as empty: the price of never reading a cursor as typing. athena never types into a pane
@@ -55,9 +56,14 @@ def _undimmed(line) -> str:
     return "".join(out)
 
 
+_LABELLED_RULE = re.compile(r"^─{3,}(?: +\S.*? +─+)?$")
+
+
 def _rule(line) -> bool:
-    text = _plain(line).strip()
-    return len(text) >= 10 and set(text) == {"─"}
+    """A horizontal rule of the input box: at least 10 `─`, possibly with a label set in it, as Claude Code draws
+    the session's `--name` in the box's top border (`──── abc-101 ─`)."""
+    text = _plain(line).replace("\xa0", " ").strip()
+    return text.count("─") >= 10 and bool(_LABELLED_RULE.match(text))
 
 
 def typed(screen):
@@ -82,19 +88,26 @@ def typed(screen):
     return " ".join(parts)
 
 
-def screen(name) -> str:
-    """The agent's visible screen with its styling, or "" when herdr cannot read it."""
+def screen(name):
+    """The agent's visible screen with its styling; "" when herdr cannot read it; None when herdr runs no such agent
+    (its Claude exited: nobody can be typing to it)."""
     try:
-        return herdr.text("agent", "read", name, "--source", "visible", "--format", "ansi", timeout=10)
+        proc = subprocess.run(herdr.argv("agent", "read", name, "--source", "visible", "--format", "ansi"),
+                              capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return ""
+    if proc.returncode != 0:
+        error = herdr._parse_error(proc.stderr.strip()) or herdr._parse_error(proc.stdout.strip()) or {}
+        return None if error.get("code") == "agent_not_found" else ""
+    return proc.stdout
 
 
 def typing(name) -> bool:
     """Whether athena must not type into the agent's pane: someone typed into its input box and has not sent it, or
     the box cannot be read or is not one athena recognises (fail closed: a screen that could not be read, a dialog,
-    bash mode). Only an input box seen empty is safe."""
-    return typed(screen(name)) != ""
+    bash mode). Only an input box seen empty is safe, or no agent at all (herdr's agent_not_found)."""
+    seen = screen(name)
+    return seen is not None and typed(seen) != ""
 
 
 def wait_clear(name, wait=None) -> bool:

@@ -15,6 +15,9 @@ from athena_lib import composer, hq, ledger, paths, retire
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TYPED = (FIXTURES / "prompt-typed.ansi").read_text()  # Claude Code 2.1.311 in herdr, `hello world` typed
 EMPTY = (FIXTURES / "prompt-empty.ansi").read_text()  # the same box with its dim placeholder
+# Claude Code 2.1.312, a session started with --name (HQ and every worker): the name sits in the box's top border.
+NAMED_EMPTY = (FIXTURES / "prompt-named-empty.ansi").read_text()
+NAMED_TYPED = (FIXTURES / "prompt-named-typed.ansi").read_text()
 RULE = "\x1b[0m\x1b[38;2;136;136;136m" + "─" * 40 + "\x1b[0m"
 
 
@@ -25,6 +28,17 @@ class TypedTest(unittest.TestCase):
     def test_the_dim_placeholder_is_an_empty_box(self):
         self.assertIn("Try", EMPTY)
         self.assertEqual(composer.typed(EMPTY), "")
+
+    def test_a_named_sessions_box_is_read(self):
+        self.assertIn("abc-101", NAMED_EMPTY.splitlines()[0])
+        self.assertEqual(composer.typed(NAMED_EMPTY), "")
+        self.assertEqual(composer.typed(NAMED_TYPED), "fix the export flag")
+
+    def test_a_rule_is_only_rules_or_a_label_set_in_one(self):
+        self.assertTrue(composer._rule("─" * 12))
+        self.assertTrue(composer._rule("─" * 12 + " abc-101 ─"))
+        self.assertFalse(composer._rule("── abc ─"))
+        self.assertFalse(composer._rule("─" * 12 + " text after a rule"))
 
     def test_text_in_a_truecolour_with_a_2_in_it_is_not_dim(self):
         screen = "\n".join([RULE, "❯\xa0\x1b[38;2;200;200;200mfix the flag\x1b[0m", RULE])
@@ -88,6 +102,12 @@ class FailClosedTest(unittest.TestCase):
 
     def test_only_an_empty_box_is_safe(self):
         self.assertFalse(self.screen_is(EMPTY))
+
+    def test_an_agent_herdr_does_not_run_has_no_one_typing(self):
+        err = '{"error":{"code":"agent_not_found","message":"agent target w not found"}}'
+        self.assertFalse(self.screen_is("", stderr=err, exit=1))
+        other = '{"error":{"code":"cli_timeout","message":"slow"}}'
+        self.assertTrue(self.screen_is("", stderr=other, exit=1))  # any other failure still fails closed
 
     def test_exit_claude_sends_nothing_into_an_unreadable_pane(self):
         write_scenario(self.tmp.name, [{"match": ["agent", "get", "w"], "stdout": {"result": {"agent": {"name": "w"}}}},
@@ -158,6 +178,21 @@ class RotateGuardTest(GuardFixture):
             hq.restart_now(update=False)
         self.assertEqual(self.exits("athena"), [])
 
+    def test_an_idle_named_hq_is_restarted(self):
+        gone = {"match": ["agent", "get"], "after": ["agent", "prompt", "athena", "/exit"], "stdout": "",
+                "stderr": '{"error":{"code":"agent_not_found","message":"x"}}', "exit": 1}
+        write_scenario(self.tmp.name, [{**alive("old"), "after": ["agent", "start"]}, gone, alive("old"), HQ_SPACE,
+                                       {"match": ["agent", "read", "athena"], "stdout": NAMED_EMPTY}])
+        result = hq.restart_now(update=False)
+        self.assertTrue(result["resumed"])
+        self.assertEqual(len(self.exits("athena")), 1)
+
+    def test_a_named_hq_with_typed_text_is_not(self):
+        write_scenario(self.tmp.name, [alive("old"), HQ_SPACE, {"match": ["agent", "read", "athena"], "stdout": NAMED_TYPED}])
+        with self.assertRaises(hq.RestartError):
+            hq.restart_now(update=False)
+        self.assertEqual(self.exits("athena"), [])
+
     def test_rotation_waits_for_the_box_to_clear(self):
         self.env.set("ATHENA_TYPING_WAIT", "30")
         screens = iter([TYPED, TYPED, EMPTY])
@@ -167,6 +202,41 @@ class RotateGuardTest(GuardFixture):
 
 
 class RetireGuardTest(GuardFixture):
+    def named_worker(self, screen_rule):
+        repo, _ = make_repo(self.tmp.name)
+        wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1"
+        git(repo, "worktree", "add", "-q", "-b", "you/abc-1", str(wt), "main")
+        ledger.append("spawn", "abc-1", repo=str(repo), path=os.path.realpath(wt), branch="you/abc-1",
+                      workspace="w5", pane="w5:p1", terminal="term_1")
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get", "abc-1"], "stdout": {"result": {"agent": {"name": "abc-1"}}}, "times": 2},
+            {"match": ["agent", "get", "abc-1"], "stdout": "", "stderr": '{"error":{"code":"agent_not_found","message":"x"}}',
+             "exit": 1},
+            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(wt)}}}}},
+            screen_rule])
+        return wt
+
+    def test_retire_exits_an_idle_named_worker(self):
+        self.named_worker({"match": ["agent", "read", "abc-1"], "stdout": NAMED_EMPTY})
+        result = retire.retire("abc-1")
+        self.assertEqual(len(self.exits("abc-1")), 1)
+        self.assertTrue(result["removed"])
+
+    def test_retire_leaves_a_named_worker_someone_is_typing_to(self):
+        self.named_worker({"match": ["agent", "read", "abc-1"], "stdout": NAMED_TYPED})
+        with self.assertRaises(retire.RetireError):
+            retire.retire("abc-1")
+        self.assertEqual(self.exits("abc-1"), [])
+
+    def test_a_worker_whose_claude_already_exited_retires_without_force(self):
+        err = '{"error":{"code":"agent_not_found","message":"agent target abc-1 not found"}}'
+        wt = self.named_worker({"match": ["agent", "read", "abc-1"], "stdout": "", "stderr": err, "exit": 1})
+        write_scenario(self.tmp.name, [
+            {"match": ["agent"], "stdout": "", "stderr": err, "exit": 1},
+            {"match": ["workspace", "get", "w5"], "stdout": {"result": {"workspace": {"worktree": {"checkout_path": str(wt)}}}}}])
+        result = retire.retire("abc-1")
+        self.assertTrue(result["removed"])
+
     def test_retire_leaves_a_pane_someone_is_typing_in(self):
         repo, _ = make_repo(self.tmp.name)
         wt = Path(self.tmp.name) / "worktrees" / "proj" / "abc-1"
