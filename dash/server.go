@@ -36,6 +36,71 @@ var funcs = template.FuncMap{
 	"group": func(key, name string, items []Item, empty string) map[string]any {
 		return map[string]any{"Key": key, "Name": name, "Items": items, "Empty": empty}
 	},
+	// Needs you shows needsShown rows; the rest fold behind "n more".
+	"first": func(items []Item) []Item {
+		if len(items) > needsShown {
+			return items[:needsShown]
+		}
+		return items
+	},
+	"rest": func(items []Item) []Item {
+		if len(items) > needsShown {
+			return items[needsShown:]
+		}
+		return nil
+	},
+	"md": func(s string) template.HTML { return renderMarkdown(s) },
+}
+
+// short is a row's age as the plan draws it: now, 10m, 2h, 7d (app.js short agrees).
+func short(d time.Duration) string {
+	s := int(d.Seconds())
+	switch {
+	case s < 60:
+		return "now"
+	case s < 3600:
+		return strconv.Itoa(s/60) + "m"
+	case s < 86400:
+		return strconv.Itoa(s/3600) + "h"
+	}
+	return strconv.Itoa(s/86400) + "d"
+}
+
+// dueText says when an item is due, from now: overdue 2h, due in 40m, due 17:30 (today), due tmrw, due Thu, due 4 Nov
+// (app.js dueText agrees).
+func dueText(due, now time.Time) string {
+	d := due.Sub(now)
+	if d < 0 {
+		return "overdue " + short(-d)
+	}
+	if d < time.Hour {
+		return "due in " + strconv.Itoa(int(d.Minutes())) + "m"
+	}
+	y1, m1, d1 := now.Date()
+	y2, m2, d2 := due.Date()
+	days := int(time.Date(y2, m2, d2, 0, 0, 0, 0, time.Local).Sub(time.Date(y1, m1, d1, 0, 0, 0, 0, time.Local)).Hours()/24 + 0.5)
+	switch {
+	case days == 0:
+		return "due " + due.Format("15:04")
+	case days == 1:
+		return "due tmrw"
+	case days < 7:
+		return "due " + due.Format("Mon")
+	}
+	return "due " + due.Format("2 Jan")
+}
+
+// at says when a default applies: 09:00 today, tmrw 09:00, or Thu 09:00.
+func at(t, now time.Time) string {
+	y1, m1, d1 := now.Date()
+	y2, m2, d2 := t.Date()
+	switch {
+	case y1 == y2 && m1 == m2 && d1 == d2:
+		return t.Format("15:04")
+	case t.Sub(now) < 48*time.Hour && t.Day() == now.AddDate(0, 0, 1).Day():
+		return "tmrw " + t.Format("15:04")
+	}
+	return t.Format("Mon 15:04")
 }
 
 func unix(ts float64) time.Time {
@@ -62,7 +127,25 @@ func templates(now func() time.Time) *template.Template {
 	if err != nil {
 		panic(err)
 	}
-	clock := template.FuncMap{"ago": func(ts float64) string { return ago(now().Sub(unix(ts))) }}
+	clock := template.FuncMap{
+		"ago":   func(ts float64) string { return ago(now().Sub(unix(ts))) },
+		"short": func(ts float64) string { return short(now().Sub(unix(ts))) },
+		"due":   func(ts float64) string { return dueText(unix(ts).Local(), now().Local()) },
+		"at":    func(ts float64) string { return at(unix(ts).Local(), now().Local()) },
+		// autoNote: the earliest default among items, as the "n more" line says it.
+		"autoNote": func(items []Item) string {
+			var first float64
+			for _, it := range items {
+				if it.AutoAt > 0 && (first == 0 || it.AutoAt < first) {
+					first = it.AutoAt
+				}
+			}
+			if first == 0 {
+				return ""
+			}
+			return "athena takes the rec at " + at(unix(first).Local(), now().Local()) + " unless you object"
+		},
+	}
 	t := template.Must(template.New("dash").Funcs(funcs).Funcs(clock).Parse(pageHTML))
 	return template.Must(t.New("lockup").Parse(string(lockup)))
 }
@@ -110,7 +193,11 @@ func (s *Server) Refresh(force bool) (changed bool) {
 		return false
 	}
 	now := s.now()
-	view := Build(s.store.Load(), float64(now.UnixNano())/1e9, s.linearWorkspace)
+	snap := s.store.Load()
+	if s.applyDefaults(snap, float64(now.UnixNano())/1e9) > 0 {
+		snap = s.store.Load() // with the answers it just queued, so their items move to Ready for you at once
+	}
+	view := Build(snap, float64(now.UnixNano())/1e9, s.linearWorkspace)
 	var buf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&buf, "main", view); err != nil {
 		log.Printf("render failed, keeping the last good page: %v", err)
@@ -192,6 +279,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/events", s.events)
 	mux.HandleFunc("/glyphs", s.glyphs)
 	mux.HandleFunc("/api/action", s.action)
+	mux.HandleFunc("/api/item", s.itemAction)
+	mux.HandleFunc("/item/", s.itemPage)
+	mux.HandleFunc("/items", s.search)
 	mux.HandleFunc("/preview/", s.preview)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _, version := s.snapshot()

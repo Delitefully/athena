@@ -33,7 +33,24 @@ a { color: inherit; text-decoration: underline 1px var(--rule); text-underline-o
 a:hover { text-decoration-color: currentColor; }
 
 header, main { max-width: 1480px; margin: 0 auto; padding-inline: 40px; }
-header { display: flex; align-items: flex-end; justify-content: space-between; padding-top: 28px; padding-bottom: 18px; position: relative; }
+header { display: flex; align-items: flex-end; gap: 18px; padding-top: 28px; padding-bottom: 18px; position: relative; }
+header .lockup { margin-right: auto; }
+/* athena doctor's one dot (plan §2), moved here from <main> by app.js on each push: green, red with what is wrong, or
+   grey while unknown. */
+.health-slot:empty { display: none; }
+.health { margin: 0 0 4px; display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: default; }
+.health .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.health.ok .dot { background: #2F8A5B; }
+.health.bad { color: var(--ink); font-weight: 600; }
+.health.bad .dot { background: var(--thread); }
+main > .health { grid-column: 1 / -1; justify-self: end; }
+.search { margin: 0 0 1px; }
+.search input {
+  width: 180px; height: 26px; padding: 0 11px; border: 1px solid var(--rule); border-radius: 13px; background: transparent;
+  color: var(--ink); font: 500 13px "Instrument Sans", system-ui, sans-serif;
+}
+.search input::placeholder { color: var(--muted); }
+.search input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 /* athena's thread runs under the header, the one red line on the page. */
 header::after { content: ""; position: absolute; left: 40px; right: 40px; bottom: 0; height: 2px; border-radius: 1px; background: var(--thread); transform-origin: left; }
 .lockup { display: block; text-decoration: none; }
@@ -45,18 +62,23 @@ header::after { content: ""; position: absolute; left: 40px; right: 40px; bottom
 body.offline .status .live { display: none; }
 body.offline .status .stopped { display: inline; }
 
+/* Two columns: what is yours (Needs you, Ready for you) and what is someone else's move (Awaiting review, In flight,
+   Done today). One column on a phone, yours first. */
 main {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 56px;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 0 64px; align-items: start;
   padding-top: 30px; padding-bottom: 56px;
 }
-@media (max-width: 1180px) {
-  main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .needs { grid-column: 1 / -1; }
+.col { min-width: 0; }
+@media (max-width: 980px) {
+  main { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
-  header, main { padding-inline: 20px; }
-  header::after { left: 20px; right: 20px; }
-  main { grid-template-columns: minmax(0, 1fr); }
+  header, main { padding-inline: 16px; }
+  header::after { left: 16px; right: 16px; }
+  header { flex-wrap: wrap; row-gap: 10px; }
+  .search { order: 5; flex-basis: 100%; }
+  .search input { width: 100%; }
+  .status { display: none; }
 }
 
 h2 {
@@ -77,24 +99,25 @@ ul { list-style: none; margin: 0; padding: 0; }
 .body { min-width: 0; }
 .body p { margin: 0; }
 .line { text-wrap: pretty; }
+/* A row leads with its name, then its call or title, in a lighter weight; its age or due date sits at the right. */
+.name { font-weight: 650; }
+.name a { text-decoration: none; }
+.name a:hover { text-decoration: underline 1px currentColor; }
+.call { color: var(--ink); }
+.call a { font-weight: 600; }
 .ticket { font-weight: 600; text-decoration: none; letter-spacing: .01em; }
 a.ticket:hover { text-decoration: underline 1px currentColor; }
-.ticket + .title, .who + .title { margin-left: 4px; }
 .line time { float: right; margin-left: 12px; font-size: 12.5px; color: var(--muted); }
+.line time.due { color: var(--thread); font-weight: 600; }
+.detail.auto { color: var(--thread); }
 .meta { margin-top: 3px !important; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--muted); }
 .act .label { color: var(--ink); font-weight: 600; }
 .checks.failure { color: var(--ink); font-weight: 600; }
 .detail { margin-top: 5px !important; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* A needs-you.md line is athena speaking, so its mark is the thread. */
-.note .icon { stroke: var(--thread); color: var(--thread); }
-.note .meta { color: var(--thread); font-weight: 600; }
-.note-text { line-height: 1.45; }
-.note-text a { font-weight: 600; }
-/* A needs-you.md line about a PR with a row of its own: under that row, muted like its detail line, so an
-   In progress row never reads as needing you. */
-.fold { margin-top: 5px !important; font-size: 13px; line-height: 1.45; color: var(--muted); }
-.fold a { color: inherit; }
+/* An item is athena speaking: a decision's mark is the thread. */
+.item:has(use[href="#i-ask"]) .icon { stroke: var(--thread); color: var(--thread); }
+.needs .label { color: var(--thread); font-weight: 600; }
 .code { background: var(--wash); border-radius: 3px; padding: 0 4px; }
 
 /* Quick actions: real buttons in the same grid cell as the row's label line, so no space is reserved for them. On hover
@@ -106,13 +129,11 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
 .swap.has-acts { min-height: 22px; }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
-/* An ask's detail (its summary and its panel, which has its own answers): a pointer or focus there leaves the row's line as it is. */
-.item:hover:not(:has(.fold:hover, .ask-detail:hover)) > .body > .swap > .acts, .item:focus-within:not(:has(.fold:focus-within, .ask-detail:focus-within)) > .body > .swap > .acts,
-.fold:hover:not(:has(.ask-detail:hover)) > .swap > .acts, .fold:focus-within:not(:has(.ask-detail:focus-within)) > .swap > .acts, .acts.replying {
+.item:hover > .body > .swap > .acts, .item:focus-within > .body > .swap > .acts, .acts.replying {
   clip-path: inset(-6px -8px -6px -4px); /* room for the focus ring; the tooltip is the body's (.tip) */
 }
-.item:hover:not(:has(.fold:hover, .ask-detail:hover)) > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within:not(:has(.fold:focus-within, .ask-detail:focus-within)) > .body > .swap:has(.acts):not(.keep) > :not(.acts),
-.fold:hover:not(:has(.ask-detail:hover)) > .swap > :not(.acts), .fold:focus-within:not(:has(.ask-detail:focus-within)) > .swap > :not(.acts), .swap:has(.replying) > :not(.acts) {
+.item:hover > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within > .body > .swap:has(.acts):not(.keep) > :not(.acts),
+.swap:has(.replying) > :not(.acts) {
   clip-path: inset(0 0 0 100%);
 }
 /* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,
@@ -125,9 +146,6 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
   .swap.keep > .acts { padding-left: 0; }
   .swap > :not(.acts) { clip-path: none !important; }
 }
-.fold-label { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); align-self: center; }
-/* athena's accent is for what needs the human: a folded ask under an In progress or Done row stays muted, as its row is. */
-.needs .fold-label { color: var(--thread); }
 .pill {
   position: relative; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; margin: 0;
   border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);
@@ -137,6 +155,8 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 .pill:hover { background: var(--wash); border-color: var(--muted); }
 .pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .pill.dismiss { width: 22px; padding: 0; justify-content: center; }
+.pill.rec { border-color: var(--thread); color: var(--thread); font-weight: 600; }
+.pill .tag { font-size: 11px; font-weight: 700; color: var(--thread); text-transform: uppercase; letter-spacing: .04em; }
 /* Beside athena's two options, Discuss and Reply are their icons alone, so four fit one line. An icon-only pill says
    what it does in a tooltip, on hover and on keyboard focus alike (.tip). */
 .acts.options [data-discuss], .acts.options [data-reply] { width: 22px; padding: 0; justify-content: center; }
@@ -220,26 +240,16 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
   .stack > .apr::before, .stack.deep > .apr::after { visibility: hidden; }
 }
 
-/* An ask's detail: a native <details>. Closed, its summary is the row's why line as before, with a small "Details" and a
-   chevron at its end; open, the why line wraps in full and the panel follows: the ask's context in Markdown, links to its
-   previews, and its answers as full-size buttons. */
-.ask-detail > summary {
-  display: flex; align-items: baseline; gap: 12px; margin-top: 5px; cursor: pointer; list-style: none;
-  font-size: 13px; color: var(--muted); border-radius: 3px;
-}
-.ask-detail > summary::-webkit-details-marker { display: none; }
-.ask-detail > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.ask-detail > summary > .detail { flex: 1; min-width: 0; margin: 0 !important; }
-.ask-detail[open] > summary > .detail { white-space: normal; color: var(--ink); }
-.more { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
-.needs .more { color: var(--thread); }
-.ask-detail > summary:hover .more { text-decoration: underline 1px; text-underline-offset: 3px; }
-.chev { width: 14px; height: 14px; }
-.ask-detail[open] .chev { transform: rotate(180deg); }
-.panel {
-  margin-top: 10px; padding: 14px 16px 16px; border: 1px solid var(--rule); border-radius: 8px;
-  background: var(--wash); color: var(--ink); font-size: 13.5px; line-height: 1.5; cursor: auto;
-}
+/* Needs you past its seventh row, and Done today: folded, a quiet line that opens them. */
+details.more > summary, details.done > summary { cursor: pointer; list-style: none; }
+details.more > summary::-webkit-details-marker, details.done > summary::-webkit-details-marker { display: none; }
+details.more > summary { padding: 12px 0; font-size: 13px; font-weight: 600; color: var(--thread); border-bottom: 1px solid var(--rule); }
+details.more > summary:hover, details.done > summary:hover h2 { text-decoration: underline 1px; text-underline-offset: 3px; }
+details.more[open] > summary { border-bottom: 0; }
+details.done:not([open]) h2 { border-bottom-style: dashed; }
+details > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.snoozed { margin: -20px 0 36px; font-size: 12.5px; color: var(--muted); }
+
 .md { overflow-wrap: anywhere; }
 .md + .md { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
 .md > :first-child { margin-top: 0; }
@@ -264,9 +274,40 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
 .md th[align=center], .md td[align=center] { text-align: center; }
 .md th { font-weight: 600; color: var(--muted); }
 .md tr:last-child td { border-bottom: 0; }
-.previews { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0 !important; }
-/* The panel's answers: always shown, full size, every option with its label, Discuss and Reply named. */
+/* The full view's answers: always shown, full size, every option with its label, Discuss and Reply named. */
 .acts.bar { clip-path: none; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.rule { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.rule input { accent-color: var(--thread); margin: 0; }
+
+/* An item's full view: one column, near full width, its own link. */
+main.full { display: block; max-width: 920px; }
+.back { margin: 0 0 18px; font-size: 13px; color: var(--muted); }
+.back a { text-decoration: none; }
+.view h1 { margin: 0; font: 400 46px/1.05 "Instrument Serif", Georgia, serif; letter-spacing: -.01em; }
+.view .facts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 26px; font-size: 13px; color: var(--muted); }
+.facts .state, .facts .due { color: var(--ink); font-weight: 600; }
+.facts .due, .facts .stakes { color: var(--thread); font-weight: 600; }
+.view section { margin: 0 0 26px; }
+.view section h2 { font-size: 24px; padding-bottom: 8px; margin-bottom: 12px; }
+.view p { margin: 0 0 8px; }
+.view .call { font-size: 16px; font-weight: 600; }
+.words { margin: 0; padding: 4px 0 4px 16px; border-left: 2px solid var(--thread); font: 400 22px/1.35 "Instrument Serif", Georgia, serif; }
+.view .md { font-size: 14.5px; line-height: 1.55; }
+.brief .auto { color: var(--thread); font-weight: 600; font-size: 13px; margin-top: 12px; }
+.preview { margin: 0 0 14px; }
+.preview iframe { display: block; width: 100%; height: 420px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; }
+.preview figcaption { margin-top: 6px; }
+.links li { padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.links .label { color: var(--muted); font-size: 13px; }
+.timeline { margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+.timeline li { padding: 5px 0; border-bottom: 1px solid var(--rule); }
+.timeline time { display: inline-block; min-width: 92px; color: var(--muted); font-size: 12.5px; }
+.item-acts { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 16px; border-top: 2px solid var(--ink); }
+.item-acts .pill { height: 30px; padding: 0 14px; border-radius: 15px; font-size: 13.5px; }
+@media (max-width: 760px) {
+  .view h1 { font-size: 36px; }
+  .preview iframe { height: 300px; }
+}
 .bar .pill { height: 28px; padding: 0 12px; border-radius: 14px; gap: 6px; font-size: 13.5px; background: var(--bg); }
 .bar .pill:hover { background: var(--bg); border-color: var(--ink); }
 .bar .pi { width: 14px; height: 14px; }
@@ -281,8 +322,7 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
   .enter { animation: reveal .7s var(--arrive) both; }
   .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
   .apr .acts, .apr > .swap > .apr-meta { transition: opacity .14s ease; }
-  .chev { transition: transform .2s var(--arrive); }
-  .ask-detail[open]:not(.kept) > .panel { animation: unfold .32s var(--arrive) both; } /* not again on each push */
+  details[open]:is(.more, .done) > ul { animation: unfold .32s var(--arrive) both; }
   .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
   .stack:is(:hover, :focus-within) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
   .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }

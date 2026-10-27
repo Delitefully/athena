@@ -63,8 +63,14 @@ func TestLoadFixture(t *testing.T) {
 	if len(s.History) != 3 || s.History[0].PR.State != "MERGED" {
 		t.Fatalf("history %+v", s.History)
 	}
-	if len(s.Asks) != 5 || len(s.Notices) != 0 {
+	if len(s.Asks) != 12 || len(s.Notices) != 0 {
 		t.Fatalf("asks %+v notices %q", s.Asks, s.Notices)
+	}
+	if s.Health == nil || !s.Health.OK || s.Health.TS != fixtureNow-30 {
+		t.Fatalf("health %+v", s.Health)
+	}
+	if s.LastSeen != fixtureNow-2100 {
+		t.Fatalf("the human was last seen typing r3: %v", s.LastSeen)
 	}
 	h := s.Hooks["abc-106"]
 	if h.State != "blocked" || h.Report.Status != "NEEDS_CONTEXT" || h.Report.Concerns[0] != "Which ceiling: 5 tries, or 24 hours?" {
@@ -142,7 +148,7 @@ func TestBrokenFileWithNoGoodStateIsSkippedQuietly(t *testing.T) {
 		t.Fatalf("notices %q", s.Notices)
 	}
 	// Without watch.json, no PR's move is known, so each worker shows its own state.
-	if v := Build(s, 1791500000, "acme"); len(v.InProgress) != 6 || len(v.NeedsYou) != 6 {
+	if v := Build(s, 1791500000, "acme"); len(v.InProgress) != 8 || len(v.NeedsYou) != 7 {
 		t.Fatalf("a broken file blanked the page: %s / %s", ids(v.NeedsYou), ids(v.InProgress))
 	}
 }
@@ -216,11 +222,11 @@ func TestParseAsksDropsWhatAthenaAskWouldRefuse(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	a := got[0]
-	if a.Kind != "question" || a.PR != "acme/web#7" || len(a.Options) != 2 || a.Options[0] != (Option{"yes", "Yes", "check", "reply"}) ||
+	if a.Kind != "decision" || a.PR != "acme/web#7" || len(a.Options) != 2 || a.Options[0] != (Option{"yes", "Yes", "check", "reply"}) ||
 		a.Options[1] != (Option{"no", "No", "", "dismiss"}) {
 		t.Fatalf("an unknown icon shows none, a third option is dropped: %+v", a)
 	}
-	if b := got[1]; b.Kind != "note" || len(b.Options) != 0 {
+	if b := got[1]; b.Kind != "result" || len(b.Options) != 0 {
 		t.Fatalf("a long label and the reserved id are dropped: %+v", b)
 	}
 }
@@ -303,7 +309,7 @@ func TestFoldActionsBySeq(t *testing.T) {
 		{"seq": 9.0, "status": "done"}, // a status for a seq never queued (compacted away) is skipped
 		{"seq": 2.0, "item": "a9", "status": "queued"},
 	})
-	want := []Action{{1, 10, "a1", "yes", "", false, "cancelled"}, {2, 11, "a2", "", "hi", false, "queued"}, {3, 13, "w-abc-1", "", "", true, "done"}}
+	want := []Action{{Seq: 1, TS: 10, Item: "a1", Option: "yes", Status: "cancelled"}, {Seq: 2, TS: 11, Item: "a2", Text: "hi", Status: "queued"}, {Seq: 3, TS: 13, Item: "w-abc-1", Discuss: true, Status: "done"}}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("%+v", got)
 	}

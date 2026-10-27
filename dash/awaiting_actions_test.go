@@ -16,7 +16,7 @@ func TestRecheckQueuesForAthenaNamingThePR(t *testing.T) {
 	if code != http.StatusAccepted || out["seq"] != 1.0 {
 		t.Fatalf("%d %v", code, out)
 	}
-	if got := queued(t, dir); len(got) != 1 || got[0] != (Action{1, fixtureNow, "pr:acme/web#907", "recheck", "", false, "queued"}) {
+	if got := queued(t, dir); len(got) != 1 || got[0] != (Action{Seq: 1, TS: fixtureNow, Item: "pr:acme/web#907", Option: "recheck", Status: "queued"}) {
 		t.Fatalf("%+v", got)
 	}
 	// The pill stays, re-checking, with no second Re-check until athena takes this one up.

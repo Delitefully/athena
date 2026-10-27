@@ -1,9 +1,9 @@
 {
-  "next": 6,
+  "next": 13,
   "items": [
     {
       "id": "a1",
-      "kind": "question",
+      "kind": "decision",
       "text": "Start **ABC-111** now, or after ABC-101 merges? (rec: after)",
       "why": "ABC-111 touches the same export queue as ABC-101.",
       "body": "**Recommendation: after ABC-101 merges.** Both change `export/queue.go`; starting now means rebasing about 400 lines once ABC-101 lands.\n\n| Option | Starts | Risk | Cost |\n|---|---|---|---|\n| Start now | today | conflicts in `queue.go` | a rebase, about 1 h |\n| After ABC-101 | in about 2 days | none | waits on its review |\n| Split it | today | low | the schema part now, the rest after |\n| Hold | next week | none | the export date slips a week |\n\n- ABC-101 is [acme/web#48](https://github.com/acme/web/pull/48): approved, waiting on the merge.\n- The new export screen is in the preview below.\n\n**Next:** on your answer athena briefs a worker for ABC-111 with that start point.",
@@ -36,47 +36,208 @@
       "previews": [
         "export-screen.html"
       ],
-      "created": 1791498000
+      "created": 1791498000,
+      "name": "Export queue start",
+      "rec": "later",
+      "auto": true,
+      "updated": 1791498000,
+      "words": "Can we start the export rework now, or wait until the sign-in fix lands?",
+      "requests": [
+        "r3"
+      ],
+      "next": "you",
+      "log": [
+        {
+          "ts": 1791498000,
+          "text": "filed"
+        }
+      ]
     },
     {
       "id": "a2",
-      "kind": "question",
+      "kind": "decision",
       "text": "The release notes for 2.4 need a date: Thursday or Monday? Draft: https://github.com/acme/web/pull/50",
-      "created": 1791498100
+      "created": 1791498100,
+      "name": "2.4 release notes",
+      "next": "you",
+      "due": 1791572000,
+      "updated": 1791498100
     },
     {
       "id": "a3",
-      "kind": "note",
-      "text": "Approve and merge ABC-108: https://github.com/acme/web/pull/48",
-      "body": "ABC-108 is approved and its checks are green; it is the last piece before the 2.4 release branch is cut.\n\n- Merge style: squash, as acme/web merges.\n- Release notes: no entry, it is internal.\n- After it: ABC-111 can start (a1).",
-      "created": 1791498200
+      "kind": "result",
+      "name": "Palette film",
+      "text": "The 52 s cut is ready; the ending could be shorter",
+      "why": "Rendered from the latest build.",
+      "body": "**The cut runs 52 s.** The last 8 s hold on the palette closing; trimming them to 3 s keeps the pace.\n\n- Film: [palette-film.mp4](https://example.com/palette-film.mp4)\n- Script: unchanged since your notes.",
+      "options": [],
+      "next": "you",
+      "created": 1791494600,
+      "updated": 1791494600
     },
     {
       "id": "a4",
-      "kind": "note",
+      "kind": "request",
+      "name": "Billing export",
       "text": "Billing export step 2 is next to land",
       "pr": "acme/web#906",
-      "created": 1791498300
+      "workers": [
+        "abc-103"
+      ],
+      "options": [],
+      "next": "worker",
+      "created": 1791327200,
+      "updated": 1791496400
     },
     {
       "id": "a5",
-      "kind": "question",
+      "kind": "decision",
+      "name": "Duplicate ABC-4550",
       "text": "Close ABC-4550 as a duplicate of ABC-4566?",
       "options": [
         {
           "id": "yes",
           "label": "Close it",
-          "icon": "check",
-          "do": "reply"
+          "do": "reply",
+          "icon": "check"
         },
         {
           "id": "no",
-          "label": "Not now",
-          "icon": "x",
+          "label": "Keep it",
+          "do": "dismiss",
+          "icon": "x"
+        }
+      ],
+      "rec": "yes",
+      "next": "you",
+      "created": 1791413600,
+      "updated": 1791413600
+    },
+    {
+      "id": "a6",
+      "kind": "decision",
+      "name": "Security: staging",
+      "text": "Rotate the plain-text staging password in the shared repo?",
+      "why": "Found during the CI research; a credential is yours to act on.",
+      "stakes": [
+        "security"
+      ],
+      "options": [
+        {
+          "id": "on-it",
+          "label": "On it",
+          "do": "reply",
+          "icon": "check"
+        },
+        {
+          "id": "ticket-it",
+          "label": "Ticket it",
+          "do": "reply",
+          "icon": "ticket"
+        }
+      ],
+      "rec": "on-it",
+      "next": "you",
+      "created": 1790895200,
+      "updated": 1790895200
+    },
+    {
+      "id": "a7",
+      "kind": "promise",
+      "name": "Customer meeting",
+      "text": "Confirm the customer's engineer for Wed 11:30",
+      "why": "They asked for Wednesday or Thursday; a draft reply is ready.",
+      "body": "**Draft reply:** Wednesday 11:30 works for us; I'll send the invite today.",
+      "options": [],
+      "next": "you",
+      "due": 1791564800,
+      "created": 1791327200,
+      "updated": 1791327200
+    },
+    {
+      "id": "a8",
+      "kind": "decision",
+      "name": "Flaky e2e",
+      "text": "Re-run the flaky e2e suite on main? (rec re-run)",
+      "options": [
+        {
+          "id": "re-run",
+          "label": "Re-run",
+          "do": "reply",
+          "icon": "rotate-ccw"
+        },
+        {
+          "id": "leave-it",
+          "label": "Leave it",
           "do": "dismiss"
         }
       ],
-      "created": 1791498400
+      "rec": "re-run",
+      "applied": {
+        "option": "re-run",
+        "label": "Re-run",
+        "ts": 1791498800
+      },
+      "next": "you",
+      "created": 1791449600,
+      "updated": 1791498800,
+      "log": [
+        {
+          "ts": 1791449600,
+          "text": "filed"
+        },
+        {
+          "ts": 1791498800,
+          "text": "athena took the rec on its own: Re-run"
+        }
+      ]
+    },
+    {
+      "id": "a9",
+      "kind": "incident",
+      "name": "CodeQL out of memory",
+      "text": "CodeQL failed 3 times on main; a bigger runner is on its way",
+      "options": [],
+      "next": "ci",
+      "created": 1791489200,
+      "updated": 1791499400
+    },
+    {
+      "id": "a10",
+      "kind": "result",
+      "name": "System One on clouds",
+      "text": "None of Vertex, Foundry or Bedrock carry System One models",
+      "options": [],
+      "next": "you",
+      "created": 1791413600,
+      "updated": 1791496400,
+      "resolved": 1791496400,
+      "resolved_by": "you",
+      "resolved_note": "you marked it done"
+    },
+    {
+      "id": "a11",
+      "kind": "decision",
+      "name": "Docs domain",
+      "text": "Move the docs site to the new domain this week?",
+      "options": [],
+      "next": "you",
+      "created": 1791240800,
+      "updated": 1791240800,
+      "snooze": {
+        "until": 1791586400,
+        "at": 1791240801
+      }
+    },
+    {
+      "id": "a12",
+      "kind": "request",
+      "name": "Policy research",
+      "text": "Writing plan v2 from your comments",
+      "options": [],
+      "next": "athena",
+      "created": 1791485600,
+      "updated": 1791496400
     }
   ]
 }

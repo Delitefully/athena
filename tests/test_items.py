@@ -2,6 +2,7 @@
 migration of today's asks; the request log and its weekly check; `athena status <worker>`; the uncapped handoff."""
 import io
 import json
+import re
 import os
 import shutil
 import tempfile
@@ -86,6 +87,22 @@ class NamesAndKindsTest(Base):
         self.assertIsNone(asks.parse_due("none"))
         with self.assertRaises(asks.AskError):
             asks.parse_due("tomorrowish")
+
+
+class DashAgreesTest(unittest.TestCase):
+    def test_item_limits_kinds_and_stakes_match_the_dash(self):
+        go = (paths.PLUGIN_ROOT / "dash" / "state.go").read_text()
+        items_go = (paths.PLUGIN_ROOT / "dash" / "items.go").read_text()
+        for name, value in (("nameMax", asks.NAME_MAX), ("wordsMax", asks.WORDS_MAX), ("logMax", asks.LOG_MAX),
+                            ("linksMax", asks.LINKS_MAX), ("workersMax", asks.WORKERS_MAX)):
+            with self.subTest(name=name):
+                self.assertRegex(go, rf"\b{name}\s*=\s*{value}\b")
+        for table, values in (("itemKinds", asks.KINDS), ("itemNext", asks.NEXT), ("itemStakes", asks.STAKES)):
+            line = next(l for l in go.splitlines() if l.strip().startswith(table))
+            self.assertEqual(sorted(re.findall(r'"([a-z-]+)": true', line)), sorted(values), table)
+        for kind, nxt in asks.NEXT_BY_KIND.items():
+            self.assertIn(f'"{kind}": "{nxt}"', go)
+        self.assertIn(f'undoDefault  = "{asks.UNDO_DEFAULT}"', items_go)
 
 
 class EditInPlaceTest(Base):

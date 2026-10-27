@@ -10,100 +10,124 @@ import (
 	"testing"
 )
 
-func TestAnAskHasAPanelOnlyWhenItHasMoreToShow(t *testing.T) {
-	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
-	var a1, a2, a5 Item
-	for _, it := range v.NeedsYou {
-		switch it.ID {
-		case "ask-a1":
-			a1 = it
-		case "ask-a2":
-			a2 = it
-		case "ask-a5":
-			a5 = it
-		}
-	}
-	// A body: its title is the row, its body, previews and answers the panel; the answers are the row's own.
-	if p := a1.Panel; p == nil || p.Ask != "a1" || p.Actions != a1.Actions || !strings.Contains(string(p.Body), "<table>") || p.Text != "" ||
-		len(p.Previews) != 1 || p.Previews[0] != (Preview{"export-screen.html", "/preview/a1/export-screen.html"}) || p.Why != a1.Detail {
-		t.Fatalf("a1's panel %+v", a1.Panel)
-	}
-	if string(a1.Note) != "Start <strong>ABC-111</strong> now, or after ABC-101 merges? (rec: after)" {
-		t.Fatalf("a1's title %q", a1.Note)
-	}
-	// An ask from before titles were one sentence: its first sentence is the row, its whole text opens the panel.
-	if string(a2.Note) != "The release notes for 2.4 need a date: Thursday or Monday?" || a2.Panel == nil ||
-		!strings.Contains(string(a2.Panel.Text), `Draft: <a href="https://github.com/acme/web/pull/50">acme/web#50</a>`) || a2.Panel.Body != "" {
-		t.Fatalf("a2 %q %+v", a2.Note, a2.Panel)
-	}
-	if a5.Panel != nil {
-		t.Fatalf("a title and a why alone have no panel: %+v", a5.Panel)
-	}
-	// A folded ask gets one too, under its fold.
-	if f := find(v.NeedsYou, "abc-108").Folds; len(f) != 1 || f[0].Panel == nil || !strings.Contains(string(f[0].Panel.Body), "<li>Merge style: squash") {
-		t.Fatalf("abc-108's fold %+v", f)
-	}
-}
-
-func TestThePanelRendersUnderItsRowAndFold(t *testing.T) {
+// An item's full view (plan §3): its own link, your words, where it stands, the decision brief with every option and
+// the rec marked, the previews embedded, its workers and links, the timeline, and the real actions.
+func TestTheFullViewShowsTheWholeItem(t *testing.T) {
 	_, base := start(t, copyFixture(t))
-	_, page := get(t, base+"/", "")
-	// The row is as before, with its why line as the summary of a closed <details>.
-	row := between(page, `<li id="ask-a1" class="item note">`, `</details>`) // the body has <li>s of its own
+	resp, page := get(t, base+"/item/a1", "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d", resp.StatusCode)
+	}
 	for _, want := range []string{
-		`<div class="acts" data-item="a1" data-hides><button type="button" class="pill" data-discuss`, // past two options: Discuss and Reply alone
-		`<details class="ask-detail" data-ask="a1"><summary><span class="detail">ABC-111 touches the same export queue as ABC-101.</span><span class="more">Details<svg class="pi chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></summary>`,
-		"<th>Option</th>", "<td>Split it</td>", "<strong>Recommendation: after ABC-101 merges.</strong>",
-		`<a class="pill" href="/preview/a1/export-screen.html" target="_blank" rel="noopener noreferrer" data-tip=`,
+		"<title>Export queue start · athena</title>",
+		`<main class="full" data-item="a1">`,
+		"<h1>Export queue start</h1>",
+		`<p class="facts"><span>your call</span><span class="state">open</span>`,
+		`<h2>You asked</h2><blockquote class="words">Can we start the export rework now, or wait until the sign-in fix lands?</blockquote>`,
+		`<h2>Where it stands</h2><p class="call">Start <strong>ABC-111</strong> now, or after ABC-101 merges? (rec: after)</p><p>ABC-111 touches the same export queue as ABC-101.</p>`,
+		`<h2>What's needed from you</h2>`, "<th>Option</th>", "<td>Split it</td>",
+		`<p class="auto">athena takes the rec at `,
 		`<div class="acts bar" data-item="a1" data-hides><button type="button" class="pill" data-option="now">`,
-		`data-option="split"`, `data-option="hold"`, "Discuss in Athena</button>", "Reply…</button>",
+		`data-option="later">`, `After ABC-101 <span class="tag">rec</span></button>`, `data-option="split"`, `data-option="hold"`,
+		"Discuss in Athena</button>", "Reply…</button>", `<label class="rule"><input type="checkbox" name="rule"> Don't ask me this again</label>`,
+		`<iframe src="/preview/a1/export-screen.html" sandbox="allow-scripts" loading="lazy" title="export-screen.html"></iframe>`,
+		`<ol class="timeline"><li><time data-ts=`, "filed</li>",
+		`<div class="item-acts" data-item="a1"><button type="button" class="pill" data-do="done">`, `data-do="snooze" data-for="7200"`,
 	} {
-		if !strings.Contains(row, want) {
-			t.Errorf("a1 lacks %s", want)
+		if !strings.Contains(page, want) {
+			t.Errorf("a1's full view lacks %s", want)
 		}
 	}
-	if strings.Contains(row, "<details open") || strings.Contains(row, `<p class="detail" title=`) {
-		t.Error("a panel starts closed, its why line its summary")
+	if strings.Contains(page, `data-do="reopen"`) {
+		t.Error("an open item does not reopen")
 	}
-	if n := strings.Count(row, `data-option="split"`); n != 1 {
-		t.Errorf("the third option is the panel's alone, shown %d times", n)
+	// A refresh of its own, for each push: the <main> alone.
+	if _, frag := get(t, base+"/item/a1?fragment=1", ""); strings.Contains(frag, "<html") || !strings.Contains(frag, "<h1>Export queue start</h1>") {
+		t.Fatalf("fragment %.200s", frag)
 	}
-	// A summary holds text only: a control in it would toggle the panel.
-	for _, s := range regexp.MustCompile(`(?s)<summary>.*?</summary>`).FindAllString(page, -1) {
-		if strings.Contains(s, "<button") || strings.Contains(s, "<a ") {
-			t.Errorf("a control in a summary: %s", s)
+	// A result's report; an item on a worker shows the worker's row; one resolved here can be reopened, and offers no
+	// answers any more.
+	_, a3 := get(t, base+"/item/a3", "")
+	if !strings.Contains(a3, "<h2>Report</h2>") || strings.Contains(a3, `class="acts bar"`) {
+		t.Errorf("a3 %s", a3)
+	}
+	_, a4 := get(t, base+"/item/a4", "")
+	if !strings.Contains(a4, `<span class="name">Billing page empty state</span> <span class="label">done, athena reviewing</span>`) ||
+		!strings.Contains(a4, `<a href="https://github.com/acme/web/pull/906">acme/web#906</a>`) {
+		t.Errorf("a4's workers and PR %s", between(a4, "<h2>Workers", "</section>"))
+	}
+	_, a10 := get(t, base+"/item/a10", "")
+	if !strings.Contains(a10, `<span class="state">resolved 1 h ago: you marked it done</span>`) || !strings.Contains(a10, `data-do="reopen"`) ||
+		strings.Contains(a10, `data-do="done"`) || strings.Contains(a10, `class="acts bar"`) {
+		t.Errorf("a10 %s", between(a10, "<article", "</article>"))
+	}
+	_, a6 := get(t, base+"/item/a6", "")
+	if !strings.Contains(a6, `<span class="stakes">security: always your call</span>`) || strings.Contains(a6, `class="auto"`) {
+		t.Errorf("a6 %s", between(a6, "<article", "</article>"))
+	}
+	for _, path := range []string{"/item/a99", "/item/A1", "/item/../needs-you.json", "/item/"} {
+		if resp, _ := get(t, base+path, ""); resp.StatusCode != 404 {
+			t.Errorf("%s: %d", path, resp.StatusCode)
 		}
-	}
-	fold := between(page, `<div class="fold" id="ask-a3">`, `</details>`)
-	if !strings.Contains(fold, `<details class="ask-detail" data-ask="a3">`) || !strings.Contains(fold, `<div class="acts bar" data-item="a3" data-hides><button type="button" class="pill" data-option="dismiss">`) {
-		t.Errorf("a3's fold has no panel: %s", fold)
-	}
-	if strings.Contains(between(page, `<li id="ask-a5" class="item note">`, `</li>`), "<details") {
-		t.Error("an ask with nothing more has no panel")
 	}
 }
 
-// The panel's buttons answer as the row's do: the same item, checked against the same actions.
-func TestAnAnswerFromThePanelIsCheckedAsTheRowsIs(t *testing.T) {
+// An item archived after a week still has its full view, and a search finds it.
+func TestAnArchivedItemIsFoundAndShown(t *testing.T) {
+	dir := copyFixture(t)
+	write(t, filepath.Join(dir, archiveFile), `{"id": "a0", "kind": "result", "name": "Old disk cleanup", "text": "Freed 210 GB", "resolved": 1791000000, "resolved_note": "you marked it done", "created": 1790990000, "updated": 1791000000}
+not json
+`)
+	_, base := start(t, dir)
+	_, page := get(t, base+"/item/a0", "")
+	if !strings.Contains(page, "<h1>Old disk cleanup</h1>") || strings.Contains(page, `data-do="reopen"`) {
+		t.Fatalf("%s", between(page, "<article", "</article>"))
+	}
+	_, found := get(t, base+"/items?q=disk+cleanup", "")
+	if !strings.Contains(found, `<a href="/item/a0">Old disk cleanup</a>`) || !strings.Contains(found, "<span>resolved</span>") {
+		t.Fatalf("search %s", between(found, "<main", "</main>"))
+	}
+	_, found = get(t, base+"/items?q=export", "")
+	if !strings.Contains(found, `href="/item/a1">Export queue start</a>`) || !strings.Contains(found, `href="/item/a4">Billing export</a>`) || strings.Contains(found, "Old disk") {
+		t.Fatalf("search %s", between(found, "<main", "</main>"))
+	}
+	if _, none := get(t, base+"/items?q=%3Cscript%3E", ""); !strings.Contains(none, "No item matches.") || strings.Contains(none, "<script>") {
+		t.Fatal("a query is escaped")
+	}
+}
+
+// The full view's buttons answer as the row's do: the same item, checked against the same actions.
+func TestAnAnswerFromTheFullViewIsCheckedAsTheRowsIs(t *testing.T) {
 	for _, c := range []struct {
 		body string
 		want int
 	}{
-		{`{"item": "a1", "option": "split"}`, http.StatusAccepted}, // the third option, on the panel only
-		{`{"item": "a1", "option": "hold"}`, http.StatusAccepted},
+		{`{"item": "a1", "option": "split"}`, http.StatusAccepted}, // the third option, in the full view only
+		{`{"item": "a1", "option": "hold", "rule": true}`, http.StatusAccepted},
+		{`{"item": "a1", "text": "after, and always", "rule": true}`, http.StatusAccepted},
+		{`{"item": "a1", "discuss": true, "rule": true}`, http.StatusUnprocessableEntity}, // a rule goes with an answer
 		{`{"item": "a1", "option": "fifth"}`, http.StatusUnprocessableEntity},
-		{`{"item": "a3", "option": "dismiss"}`, http.StatusAccepted},
-		{`{"item": "a3", "text": "merge it"}`, http.StatusUnprocessableEntity}, // a note: no Reply, on the row or the panel
+		{`{"item": "a3", "text": "merge it"}`, http.StatusUnprocessableEntity}, // a result: nothing to answer
+		{`{"item": "w-abc-101", "text": "rebase", "rule": true}`, http.StatusUnprocessableEntity},
+		{`{"item": "a8", "option": "undo-default"}`, http.StatusAccepted},
+		{`{"item": "a5", "option": "undo-default"}`, http.StatusUnprocessableEntity}, // no default applied there
+		{`{"item": "a6", "option": "on-it"}`, http.StatusAccepted},
 	} {
 		dir := copyFixture(t)
 		srv, base := start(t, dir)
-		if code, out := post(t, srv, base, c.body, nil); code != c.want {
+		code, out := post(t, srv, base, c.body, nil)
+		if code != c.want {
 			t.Errorf("%s: %d %v, want %d", c.body, code, out, c.want)
+		}
+		if code == http.StatusAccepted && strings.Contains(c.body, `"rule"`) {
+			if got := queued(t, dir); len(got) != 1 || !got[0].Rule {
+				t.Errorf("%s: the rule did not ride on the answer: %+v", c.body, got)
+			}
 		}
 	}
 	// A fifth option in the file is dropped, so it is refused like any the page does not offer.
 	dir := copyFixture(t)
-	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "text": "Which?", "body": "Rec A.", "options": [
+	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "name": "Pick one", "text": "Which?", "body": "Rec A.", "options": [
 		{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}, {"id": "d", "label": "D"}, {"id": "e", "label": "E"}]}]}`)
 	srv, base := start(t, dir)
 	if code, _ := post(t, srv, base, `{"item": "a1", "option": "e"}`, nil); code != http.StatusUnprocessableEntity {
@@ -236,28 +260,15 @@ func TestTooltipsAreTheBodysOwnNeverAPillsPseudoElement(t *testing.T) {
 		t.Fatal("app.js does not place the tooltip")
 	}
 	_, base := start(t, copyFixture(t))
-	_, page := get(t, base+"/", "")
-	if !strings.Contains(page, `<div class="tip" aria-hidden="true" hidden></div>`) || strings.Index(page, `class="tip"`) < strings.Index(page, "</main>") {
-		t.Fatal("the page has no tooltip outside <main>")
+	for _, path := range []string{"/", "/item/a1"} {
+		_, page := get(t, base+path, "")
+		if !strings.Contains(page, `<div class="tip" aria-hidden="true" hidden></div>`) || strings.Index(page, `class="tip"`) < strings.Index(page, "</main>") {
+			t.Fatalf("%s has no tooltip outside <main>", path)
+		}
 	}
+	_, page := get(t, base+"/item/a1", "")
 	if !strings.Contains(page, `rel="noopener noreferrer" data-tip="Opens in a tab of its own, sandboxed`) {
 		t.Fatal("a preview link says nothing of its tab")
-	}
-}
-
-// A note whose 3 or 4 options are its panel's alone has no pill on its row, so hovering it never swaps in an empty line.
-func TestANoteWithItsOptionsInThePanelKeepsItsLine(t *testing.T) {
-	dir := copyFixture(t)
-	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "kind": "note", "text": "Export plan", "body": "Rec A.",
-		"options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}]}]}`)
-	_, base := start(t, dir)
-	_, page := get(t, base+"/", "")
-	row := between(page, `<li id="ask-a1" class="item note">`, `</details>`)
-	if !strings.Contains(row, `<div class="swap"><p class="meta">note</p>`) || strings.Contains(row, `<div class="acts" `) || strings.Contains(row, `<div class="acts options" `) {
-		t.Fatalf("an empty row of pills: %s", row)
-	}
-	if !strings.Contains(row, `<div class="acts bar" data-item="a1" data-hides><button type="button" class="pill" data-option="a">`) {
-		t.Fatalf("the panel lacks the options: %s", row)
 	}
 }
 
@@ -271,7 +282,7 @@ func TestABodyKeepsItsFirstIndent(t *testing.T) {
 	}
 }
 
-// An older ask's title is never cut inside a link: the row would link a cut URL.
+// An older item's title is never cut inside a link: the row would link a cut URL.
 func TestALongTitleIsNeverCutInsideALink(t *testing.T) {
 	text := strings.Repeat("word ", 20) + "see [the PR](https://github.com/acme/web/pull/1234) and decide now"
 	title, long := (Ask{Text: text}).Title()
@@ -283,9 +294,14 @@ func TestALongTitleIsNeverCutInsideALink(t *testing.T) {
 // The page runs scripts from /static/ only: a preview's own .js is never one of the page's.
 func TestThePageRunsScriptsFromStaticOnly(t *testing.T) {
 	_, base := start(t, copyFixture(t))
-	resp, _ := get(t, base+"/", "")
-	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src "+base+"/static/;") {
-		t.Fatalf("CSP %q", csp)
+	for _, path := range []string{"/", "/item/a1", "/items?q=x"} {
+		resp, _ := get(t, base+path, "")
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src "+base+"/static/;") {
+			t.Fatalf("%s: CSP %q", path, csp)
+		}
+		if resp.Header.Get("X-Frame-Options") != "" {
+			t.Fatalf("%s: a frame option would block the full view's own previews", path)
+		}
 	}
 }
 

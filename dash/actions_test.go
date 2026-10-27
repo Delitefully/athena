@@ -56,7 +56,7 @@ func TestAnAnswerIsQueuedAndHidesItsAskAtOnce(t *testing.T) {
 		t.Fatal("the answered ask is still on the page")
 	}
 	got := queued(t, dir)
-	if len(got) != 1 || got[0] != (Action{1, fixtureNow, "a5", "yes", "", false, "queued"}) {
+	if len(got) != 1 || got[0] != (Action{Seq: 1, TS: fixtureNow, Item: "a5", Option: "yes", Status: "queued"}) {
 		t.Fatalf("%+v", got)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, actionsFile))
@@ -71,7 +71,7 @@ func TestEveryKindOfAnswer(t *testing.T) {
 	for _, body := range []string{
 		`{"item": "a1", "discuss": true}`,
 		`{"item": "a2", "text": "  Thursday, and tell #design  "}`,
-		`{"item": "a3", "option": "dismiss"}`, // a note with no options gets ×
+		`{"item": "a5", "option": "no"}`, // an option of the item's, from its full view
 		`{"item": "w-abc-101", "discuss": true}`,
 		`{"item": "w-abc-101", "text": "rebase first"}`,
 	} {
@@ -80,7 +80,7 @@ func TestEveryKindOfAnswer(t *testing.T) {
 		}
 	}
 	got := queued(t, dir)
-	if len(got) != 5 || !got[0].Discuss || got[1].Text != "Thursday, and tell #design" || got[2].Option != "dismiss" || got[4].Item != "w-abc-101" {
+	if len(got) != 5 || !got[0].Discuss || got[1].Text != "Thursday, and tell #design" || got[2].Option != "no" || got[4].Item != "w-abc-101" {
 		t.Fatalf("%+v", got)
 	}
 	// A worker's row stays: it is the worker's state, not an ask.
@@ -221,7 +221,7 @@ func TestACompactedQueueKeepsCountingFromItsLastSeq(t *testing.T) {
 }
 
 func TestAStuckAnswerBringsItsAskBack(t *testing.T) {
-	s := Snapshot{Hooks: map[string]Hook{}, Asks: []Ask{{ID: "a1", Kind: "question", Text: "Ship?", Why: "the window closes at 5"}},
+	s := Snapshot{Hooks: map[string]Hook{}, Asks: []Ask{{ID: "a1", Kind: "decision", Next: "you", Name: "Ship it", Text: "Ship?", Why: "the window closes at 5"}},
 		Actions: []Action{{Seq: 1, TS: fixtureNow - stuckAfter + 1, Item: "a1", Discuss: true, Status: "queued"}}}
 	if v := Build(s, fixtureNow, ""); len(v.NeedsYou) != 0 || v.actionable["a1"] != nil {
 		t.Fatalf("hidden while athena has it queued: %+v", v.NeedsYou)
@@ -241,51 +241,59 @@ func TestAStuckAnswerBringsItsAskBack(t *testing.T) {
 
 func TestWhatEachRowOffers(t *testing.T) {
 	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
+	// A decision: Take rec, Snooze and Open on its row; every option, Discuss, Reply and "Don't ask me this again"
+	// in its full view, which answers for the same item.
 	a1 := v.actionable["a1"]
-	if a1 == nil || len(a1.Options) != 4 || !a1.Discuss || !a1.Reply || a1.Dismiss || !a1.Hides || a1.RowOptions() != nil {
-		t.Fatalf("a question with a body: its four options (in its panel only), Discuss and Reply: %+v", a1)
+	if a1 == nil || len(a1.Options) != 4 || !a1.Discuss || !a1.Reply || !a1.Rule || a1.Dismiss || !a1.Hides || a1.RowOptions() != nil ||
+		a1.TakeRec == nil || a1.TakeRec.ID != "later" || !a1.Snooze || a1.Done || a1.Open != "/item/a1" {
+		t.Fatalf("a decision: %+v", a1)
 	}
-	if a5 := v.actionable["a5"]; a5 == nil || len(a5.RowOptions()) != 2 {
-		t.Fatalf("two options show on the row: %+v", a5)
+	if a5 := v.actionable["a5"]; a5 == nil || a5.RowOptions() != nil || a5.TakeRec.Label != "Close it" {
+		t.Fatalf("its options are its full view's: %+v", a5)
 	}
-	if n := v.actionable["a3"]; n == nil || len(n.Options) != 0 || n.Discuss || n.Reply || !n.Dismiss {
-		t.Fatalf("a note with no options: × only: %+v", n)
+	// A result: Done, Snooze and Open; no answer for athena.
+	if n := v.actionable["a3"]; n == nil || !n.Done || !n.Snooze || n.Discuss || n.Reply || n.Rule || n.TakeRec != nil {
+		t.Fatalf("a result: %+v", n)
 	}
-	if w := v.actionable["w-abc-102"]; w == nil || !w.Discuss || !w.Reply || w.Dismiss || w.Hides || len(w.Options) != 0 {
+	// A default athena applied on its own: Done or Undo.
+	if n := v.actionable["a8"]; n == nil || !n.Done || n.Undo != "Re-run" || !n.allows(undoDefault, "", false) {
+		t.Fatalf("an applied default: %+v", n)
+	}
+	if v.actionable["a3"].allows(undoDefault, "", false) || v.actionable["a1"].allows(undoDefault, "", false) {
+		t.Fatal("undo-default only where a default applied")
+	}
+	if w := v.actionable["w-abc-102"]; w == nil || !w.Discuss || !w.Reply || w.Dismiss || w.Hides || len(w.Options) != 0 || w.Open != "" {
 		t.Fatalf("a live worker: Discuss and Reply, no dismiss: %+v", w)
 	}
-	if v.actionable["w-abc-098"] != nil || v.actionable["pr-acme-web-906"] != nil || v.actionable["rr-acme-web-6170"] != nil {
-		t.Fatal("no actions on a retired worker's Done row, an In progress PR row or a review request")
+	if v.actionable["w-abc-100"] != nil || v.actionable["pr-acme-web-906"] != nil || v.actionable["rr-acme-web-6170"] != nil || v.actionable["a10"] != nil {
+		t.Fatal("no actions on a retired worker's Done row, an In flight PR row, a review request or a resolved item")
 	}
-	// The ask's why shows in the row's detail line, always visible.
-	for _, it := range v.NeedsYou {
-		if it.ID == "ask-a1" && it.Detail != "ABC-111 touches the same export queue as ABC-101." {
-			t.Fatalf("%+v", it)
-		}
+	if it := find(v.NeedsYou, "Export queue start"); it.Detail != "ABC-111 touches the same export queue as ABC-101." {
+		t.Fatalf("an item's why shows in its detail line: %+v", it)
 	}
 }
 
 func TestPillsTakeThePlaceOfTheLabelLine(t *testing.T) {
 	_, base := start(t, copyFixture(t))
 	_, page := get(t, base+"/", "")
-	// An ask: the pills share a cell with its label line, so no space is reserved for them.
-	if !regexp.MustCompile(`<div class="swap has-acts"><p class="meta">athena asks</p><div class="acts options" data-item="a5" data-hides>`).MatchString(page) {
-		t.Error("an ask's pills are not in its label line's cell")
+	// An item: the one-click calls share a cell with its label line, so no space is reserved for them.
+	if !strings.Contains(page, `<div class="swap has-acts"><p class="meta"><span class="label">your call</span></p><div class="acts options" data-item="a5" data-hides>`+
+		`<button type="button" class="pill rec" data-option="yes" data-tip="Recommended: Close it">`) {
+		t.Error("an item's pills are not in its label line's cell")
+	}
+	if !strings.Contains(between(page, `<li id="ask-a5"`, `</li>`), `<a class="pill" href="/item/a5">`) {
+		t.Error("an item's row has no Open")
 	}
 	// A worker's row: they take the place of its whole state line.
 	if !regexp.MustCompile(`(?s)<li id="w-abc-101" .*?<div class="swap has-acts"><p class="meta">.*?</p><div class="acts" data-item="w-abc-101">`).MatchString(page) {
 		t.Error("a worker's pills are not in its state line's cell")
 	}
-	// A folded ask gets a label line of its own to swap with.
-	if !strings.Contains(page, `<div class="fold" id="ask-a3"><p>Approve and merge ABC-108</p><div class="swap has-acts"><p class="fold-label">note</p><div class="acts" data-item="a3" data-hides>`) {
-		t.Error("a folded ask's pills have no line to swap with")
-	}
 	// A row with no pills has no pill-height line.
-	if !regexp.MustCompile(`(?s)<li id="w-abc-098" .*?<div class="swap"><p class="meta">`).MatchString(page) {
+	if !regexp.MustCompile(`(?s)<li id="w-abc-100" .*?<div class="swap"><p class="meta">`).MatchString(page) {
 		t.Error("a retired row's line is not left as it is")
 	}
 	// Icon-only pills are named by aria-label (the tooltip's text), never a native title.
-	for _, want := range []string{`data-discuss aria-label="Discuss in Athena"`, `data-reply aria-label="Reply…"`, `data-option="dismiss" aria-label="Dismiss"`} {
+	for _, want := range []string{`data-discuss aria-label="Discuss in Athena"`, `data-reply aria-label="Reply…"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("missing %s", want)
 		}
