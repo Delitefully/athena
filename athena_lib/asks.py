@@ -205,7 +205,8 @@ _NAME_STOP = {"a", "an", "the", "to", "of", "on", "in", "for", "and", "or", "is"
 def derive_name(text) -> str:
     """A name for an item that has none (one from before names): the words before a leading "Name:", else the first
     few words that carry meaning. HQ renames it in triage (`athena item edit <id> --name`)."""
-    t = _NAME_SKIP.sub("", _LINK.sub(lambda m: m.group(1) or "", text or "")).strip()
+    t = _PAREN_TAIL.sub("", _LINK.sub(lambda m: m.group(1) or "", text or ""))  # "(rec B)" names nothing
+    t = _NAME_SKIP.sub("", t).strip()
     head, colon, _ = t.partition(":")
     words = head.split() if colon and 1 <= len(head.split()) <= NAME_WORDS_MAX else []
     if len(words) < NAME_WORDS_MIN:

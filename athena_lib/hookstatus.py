@@ -43,6 +43,13 @@ def parse_report(text):
     return None
 
 
+def prose_summary(message, report):
+    """The summary `athena status` and the dash show: the last SUMMARY_LIMIT characters of the prose before a parsed
+    ATHENA-REPORT line, never the report's JSON (the report itself is kept whole in `report`)."""
+    cut = message.rfind("ATHENA-REPORT ") if report else -1
+    return (message[:cut] if cut >= 0 else message).strip()[-SUMMARY_LIMIT:]
+
+
 def _file(name):
     return paths.ensure("workers") / f"{name}.json"
 
@@ -76,8 +83,7 @@ def apply(event, name):
     elif kind == "Stop":
         message = event.get("last_assistant_message") or ""
         report = parse_report(message)
-        cut = message.rfind("ATHENA-REPORT ") if report else -1
-        summary = (message[:cut] if cut >= 0 else message).strip()[-SUMMARY_LIMIT:]  # the prose, never the report's JSON
+        summary = prose_summary(message, report)
         status = (report or {}).get("status", "").upper()
         state = "done" if status in DONE else "blocked" if status in BLOCKED else "idle"
     elif kind == "Notification":

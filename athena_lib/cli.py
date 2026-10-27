@@ -207,7 +207,7 @@ def _read_text(path):
     return sys.stdin.read() if path == "-" else Path(os.path.expanduser(path)).read_text()
 
 
-ADD_USAGE = ('athena item add "<one-sentence title>" --name "<2-4 words>" [--kind decision|request|result|promise|incident] '
+ADD_USAGE = ('athena item add "<one-sentence title>" [--name "<2-4 words>"] [--kind decision|request|result|promise|incident] '
              '[--why ...] [--pr ...] [--body ... | --body-file <path|->] [--option label[:icon[:do]]] ... [--rec <option>] '
              '[--auto] [--next ...] [--due ...] [--words ...] [--request rN] [--worker w] [--link title|url] [--stakes ...] '
              '[--preview <file|dir>] ...')
@@ -244,17 +244,17 @@ def cmd_ask(a):
         if not a.args or len(a.args) > 1:
             print(ADD_USAGE, file=sys.stderr)
             return 2
-        if not a.name:
-            print("athena item add: --name is required: 2 to 4 words the human would recognise "
-                  '("Disk cleanup", "System One on clouds")\n' + ADD_USAGE, file=sys.stderr)
-            return 2
         kind = a.kind or ("result" if a.note else "decision" if a.question else None)
         body = _read_text(a.body_file) if a.body_file else a.body or ""
         f = _fields(a)
-        print(asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or [],
+        new = asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or [],
                        name=f["name"], next=f["next"], due=f["due"], words=f["words"], requests=f["requests"],
                        workers=f["workers"], links=f["links"], rec=f["rec"], auto=a.auto, stakes=f["stakes"] or (),
-                       fyi=a.fyi))
+                       fyi=a.fyi)
+        print(new)
+        if not a.name:
+            print(f"athena item: named it {asks.show(new)['name']!r} from its title; give it 2 to 4 words the human would "
+                  f"recognise: athena item edit {new} --name \"...\"", file=sys.stderr)
     elif a.action == "edit":
         if len(a.args) != 1:
             print("athena item edit <id> [--name ...] [--title ...] [--why ...] [--kind ...] [--next ...] [--due ...|none] "
@@ -542,7 +542,8 @@ def parser():
     k = s.add_mutually_exclusive_group()
     k.add_argument("--question", action="store_true", help="add: a decision (the default when the title has a ?)")
     k.add_argument("--note", action="store_true", help="add: a result, for the human to read (the default without a ?)")
-    s.add_argument("--name", help="add, edit: 2 to 4 words the human would recognise; add requires it")
+    s.add_argument("--name", help="add, edit: 2 to 4 words the human would recognise (add derives one from the title "
+                                  "without it, marked for renaming)")
     s.add_argument("--kind", choices=list(asks.KINDS), help="add, edit: what it is (default: decision with a ?, else result)")
     s.add_argument("--title", help="edit: the new title, one sentence")
     s.add_argument("--why", default=None, help="add, edit: one sentence, shown under it")

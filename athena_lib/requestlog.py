@@ -20,10 +20,12 @@ from athena_lib import asks, paths
 TEXT_MAX = 4000  # characters of a prompt kept; a pasted log is cut
 CHECK_DAYS = 7
 SHOW_MAX = 160  # characters of a request the check prints
-# Prompts athena submits into HQ itself. hq.py's routines and the mod's wake (hooks/watch-mod/core.ts promptText)
-# start this way; a prompt athena submits later must start with one of these too, or be logged as the human's.
-NOT_HUMAN = ("athena watch ", "athena watch:", "athena fallback sweep", "Start your HQ routine", "HQ restarted:",
-             "Fresh HQ after", "/", "<", "dash-queue ", "slack-new ")
+# NOT_HUMAN: the prefixes of every prompt athena submits into HQ itself, never logged as the human's: the watch mod's
+# wake (hooks/watch-mod/core.ts promptText), hq.py's start, restart and rotation routines, athena doctor's resume and
+# rotate prompts, the fallback sweep's cron, slash commands, and what Claude Code wraps in a tag. A prompt athena
+# submits must start with one of these, or it is logged as a request; other modules import this list.
+NOT_HUMAN = ("athena watch ", "athena watch:", "athena doctor", "athena fallback sweep", "Start your HQ routine",
+             "HQ restarted:", "Fresh HQ after", "/", "<", "dash-queue ", "slack-new ")
 _ID = re.compile(r"^r([1-9][0-9]{0,9})$")
 
 

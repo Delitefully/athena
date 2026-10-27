@@ -40,7 +40,7 @@ class AsksTest(unittest.TestCase):
 
     def run_cli(self, *argv):
         if argv[:1] == ("add",) and "--name" not in argv:
-            argv = (*argv, "--name", "Test item")  # test_add_requires_a_name checks it is required
+            argv = (*argv, "--name", "Test item")  # without one, add derives a name and hints (tests/test_items.py)
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["ask", *argv])

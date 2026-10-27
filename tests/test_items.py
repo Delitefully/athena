@@ -43,18 +43,23 @@ class Base(unittest.TestCase):
 
 
 class NamesAndKindsTest(Base):
-    def test_add_requires_a_name_of_two_to_four_words(self):
-        code, _, err = self.cli("item", "add", "Pick the Copilot hosts? (rec both)")
-        self.assertEqual(code, 2)
-        self.assertIn("--name is required", err)
+    def test_add_names_an_item_two_to_four_words(self):
+        # Without --name, a name is derived from the title, marked for renaming, with a hint (HQ's loaded skill may be
+        # one from before names: a hard failure mid-session costs a round trip).
+        code, out, err = self.cli("item", "add", "Pick the Copilot hosts? (rec both)")
+        self.assertEqual((code, out), (0, "a1\n"))
+        self.assertIn("athena item edit a1 --name", err)
+        self.assertEqual((asks.show("a1")["name"], asks.show("a1")["name_derived"]), ("Pick Copilot hosts", True))
+        self.assertIn("name derived: rename it", self.cli("item")[1])
+        self.assertNotIn("name_derived", asks.edit("a1", name="Copilot hosts"))
         for bad in ("Copilot", "one two three four five", "x" * 40 + " y"):
             with self.subTest(name=bad):
                 code, _, err = self.cli("item", "add", "Pick the hosts?", "--name", bad)
                 self.assertEqual(code, 2)
                 self.assertIn("2 to 4 words", err)
-        code, out, _ = self.cli("item", "add", "Pick the Copilot hosts? (rec both)", "--name", "Copilot  hosts")
-        self.assertEqual((code, out), (0, "a1\n"))
-        self.assertEqual(asks.show("a1")["name"], "Copilot hosts")
+        code, out, err = self.cli("item", "add", "Pick the Copilot hosts? (rec both)", "--name", "Copilot  hosts")
+        self.assertEqual((code, out, err), (0, "a2\n", ""))
+        self.assertEqual(asks.show("a2")["name"], "Copilot hosts")
         # `athena ask` is the same command, and the list leads with the name, never a bare id.
         code, out, _ = self.cli("ask")
         self.assertTrue(out.startswith("Copilot hosts (a1, decision, next: you)"), out)
@@ -271,6 +276,7 @@ class RequestLogTest(Base):
                        "<cross-session-message from=\"x\">hi</cross-session-message>", "<task-notification>done</task-notification>",
                        "HQ restarted: run your session-start routine", "Fresh HQ after `athena hq rotate`: load the skill",
                        "Start your HQ routine: run `athena status`", "athena fallback sweep: run the sweep subagent",
+                       "athena doctor: HQ was resumed; run your session start",
                        "", "   "):
             with self.subTest(prompt=prompt):
                 self.assertIsNone(self.hook(prompt))
