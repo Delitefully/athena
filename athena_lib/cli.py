@@ -308,9 +308,9 @@ def cmd_hq(a):
         return 0
     if a.action == "restart":
         if a.child:
-            _print(hq.restart_now(update=not a.no_update))
+            _print(hq.restart_now(update=not a.no_update, force_update=a.update))
         else:
-            print(hq.restart(update=not a.no_update)["message"])
+            print(hq.restart(update=not a.no_update, force_update=a.update)["message"])
         return 0
     stop = _first_run()
     if stop is not None:
@@ -450,8 +450,9 @@ def parser():
     s = sub.add_parser("hq", help="create or focus the chief of staff's space; `restart` restarts its Claude in place, "
                                   "`rotate` replaces it with a fresh conversation that starts from a handoff",
                        description="athena hq: create or focus HQ. "
-                                   "restart: update Claude Code and plugins, exit HQ's Claude and resume its conversation "
-                                   "in the same pane. "
+                                   "restart: update Claude Code and plugins (unless they last ran without a warning "
+                                   "within config hq_update_interval_hours, 6 by default), exit HQ's Claude and resume "
+                                   "its conversation in the same pane. "
                                    "rotate: write the handoff (handoff.md in the state dir: fleet, PRs, open asks, "
                                    "in-flight threads, notes tail, standing orders) from athena's state, then, once HQ is "
                                    "idle, /exit its Claude (its conversation stays resumable) and start a NEW HQ "
@@ -459,7 +460,11 @@ def parser():
                                    "No updates; detached, like restart; log in logs/hq-restart.log.")
     s.add_argument("action", choices=["restart", "rotate"], nargs="?",
                    help="restart: resume the same conversation; rotate: a fresh conversation from a handoff")
-    s.add_argument("--no-update", action="store_true", help="restart: skip claude update and the plugin updates")
+    updates = s.add_mutually_exclusive_group()
+    updates.add_argument("--no-update", action="store_true", help="restart: skip claude update and the plugin updates")
+    updates.add_argument("--update", action="store_true",
+                         help="restart: run claude update and the plugin updates even if they ran within config "
+                              "hq_update_interval_hours")
     s.add_argument("--threads", metavar="FILE|-",
                    help="rotate: the in-flight threads HQ wrote for the handoff (default: threads.md in the state dir)")
     s.add_argument("--dry-run", action="store_true",

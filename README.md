@@ -45,7 +45,7 @@ and `athena` brings you back.
 - **Review and merge:** athena checks CI and has a fresh reviewer read each PR. Then you merge, or tell athena to.
 - **`prefix+shift+c`** (or `athena hq`): open or focus athena's space.
 - **`prefix+shift+b`** (or `athena board toggle`): show or hide the worker columns. To select text in a column, hold Shift while you drag (the column's `herdr terminal attach` takes the mouse; Ghostty and most terminals let Shift through to their own selection).
-- **`prefix+shift+h`** (or `athena hq restart`): update Claude Code and the plugins, then restart athena in place.
+- **`prefix+shift+h`** (or `athena hq restart`): update Claude Code and the plugins (at most every 6 hours; `--update` forces it), then restart athena in place.
 - **`athena hq rotate`**: replace a long HQ conversation with a fresh one that starts from a handoff written from athena's state, instead of compacting it again.
 - **`athena dash open`:** the dashboard in your browser: what needs you, what is in progress, what is done.
 - **Remote Control:** athena's own session always connects to Remote Control, so you can reach it from your phone or claude.ai/code; workers never do, whatever `remoteControlAtStartup` says in `~/.claude/settings.json`. A worker that was already running keeps its connection until it next starts.
