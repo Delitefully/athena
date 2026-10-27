@@ -11,7 +11,7 @@ from pathlib import Path
 
 from athena_lib import config, gitops, herdr, ledger, paths, retire
 
-HARD_CAP = 6
+HARD_CAP = paths.HARD_CAP
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
 NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 READY = {"idle", "done"}  # herdr: both mean ready for input; which one depends on seen state
