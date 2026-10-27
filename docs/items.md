@@ -57,6 +57,10 @@ and no answer on the dashboard for 2 hours). The row says when: "athena takes th
 
 - Never for a call marked `security`, `customer`, `money` or `one-way`: `athena item` refuses `--auto` on one, marking
   the stakes later takes the default off, and the dashboard skips one even if the file says otherwise.
+  Stakes it cannot read (a string instead of a list, another case, an unknown value) block the default too: an
+  unknown risk is never auto.
+- Any answer of yours (an option, a reply, even Discuss) turns the default off for good, so a call you are still
+  discussing never applies a day later.
 - Applying it queues the recommended option for HQ, marked `auto`, exactly as your own answer would be. HQ acts on it,
   and the item moves to **Ready for you**, saying what athena took, with **Done** and **Undo**. Undo queues
   `undo-default` for HQ, which reverses it; the decision is then yours again, its default off.

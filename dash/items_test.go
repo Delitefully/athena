@@ -330,3 +330,46 @@ func TestNeedsYouFoldsPastSevenRows(t *testing.T) {
 		t.Fatalf("%s", needs)
 	}
 }
+
+// Review round 1: stakes the dash cannot read block a default (fail closed): a string, the wrong case, an unknown
+// value, a wrong type. Only an absent or empty stakes list lets auto through.
+func TestStakesItCannotReadBlockTheDefault(t *testing.T) {
+	for _, stakes := range []string{`"security"`, `["Security"]`, `["secrets"]`, `[7]`, `{"security": true}`, `["security", "secrets"]`, `"x"`, `true`} {
+		var m map[string]any
+		json.Unmarshal([]byte(`{"items": [{"id": "a1", "kind": "decision", "name": "Rotate key", "text": "Rotate it?", "rec": "yes", "auto": true,
+			"stakes": `+stakes+`, "options": [{"id": "yes", "label": "Yes"}], "created": 1791400000}]}`), &m)
+		a := parseAsks(m)[0]
+		if a.Auto {
+			t.Errorf("stakes %s: auto", stakes)
+		}
+		if got := dueDefaults(Snapshot{Asks: []Ask{a}}, fixtureNow+2*defaultAfter); len(got) != 0 {
+			t.Errorf("stakes %s: the default applied", stakes)
+		}
+	}
+	for _, stakes := range []string{`[]`, `null`} {
+		var m map[string]any
+		json.Unmarshal([]byte(`{"items": [{"id": "a1", "kind": "decision", "name": "Re-run e2e", "text": "Re-run?", "rec": "yes", "auto": true,
+			"stakes": `+stakes+`, "options": [{"id": "yes", "label": "Yes"}], "created": 1791400000}]}`), &m)
+		if a := parseAsks(m)[0]; !a.Auto {
+			t.Errorf("stakes %s: no stakes, yet not auto", stakes)
+		}
+	}
+}
+
+// Review round 1: an auto answer athena has done, or the human undid, no longer holds its item in Ready for you: once
+// the Undo is handled (applied and auto gone from the item), it is the human's call again, in Needs you.
+func TestAHandledAutoAnswerLeavesReadyForYou(t *testing.T) {
+	a := decisionWithDefault()
+	a.Auto = false // athena handled the Undo: the default is off and nothing is applied
+	for _, st := range []string{"done", "cancelled"} {
+		s := Snapshot{Asks: []Ask{a}, Actions: []Action{{Seq: 1, TS: fixtureNow - 600, Item: "a1", Option: "re-run", Auto: true, Status: st}}}
+		v := Build(s, fixtureNow, "")
+		if ids(v.Ready) != "" || ids(v.NeedsYou) != "a1" {
+			t.Errorf("%s: ready %q needs %q", st, ids(v.Ready), ids(v.NeedsYou))
+		}
+	}
+	s := Snapshot{Asks: []Ask{a}, Actions: []Action{{Seq: 1, TS: fixtureNow - 600, Item: "a1", Option: "re-run", Auto: true, Status: "queued"}}}
+	if v := Build(s, fixtureNow, ""); ids(v.Ready) != "a1" {
+		t.Errorf("a queued auto answer shows in Ready for you: %q", ids(v.Ready))
+	}
+}

@@ -122,11 +122,20 @@ def _write_atomic(target, text):
     os.replace(tmp, target)  # the dash never reads it half-written
 
 
-def _read():
+def _read(strict=False):
+    """needs-you.json's items. A missing file is none; one that does not parse reads as none too, unless `strict`:
+    every writer reads strictly, so a file cut off mid-write or broken by hand is never overwritten (and its ids
+    never reused against actions.jsonl and previews/)."""
     try:
         data = json.loads(asks_file().read_text())
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {"next": 1, "items": []}
+    except (OSError, ValueError):
+        if strict:
+            raise AskError(f"{asks_file()} is unreadable: fix it or move it aside; nothing was written to it")
+        return {"next": 1, "items": []}
+    if strict and not (isinstance(data, dict) and isinstance(data.get("items", []), list)):
+        raise AskError(f"{asks_file()} is not an items file: fix it or move it aside; nothing was written to it")
     items = [i for i in data.get("items", []) if isinstance(i, dict)] if isinstance(data, dict) else []
     nxt = data.get("next") if isinstance(data, dict) and isinstance(data.get("next"), int) else 1
     return {"next": max(nxt, 1), "items": items}
@@ -715,7 +724,7 @@ def add(text, kind=None, why="", pr=None, options=(), body="", previews=(), name
     incoming = _copy_previews(plan) if plan else None
     try:
         with _locked():
-            data = _read()
+            data = _read(strict=True)
             item = {"id": f"a{data['next']}", **item, "created": int(now), "updated": int(now)}
             _log(item, "filed", now)
             if fyi:
@@ -744,7 +753,7 @@ def _edit(item_id, change, now=None):
     now = time.time() if now is None else now
     migrate_items()
     with _locked():
-        data = _read()
+        data = _read(strict=True)
         item = next((i for i in data["items"] if i.get("id") == item_id), None)
         if item is None:
             raise AskError(f"no item {item_id}")
@@ -956,13 +965,22 @@ def done(item_id, keep=False, note="", now=None):
         seqs = [a["seq"] for a in settled]
         if seqs:
             _append([{"seq": s, "ts": now, "status": "done"} for s in seqs])
-        data = _read()
+        try:
+            data = _read(strict=True)
+        except AskError:
+            if item_id.startswith(("w-", "pr:")):
+                _compact(now)
+                return {"item": item_id, "resolved": False, "done": seqs}  # its answers are done; no item to write
+            raise
         item = next((i for i in data["items"] if i.get("id") == item_id), None)
         if item is not None and is_open(item):
             normalize(item)
             labels = {o.get("id"): o.get("label") for o in item.get("options") or []}
             auto = [a for a in settled if a.get("auto")]
             undone = [a for a in settled if a.get("option") == UNDO_DEFAULT]
+            human = [a for a in settled if not a.get("auto") and a.get("option") != UNDO_DEFAULT]
+            if human and item.pop("auto", None):  # any answer of theirs, a discuss or a reply too: theirs for good
+                _log(item, "default off: you answered", now)
             if undone:
                 item.pop("applied", None)
                 item.pop("auto", None)

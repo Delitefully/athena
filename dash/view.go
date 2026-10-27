@@ -405,7 +405,7 @@ func placeItems(v *View, s Snapshot, now float64) {
 	queued := waiting(s.Actions)
 	auto := map[string]Action{}
 	for _, a := range s.Actions {
-		if a.Auto && a.Status != "cancelled" {
+		if a.Auto && a.Status == "queued" { // done or undone: the item's applied (or gone) says the rest
 			auto[a.Item] = a
 		}
 	}

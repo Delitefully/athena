@@ -71,8 +71,10 @@ class AsksTest(unittest.TestCase):
                 self.assertEqual(code, 2, err)
                 self.assertIn("Discuss in Athena", err)
         self.assertFalse(asks.asks_file().exists())
-        # A note has no Discuss in Athena, so its own Discuss option stays.
-        self.assertEqual(self.run_cli("add", "Shipping at 3pm", "--note", "--option", "Discuss")[:2], (0, "a1\n"))
+        # A note with an option that asks for a reply is a decision, which has Discuss in Athena already; one whose
+        # options need nothing is a result, which has none, so its own Discuss option stays.
+        self.assertEqual(self.run_cli("add", "Shipping at 3pm", "--note", "--option", "Discuss")[0], 2)
+        self.assertEqual(self.run_cli("add", "Shipping at 3pm", "--note", "--option", "Discuss::dismiss")[:2], (0, "a1\n"))
 
     def test_add_refuses_what_the_dashboard_cannot_show(self):
         for argv in (["add", "x?", "--option", "a", "--option", "b", "--option", "c"],

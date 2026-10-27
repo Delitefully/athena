@@ -83,14 +83,26 @@ func parseItemFields(a *Ask, im map[string]any) {
 	if !a.offers(a.Rec) {
 		a.Rec = ""
 	}
-	if list, ok := im["stakes"].([]any); ok {
+	// Stakes fail closed: anything but a list of the known lower-case values (a string, another case, an unknown
+	// value, another type) marks the call as one whose risk is unknown, and no default applies to it.
+	unreadable := false
+	switch list := im["stakes"].(type) {
+	case nil:
+	case []any:
 		for _, v := range list {
 			if st, ok := v.(string); ok && itemStakes[st] {
 				a.Stakes = append(a.Stakes, st)
+			} else {
+				unreadable = true
 			}
 		}
+	default:
+		unreadable = true
 	}
-	a.Auto = im["auto"] == true && a.Rec != "" && len(a.Stakes) == 0 && a.Kind == "decision"
+	if unreadable && len(a.Stakes) == 0 {
+		a.Stakes = []string{"unknown"} // shown as such in its full view; never auto
+	}
+	a.Auto = im["auto"] == true && a.Rec != "" && len(a.Stakes) == 0 && !unreadable && a.Kind == "decision"
 	a.Created, a.Updated = num(im, "created"), num(im, "updated")
 	if a.Updated < a.Created {
 		a.Updated = a.Created

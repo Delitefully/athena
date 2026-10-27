@@ -244,7 +244,7 @@ def cmd_ask(a):
         if not a.args or len(a.args) > 1:
             print(ADD_USAGE, file=sys.stderr)
             return 2
-        kind = a.kind or ("result" if a.note else "decision" if a.question else None)
+        kind = a.kind or ("note" if a.note else "decision" if a.question else None)  # a note with options is a decision
         body = _read_text(a.body_file) if a.body_file else a.body or ""
         f = _fields(a)
         new = asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or [],
@@ -263,7 +263,7 @@ def cmd_ask(a):
             return 2
         f = _fields(a)
         if a.note or a.question:
-            f["kind"] = "result" if a.note else "decision"
+            f["kind"] = "note" if a.note else "decision"  # a note with options is a decision
         _print(asks.edit(a.args[0], text=a.title, why=a.why, pr=a.pr, options=a.option,
                          auto=a.auto if a.auto or a.no_auto else None, **f))
     elif a.action == "body":

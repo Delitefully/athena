@@ -227,6 +227,46 @@ class DefaultsTest(Base):
         self.assertTrue(asks.queue(now=T + 60)[0]["rule"])
 
 
+class ReviewRound1Test(Base):
+    def test_a_human_answer_turns_the_default_off_for_good(self):
+        # Discuss, then HQ keeps the item open (the skill's flow): the rec they were still discussing must never apply
+        # a day later, once compaction has dropped the answer's lines.
+        for n, answered in enumerate(({"discuss": True}, {"text": "wait for the CI fix"}, {"option": "leave-it"}), 1):
+            with self.subTest(answered=answered):
+                a1 = asks.add("Re-run it?", name="Flaky e2e", options=["Re-run", "Leave it"], rec="re-run", auto=True, now=T)
+                answer(1000 * n, a1, ts=T, **answered)  # past any seq compaction keeps
+                asks.done(a1, keep=True, now=T + 60)
+                item = asks.show(a1)
+                self.assertNotIn("auto", item)
+                self.assertIn("default off: you answered", [l["text"] for l in item["log"]])
+                asks.done("pr:acme/web#1", now=T + asks.KEEP_DONE + 120)  # compaction a day on
+                self.assertNotIn("auto", asks.show(a1))
+
+    def test_nothing_is_written_over_a_needs_you_json_it_cannot_read(self):
+        asks.add("Ship?", name="Ship it")
+        broken = '{"next": 2, "items": [{"id": "a1", "text": "Ship?"'  # cut off mid-write, or broken by hand
+        asks.asks_file().write_text(broken)
+        answer(1, "pr:acme/web#1", option="recheck")
+        result = asks.done("pr:acme/web#1", now=T + 60)
+        self.assertEqual(result["done"], [1])  # the answer is still marked done
+        self.assertEqual(asks.asks_file().read_text(), broken)
+        for write in (lambda: asks.add("Next?", name="Next one"), lambda: asks.edit("a1", why="x"),
+                      lambda: asks.snooze("a1", "+2h"), lambda: asks.done("a1")):
+            with self.assertRaises(asks.AskError):
+                write()
+            self.assertEqual(asks.asks_file().read_text(), broken)
+
+    def test_a_note_with_options_stays_a_decision(self):
+        code, out, _ = self.cli("ask", "add", "Approve the release notes", "--note", "--name", "Release notes",
+                                "--option", "Approve")
+        self.assertEqual(code, 0)
+        self.assertEqual(asks.show(out.strip())["kind"], "decision")
+        code, out, _ = self.cli("ask", "add", "The quota resets at 14:00", "--note", "--name", "Quota reset")
+        self.assertEqual(asks.show(out.strip())["kind"], "result")
+        code, out, _ = self.cli("ask", "add", "Not now", "--note", "--name", "Dismiss only", "--option", "Ok:x:dismiss")
+        self.assertEqual(asks.show(out.strip())["kind"], "result")
+
+
 class MigrationTest(Base):
     def test_a_real_shaped_needs_you_json_loses_nothing(self):
         shutil.copy(FIXTURE, asks.asks_file())  # a copy: never the live one
