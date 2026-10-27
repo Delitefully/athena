@@ -2,7 +2,8 @@
 
 Claude Code draws its input box between two horizontal rules, the first line starting with `❯`. With nothing typed
 it shows a placeholder in dim (SGR 2), which a plain-text read cannot tell from typed text, so the screen is read
-with its ANSI styling (`herdr agent read --format ansi`) and dim spans are dropped. athena never types into a pane
+with its ANSI styling (`herdr agent read --format ansi`) and dim spans are dropped, as are inverse ones (a drawn
+cursor). A one-letter message under the cursor reads as empty: the price of never reading a cursor as typing. athena never types into a pane
 whose box holds text: an `/exit` or a prompt sent then joins the human's half-typed message.
 """
 import os
@@ -22,11 +23,13 @@ def _plain(line) -> str:
 
 
 def _undimmed(line) -> str:
-    """`line` without the text drawn dim. SGR 2 starts dim, 0, 22 or an empty reset end it; the arguments of an
-    extended colour (38/48/58;5;n and ;2;r;g;b) are skipped, so a truecolour 2 is not read as dim."""
-    out, dim, at = [], False, 0
+    """`line` without the text drawn dim or inverse. Dim (SGR 2) is the empty box's placeholder; inverse (SGR 7) is
+    a drawn cursor, which may sit on the placeholder's first letter or after the text. 0 or an empty reset ends
+    both, 22 dim, 27 inverse; the arguments of an extended colour (38/48/58;5;n and ;2;r;g;b) are skipped, so a
+    truecolour 2 or 7 is not read as either."""
+    out, dim, inverse, at = [], False, False, 0
     for m in _SGR.finditer(line):
-        if not dim:
+        if not (dim or inverse):
             out.append(line[at:m.start()])
         at = m.end()
         params = re.split("[;:]", m.group()[2:-1])
@@ -36,12 +39,18 @@ def _undimmed(line) -> str:
             if p in ("38", "48", "58"):
                 i += 5 if params[i + 1:i + 2] == ["2"] else 3
                 continue
-            if p in ("", "0", "22"):
+            if p in ("", "0"):
+                dim = inverse = False
+            elif p == "22":
                 dim = False
+            elif p == "27":
+                inverse = False
             elif p == "2":
                 dim = True
+            elif p == "7":
+                inverse = True
             i += 1
-    if not dim:
+    if not (dim or inverse):
         out.append(line[at:])
     return "".join(out)
 

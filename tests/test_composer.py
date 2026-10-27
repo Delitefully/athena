@@ -30,6 +30,18 @@ class TypedTest(unittest.TestCase):
         screen = "\n".join([RULE, "❯\xa0\x1b[38;2;200;200;200mfix the flag\x1b[0m", RULE])
         self.assertEqual(composer.typed(screen), "fix the flag")
 
+    def test_a_cursor_drawn_over_the_placeholder_is_not_typing(self):
+        screen = "\n".join([RULE, '❯\xa0\x1b[7mT\x1b[27m\x1b[2mry "create a util"\x1b[0m', RULE])
+        self.assertEqual(composer.typed(screen), "")
+        screen = "\n".join([RULE, '❯\xa0\x1b[0m\x1b[7m \x1b[0m\x1b[2mTry "create a util"\x1b[0m', RULE])
+        self.assertEqual(composer.typed(screen), "")
+
+    def test_a_cursor_after_typed_text_is_not_part_of_it(self):
+        screen = "\n".join([RULE, "❯\xa0hello\x1b[7m \x1b[27m", RULE])
+        self.assertEqual(composer.typed(screen), "hello")
+        screen = "\n".join([RULE, "❯\xa0\x1b[38;2;7;7;7mhel\x1b[7ml\x1b[0mo", RULE])
+        self.assertEqual(composer.typed(screen), "helo")  # the letter under the cursor is the one lost
+
     def test_a_message_over_several_lines_is_all_read(self):
         screen = "\n".join([RULE, "❯\xa0first line of a long", "  message the human typed", RULE])
         self.assertEqual(composer.typed(screen), "first line of a long message the human typed")

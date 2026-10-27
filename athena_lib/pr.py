@@ -343,7 +343,7 @@ def default_branch(slug):
     return branch if re.fullmatch(r"[\w./-]{1,100}", branch) else None
 
 
-def completed_runs(slug, branch, limit=40):
+def completed_runs(slug, branch, limit=100):
     """The latest completed workflow runs on `branch`, newest first: [{"id", "attempt", "workflow", "created",
     "conclusion"}], or None when gh cannot say (rate limit, network). A pull request's run is left out: its head
     branch can be a fork's `main`."""

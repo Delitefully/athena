@@ -194,13 +194,13 @@ def cmd_board(a):
 
 
 def _dash_line(rec, note=""):
-    hq = f", lives while HQ pid {rec['hq_pid']} does" if rec.get("hq_pid") else ", no HQ found: it runs until `athena dash off`"
+    hq = f", lives while HQ pid {rec['hq_pid']} does" if rec.get("hq_pid") else ", runs until `athena dash off`"
     return f"dash {rec['url']} pid {rec['pid']}{hq}{note}"
 
 
 def cmd_dash(a):
     if a.action in ("on", "open"):
-        rec = dash.start()
+        rec = dash.start(hq=0)  # bound to no HQ: athena doctor and the dash service keep it up
         print(_dash_line(rec, "" if rec["started"] else " (already running)"))
         if a.action == "open":
             subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", rec["url"]], check=False)
