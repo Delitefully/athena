@@ -501,7 +501,8 @@ def parser():
     s.add_argument("--title")
     s.add_argument("--model", help="default: config `model` (athena config show)")
     s.add_argument("--effort", help="default: config `effort`")
-    s.add_argument("--force", action="store_true")
+    s.add_argument("--force", action="store_true",
+                   help=f"go past the cap (ATHENA_MAX_WORKERS, default 4), up to {spawn.HARD_CAP} live workers")
     s.add_argument("--no-setup", action="store_true")
     s.add_argument("--ultracode", action="store_true", help="turn ultracode on in the worker's settings (only when the human asks)")
     s.add_argument("--workflow-size", choices=["small", "medium", "large", "unrestricted"],
