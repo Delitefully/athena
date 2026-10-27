@@ -27,7 +27,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "report": hook.get("report"), "last_report": hook.get("last_report"),
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
            "pending": bool(worker.get("goal_pending")), "athena_review": worker.get("review"), "detail": None, "prompt": worker.get("prompt") if worker.get("goal_send") == "deliver" else None,
-           "socket_missing": sockets.worker_missing(name)}
+           "socket_missing": sockets.missing(name, hook.get("session_id"))}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})
