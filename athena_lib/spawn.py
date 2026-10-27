@@ -111,8 +111,11 @@ def build_goal(condition, name, brief):
     text = " ".join(condition.split())
     if text.startswith("/goal "):
         text = text[len("/goal "):]
-    suffix = (f" Your brief is {brief}; read it first. Report to the session named {paths.hq_name()} with SendMessage, "
-              f"and end your final message with an ATHENA-REPORT line.")
+    # The ATHENA-REPORT line is the report athena reads. SendMessage is a courtesy: when HQ isn't reachable
+    # (a restarted or re-logged HQ), a goal that required it would never be met and the worker would loop.
+    suffix = (f" Your brief is {brief}; read it first. End your final message with an ATHENA-REPORT line: that line "
+              f"is the report, and the goal is met once it is written. Also try SendMessage to {paths.hq_name()} "
+              f"once; if it fails, don't retry.")
     return ("/goal " + text + suffix)[:3990]
 
 

@@ -436,3 +436,19 @@ class SetupEnvTest(unittest.TestCase):
 
     def test_the_plugin_ships_only_the_example_setup(self):
         self.assertEqual(sorted(p.name for p in (paths.PLUGIN_ROOT / "repos").iterdir()), ["example.setup"])
+
+
+class BuildGoalTest(unittest.TestCase):
+    def setUp(self):
+        self.env = helpers.EnvPatch({"ATHENA_HQ": "athena"})
+
+    def tearDown(self):
+        self.env.restore()
+
+    def test_the_report_line_is_the_report_and_sendmessage_is_try_once(self):
+        # A goal that required SendMessage was never met while HQ's messaging socket was gone: the worker looped.
+        goal = spawn.build_goal("Open the PR", "abc-1", "/briefs/abc-1.md")
+        self.assertTrue(goal.startswith("/goal Open the PR Your brief is /briefs/abc-1.md; read it first."))
+        self.assertIn("ATHENA-REPORT line: that line is the report, and the goal is met once it is written", goal)
+        self.assertIn("try SendMessage to athena once; if it fails, don't retry", goal)
+        self.assertNotIn("Report to the session named", goal)
