@@ -69,6 +69,18 @@ class HqTest(unittest.TestCase):
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["pane"], "w8:p1")
         self.assertFalse(paths.claim_file(str(self.cwd)).exists())
 
+    def test_hq_allow_goes_into_hqs_settings_alone(self):
+        from athena_lib import config
+        config.write({**config.DEFAULTS, "projects_dir": str(self.cwd), "hq_allow": ["Bash(gh pr ready *)", 3]})
+        write_scenario(self.tmp.name, [{"match": ["workspace", "create"], "stdout": CREATED}])
+        hq.hq(cwd=str(self.cwd), start_board=False)
+        start = next(c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "start"])
+        settings = json.loads(Path(start[start.index("--settings") + 1]).read_text())
+        self.assertEqual(settings["permissions"], {"allow": ["Bash(gh pr ready *)"]})
+
+    def test_no_hq_allow_no_permissions(self):
+        self.assertNotIn("permissions", json.loads(Path(hq._claude_args()[-1]).read_text()))
+
     def test_focuses_existing(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8"}))
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent": "claude", "name": "athena"}}}}])

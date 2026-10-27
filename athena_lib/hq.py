@@ -37,15 +37,27 @@ def _claude_args(write=True):
     # renders them; without it every link in HQ (the status band's "open dash →" and #n among them) shows its raw URL.
     # remoteControlAtStartup: HQ is the one session on Remote Control, even if the user setting goes (workers: off).
     if write:
-        settings.write_text(json.dumps({"crossSessionInbound": "accept", "remoteControlAtStartup": True,
-                                        "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(),
-                                                "ATHENA_STATE_DIR": str(paths.state_dir()), "FORCE_HYPERLINK": "1"}},
-                                       indent=2))
+        data = {"crossSessionInbound": "accept", "remoteControlAtStartup": True,
+                "env": {"ATHENA_ROLE": "hq", "ATHENA_HQ": paths.hq_name(), "ATHENA_STATE_DIR": str(paths.state_dir()),
+                        "FORCE_HYPERLINK": "1"}}
+        allow = _hq_allow()
+        if allow:
+            data["permissions"] = {"allow": allow}
+        settings.write_text(json.dumps(data, indent=2))
     args = ["--name", paths.hq_name(), "--append-system-prompt-file", str(paths.PLUGIN_ROOT / "hq.md"),
             "--settings", str(settings)]
     if os.environ.get("ATHENA_PLUGIN_DIR"):
         args += ["--plugin-dir", os.environ["ATHENA_PLUGIN_DIR"]]
     return args
+
+
+def _hq_allow() -> list:
+    """config hq_allow: permission rules for HQ's settings alone (never a worker's)."""
+    try:
+        rules = config.get("hq_allow") or []
+    except config.ConfigError:
+        return []
+    return [r for r in rules if isinstance(r, str) and r.strip()] if isinstance(rules, list) else []
 
 
 def _start_argv(pane, *extra, write=True):
