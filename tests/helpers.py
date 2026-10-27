@@ -37,7 +37,7 @@ class EnvPatch:
 
 
 def isolated_env(tmp):
-    """Point state and worktrees at a temp dir; herdr at the fake."""
+    """Point state, worktrees and Claude's config dir (its session registry) at a temp dir; herdr at the fake."""
     tmp = Path(tmp)
     return EnvPatch({
         "ATHENA_STATE_DIR": str(tmp / "state"),
@@ -48,4 +48,5 @@ def isolated_env(tmp):
         "ATHENA_EXIT_GRACE": "0",
         "ATHENA_HQ_SESSION_WAIT": "0",
         "ATHENA_SESSION_WAIT": "0",
+        "CLAUDE_CONFIG_DIR": str(tmp / "claude"),
     })

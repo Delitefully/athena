@@ -1,6 +1,6 @@
 """One status per worker, merged from several sources, most trusted first:
 the worker's ATHENA-REPORT, its hook state, git and PR state, then herdr's screen-read status."""
-from athena_lib import gitops, herdr, hookstatus, pr
+from athena_lib import gitops, herdr, hookstatus, pr, sockets
 
 URGENCY = {"blocked": 0, "done": 1, "exited": 1, "idle": 2, "starting": 3, "working": 3, "unknown": 3}
 
@@ -26,7 +26,8 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "state": hook.get("state") or "unknown", "summary": hook.get("summary", ""),
            "report": hook.get("report"), "last_report": hook.get("last_report"),
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
-           "pending": bool(worker.get("goal_pending")), "athena_review": worker.get("review"), "detail": None, "prompt": worker.get("prompt") if worker.get("goal_send") == "deliver" else None}
+           "pending": bool(worker.get("goal_pending")), "athena_review": worker.get("review"), "detail": None, "prompt": worker.get("prompt") if worker.get("goal_send") == "deliver" else None,
+           "socket_missing": sockets.worker_missing(name)}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})

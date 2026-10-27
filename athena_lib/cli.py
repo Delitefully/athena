@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, retire, spawn, status, watch
+from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, retire, sockets, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -60,6 +60,9 @@ def cmd_status(a):
         _print(rows)
         return 0
     _context_hint()
+    hq_socket = sockets.hq_status_line()
+    if hq_socket:
+        print(hq_socket)
     for w in left:
         print(f"{w['name']:<12}  failed    space not removed ({w.get('cleanup_error') or 'unknown'}): athena retire {w['name']}")
     if not rows:
@@ -85,6 +88,8 @@ def cmd_status(a):
             bits.append("goal pending" + (f" ({r['detail']})" if r.get("detail") else ""))
         elif (r.get("prompt") or "").startswith(("sending", "unconfirmed")):
             bits.append(f"goal {r['prompt']} (check its pane; do not resend blindly)")
+        if r.get("socket_missing"):
+            bits.append(f"messaging socket missing ({r['socket_missing']}): relaunch it")
         print("  ".join(bits))
         if r.get("summary"):
             print("    " + r["summary"].replace("\n", " ")[-160:])
