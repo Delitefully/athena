@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -346,10 +347,39 @@ class HqResumeHookTest(unittest.TestCase):
         # `claude -p --resume X` from HQ's Bash, or a nested session that compacts: same env, same pane, another id.
         for source in ("resume", "compact", "clear", "startup"):
             self.hq_session("hq-1")
-            self.start("nested-9", source)
+            with mock.patch.object(hookstatus, "nested", return_value=True):  # another Claude above it
+                self.start("nested-9", source)
             self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1", source)
         self.assertEqual(self.reports(), [])
         self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_hqs_own_clear_registers_its_new_id_with_herdr(self):
+        self.hq_session("hq-1")
+        with mock.patch.object(hookstatus, "nested", return_value=False):
+            self.start("post-clear", "clear")
+        (report,) = self.reports()
+        self.assertEqual(report[report.index("--") + 1:report.index("--") + 3], ["claude", "--resume"])
+        self.assertEqual(report[report.index("--") + 3], "post-clear")
+        self.assertEqual(json.loads((paths.state_dir() / "hq-start.json").read_text())["session_id"], "post-clear")
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")  # doctor's to record
+
+    def test_a_nested_clear_is_not_hqs(self):
+        self.hq_session("hq-1")
+        with mock.patch.object(hookstatus, "nested", return_value=True):
+            self.start("nested-9", "clear")
+        self.assertEqual(self.reports(), [])
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_a_nested_clear_through_the_hook_entry_registers_nothing(self):
+        # The whole hook, as Claude runs it: main() drops a nested HQ session before anything else.
+        self.hq_session("hq-1")
+        payload = {"hook_event_name": "SessionStart", "session_id": "nested-9", "source": "clear",
+                   "cwd": str(self.home)}
+        with mock.patch.object(hookstatus, "nested", return_value=True), \
+                mock.patch.dict(os.environ, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w1:p1"}), \
+                mock.patch.object(hookstatus.sys, "stdin", io.StringIO(json.dumps(payload))):
+            hookstatus.main()
+        self.assertEqual(self.reports(), [])
 
     def test_hqs_own_resume_and_compaction_keep_its_id_and_count(self):
         for source in ("resume", "compact"):

@@ -294,8 +294,9 @@ def hq_owns(event, env, record) -> bool:
     """Whether a SessionStart is HQ's own Claude, not a `claude -p` HQ ran from its Bash tool: that one inherits
     ATHENA_ROLE=hq and HERDR_PANE_ID, may resume or compact a conversation of its own, and must never become the one
     herdr or doctor resumes. It is HQ's when it comes from HQ's pane and is the session hq.json knows (a resume and a
-    compaction keep their id), or the first one, while hq.json knows none. A new id (a /clear) is recorded by
-    `athena hq` and its restart and rotation, which ask herdr, never by this hook."""
+    compaction keep their id), or the first one, while hq.json knows none, or the new id a /clear made in HQ's own
+    Claude: a /clear is told apart from a nested session by `nested()` (process ancestry), not by its id. hq.json
+    itself is recorded by athena doctor and `athena hq` from herdr, never by this hook."""
     sid = _session_started(event)
     if not sid or env.get("ATHENA_ROLE") != "hq":
         return False
@@ -303,7 +304,9 @@ def hq_owns(event, env, record) -> bool:
     if not pane or env.get("HERDR_PANE_ID") != pane:
         return False
     known = record.get("session")
-    return not known or sid == known
+    if not known or sid == known:
+        return True
+    return event.get("source") == "clear" and not nested()
 
 
 def register_hq_resume(event, env):
