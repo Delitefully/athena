@@ -178,8 +178,16 @@ class HqTest(unittest.TestCase):
     def test_athena_hq_on_a_live_hq_records_its_current_conversation(self):
         (paths.ensure() / "hq.json").write_text(json.dumps({"pane": "w8:p1", "workspace": "w8", "session": "pre-clear",
                                                             "claude_args": ["--name", "athena"]}))
-        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
-            "agent": "claude", "name": "athena", "agent_session": {"kind": "id", "value": "post-clear"}}}}}])
+        live = [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
+            "agent": "claude", "name": "athena", "agent_session": {"kind": "id", "value": "post-clear"}}}}}]
+        # herdr's id alone is not trusted: it may be a nested `claude -p --resume`'s.
+        write_scenario(self.tmp.name, live)
+        hq.hq(start_board=False)
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "pre-clear")
+        self.assertEqual([c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "report-agent-session"]], [])
+        # Once athena's hook saw HQ's own Claude start it (a /clear), it is.
+        (paths.state_dir() / "hq-start.json").write_text(json.dumps({"source": "clear", "session_id": "post-clear",
+                                                                     "ts": 1}))
         hq.hq(start_board=False)
         self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "post-clear")
         (report,) = [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "report-agent-session"]]
@@ -247,6 +255,8 @@ class RestartTest(unittest.TestCase):
         return [c for c in self.calls() if c[:2] == ["agent", "start"]]
 
     def test_exits_then_resumes_the_same_conversation_and_runs_the_routine(self):
+        (paths.state_dir() / "hq-start.json").write_text(json.dumps({"source": "resume", "session_id": "sess-1",
+                                                                     "ts": 1}))  # athena's hook saw HQ start it
         write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
                                        {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
         result = hq.restart_now(update=False)
@@ -313,6 +323,8 @@ class RestartTest(unittest.TestCase):
         self.assertFalse(hq.lock_file().exists())
 
     def test_a_failed_resume_starts_no_fresh_hq_and_says_so(self):
+        (paths.state_dir() / "hq-start.json").write_text(json.dumps({"source": "resume", "session_id": "sess-1",
+                                                                     "ts": 1}))  # athena's hook saw HQ start it
         err = json.dumps({"error": {"code": "agent_not_ready", "message": "no session"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1, "times": 1},
                                        {**GONE, "after": ["agent", "send-keys"]}, alive("sess-1"), HQ_SPACE, ON_EXIT])
@@ -333,6 +345,14 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(result["fallback"])
         (only,) = self.starts()
         self.assertNotIn("--resume", only)
+
+    def test_a_restart_never_resumes_an_id_only_herdr_reports(self):
+        # herdr reports a nested `claude -p --resume`'s id for HQ's pane; athena's hook never saw HQ start it.
+        write_scenario(self.tmp.name, [alive("sess-1", after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("nested-x"), HQ_SPACE, ON_EXIT])
+        hq.restart_now(update=False)
+        (start,) = self.starts()
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "old"])
 
     def test_a_resume_that_came_up_late_is_not_started_twice(self):
         err = json.dumps({"error": {"code": "cli_timeout", "message": "slow"}})

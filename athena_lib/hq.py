@@ -104,12 +104,52 @@ def _register_resume(pane, session, args):
         pass
 
 
+def _hq_start() -> dict:
+    """hq-start.json: the session athena's SessionStart hook last saw HQ's own Claude start (written only for HQ's own
+    sessions, after the hook's nested-session check), with its source and time."""
+    try:
+        data = json.loads((paths.state_dir() / "hq-start.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def own_session(record=None):
+    """The conversation to resume HQ on: hq.json's, unless the hook saw HQ's own Claude start another since hq.json
+    was last written (a /clear no doctor tick has recorded yet), then that one."""
+    record = load() if record is None else record
+    start = _hq_start()
+    try:
+        written = _file().stat().st_mtime
+    except OSError:
+        written = 0
+    try:
+        newer = start.get("session_id") and float(start.get("ts") or 0) > written
+    except (TypeError, ValueError):
+        newer = False
+    return start["session_id"] if newer else record.get("session")
+
+
+def trusted_session(record=None):
+    """HQ's conversation: the one herdr reports for HQ's pane when athena's hook saw HQ's own Claude start it, else
+    `own_session`. herdr's own hook has no nested-session check, so a `claude -p --resume X` (or a nested compaction)
+    run from HQ's Bash can make herdr report X for HQ's pane: that id alone is never trusted."""
+    live = _session()
+    if live and live == _hq_start().get("session_id"):
+        return live
+    return own_session(record)
+
+
 def sync_session(session) -> bool:
     """Record `session`, the conversation herdr says HQ's Claude has open, as HQ's in hq.json, and give herdr its
     resume command for it, when hq.json holds another: after a /clear the id changes while HQ runs, and a later
-    resume (doctor's, or herdr's after a restart) must bring back the conversation HQ was on. True when it changed."""
+    resume (doctor's, or herdr's after a restart) must bring back the conversation HQ was on. Only an id athena's
+    hook saw HQ's own Claude start (hq-start.json) is recorded: anything else herdr reports may be a nested session's.
+    True when it changed."""
     record = load()
     if not session or not record or session == record.get("session"):
+        return False
+    if session != _hq_start().get("session_id"):
         return False
     record["session"] = session
     _file().write_text(json.dumps(record, indent=2))
@@ -192,7 +232,7 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> d
     had one, and never when `fresh` is False (doctor), which returns {"missing": True} instead."""
     start_dash = start_board if start_dash is None else start_dash
     current = load()
-    session = current.get("session")
+    session = own_session(current)
     if current.get("pane") and _alive(current["pane"]):
         sync_session(_session())
         keep_label(current, owned=True)
@@ -470,7 +510,7 @@ def _restart(update, force_update=False, unattended=False):
         if not update_claude():
             _stamp_update()
         _say(f"updates took {took(began)}")
-    session = _session() or record.get("session")
+    session = trusted_session(record)
     if unattended and not session:
         msg = (f"HQ's conversation id is not known ({name} in pane {pane}); an unattended restart never starts a fresh "
                "HQ, so nothing was restarted. Run `athena hq restart` by hand")

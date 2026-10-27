@@ -462,8 +462,14 @@ class RoundOneTest(Fixture):
 
 
 class ClearTest(Fixture):
+    def own_start(self, sid, source="clear", ago=0):
+        """What athena's SessionStart hook writes for HQ's own Claude (after its nested-session check)."""
+        (self.state / "hq-start.json").write_text(json.dumps({"source": source, "session_id": sid,
+                                                              "ts": time.time() - ago}))
+
     def test_after_a_clear_a_crash_resumes_the_conversation_hq_was_on(self):
         # The human ran /clear in HQ: herdr reports the new id while hq.json still holds the old one.
+        self.own_start("post-clear")
         self.scenario(RUNNING, {"match": ["agent", "get", "w8:p1"], "stdout": {"result": {"agent": {
             "name": "athena", "agent_status": "idle", "agent_session": {"kind": "id", "value": "post-clear"}}}}})
         health = self.run_doctor()
@@ -474,6 +480,31 @@ class ClearTest(Fixture):
         self.assertEqual(report[report.index("--") + 1:report.index("--") + 4], ["claude", "--resume", "post-clear"])
         self.assertEqual(self.starts(), [])
         # Then HQ crashes: doctor resumes the post-clear conversation, not the stale one.
+        self.scenario(RUNNING, {**hq_agent(), "after": ["agent", "start"]}, GONE, HQ_SPACE)
+        self.run_doctor()
+        (start,) = self.starts()
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "post-clear"])
+
+    def test_a_nested_session_herdr_reports_never_becomes_hq(self):
+        # `claude -p --resume X` from HQ's Bash, or a nested compaction or /clear: herdr's own hook reports X for
+        # HQ's pane; athena's hook (nested) wrote nothing for it.
+        self.own_start("sess-9", source="resume", ago=3600)
+        before = (self.state / "hq.json").read_text()
+        self.scenario(RUNNING, {"match": ["agent", "get", "w8:p1"], "stdout": {"result": {"agent": {
+            "name": "athena", "agent_status": "idle", "agent_session": {"kind": "id", "value": "nested-x"}}}}})
+        self.run_doctor()
+        self.assertEqual((self.state / "hq.json").read_text(), before)
+        self.assertEqual([c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]], [])
+        # And a crash then resumes HQ's own conversation, not the nested one.
+        self.scenario(RUNNING, {**hq_agent(), "after": ["agent", "start"]}, GONE, HQ_SPACE)
+        self.run_doctor()
+        (start,) = self.starts()
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "sess-9"])
+
+    def test_a_clear_then_an_immediate_crash_resumes_the_post_clear_conversation(self):
+        # No healthy tick in between: hq.json still holds the pre-clear id, the hook saw the post-clear one later.
+        os.utime(self.state / "hq.json", (time.time() - 60, time.time() - 60))
+        self.own_start("post-clear")
         self.scenario(RUNNING, {**hq_agent(), "after": ["agent", "start"]}, GONE, HQ_SPACE)
         self.run_doctor()
         (start,) = self.starts()

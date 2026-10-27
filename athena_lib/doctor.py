@@ -236,7 +236,7 @@ class Doctor:
             self.repaired("hq")
             self.record("hq", True, f"{agent.get('agent_status') or 'running'} in pane {record.get('pane')}")
             return agent
-        if not record.get("session"):
+        if not hq.own_session(record):
             self.record("hq", False, "HQ's Claude is gone and no conversation of it is known; start one with athena hq")
             return None
         gone = self.down_for("hq")
@@ -249,7 +249,7 @@ class Doctor:
             result = hq.hq(focus=False, start_board=False, start_dash=False, fresh=False)
             if result.get("missing"):
                 raise RuntimeError("no conversation to resume")
-            return f"resumed HQ's conversation {record['session']} in pane {result.get('pane')}"
+            return f"resumed HQ's conversation {hq.load().get('session') or hq.own_session(record)} in pane {result.get('pane')}"
         self.repair("hq", "hq", resume, "HQ's Claude is gone")
         return None
 
@@ -286,8 +286,8 @@ class Doctor:
                                                              "athena-watch mod again"), what)
 
     def hq_session(self):
-        """HQ's conversation id, as herdr or hq.json knows it; None when neither does."""
-        return hq._session() or self.hq_record().get("session")
+        """HQ's conversation id as athena trusts it (`hq.trusted_session`); None when none is known."""
+        return hq.trusted_session(self.hq_record())
 
     def _restart_hq(self, why):
         # Detached; it waits for idle and an empty input box itself. Unattended: with no known conversation, or with
