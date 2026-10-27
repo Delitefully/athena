@@ -1,9 +1,18 @@
 """Worker status from Claude Code hook events. One JSON file per worker, written only by its own hooks.
 
 Run as `python3 -m athena_lib.hookstatus` with the hook payload on stdin. Always exits 0.
+
+The report gate: in a session athena started as a worker (ATHENA_WORKER, from its --settings), a turn cannot end
+without an ATHENA-REPORT line, nor with DONE or DONE_WITH_CONCERNS unless VERIFY passed at the worktree's HEAD. The
+hook prints Claude Code's `{"decision": "block", "reason": ...}` and the worker goes on to write the report. BLOCKED
+and NEEDS_CONTEXT always end the turn. After MAX_STOP_BLOCKS blocks in a row (within BLOCKS_FORGOTTEN_AFTER of each
+other) the gate gives way and the worker goes idle with no report, even one the gate refused, which athena watch tells
+HQ as `->idle` without a report: the gate can never loop.
 """
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 
@@ -13,6 +22,12 @@ SUMMARY_LIMIT = 300
 DONE = {"DONE", "DONE_WITH_CONCERNS"}
 BLOCKED = {"BLOCKED", "NEEDS_CONTEXT"}
 NEEDS_HUMAN_TYPES = {"permission_prompt", "agent_needs_input", "elicitation_dialog"}
+MAX_STOP_BLOCKS = 3  # blocks in a row before the gate gives way
+BLOCKS_FORGOTTEN_AFTER = 300  # seconds: a block this long after the last one counts from one again
+REPORT_FORMAT = ('ATHENA-REPORT {"status":"DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED","pr":"<url or empty>",'
+                 '"head":"<commit sha>","verify":"<command> -> pass|fail","decisions":[],"concerns":[]}')
+_PASS = re.compile(r"->\s*pass\b", re.I)
+_NOT_PASS = re.compile(r"->\s*(?:pass\s*\|\s*fail|fail|not run|skipped|pending)\b", re.I)
 
 
 def worker_name(env, cwd):
@@ -27,6 +42,46 @@ def worker_name(env, cwd):
         return None
     found = ledger.find_by_path(real)
     return found["name"] if found else None
+
+
+def _processes():
+    """{pid: (ppid, args)} from one `ps` (ATHENA_PS, for tests), or None when it cannot be read."""
+    try:
+        out = subprocess.run([os.environ.get("ATHENA_PS") or "ps", "-A", "-o", "pid=,ppid=,args="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    table = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) > 2 else "")
+    return table or None
+
+
+def _is_claude(args) -> bool:
+    words = (args or "").split()
+    return bool(words) and (os.path.basename(words[0]) == "claude" or "@anthropic-ai/claude-code/" in args)
+
+
+def nested(pid=None, table=None) -> bool:
+    """Whether the Claude that runs this hook was started by another Claude: a `claude -p` a worker runs from its
+    Bash tool inherits ATHENA_WORKER, ATHENA_ROLE and HERDR_PANE_ID, and can resume or compact as the worker's own
+    does, so neither its environment nor its session id tells it apart. Its ancestry does: above the hook's own
+    Claude, another one. False when ps cannot be read or no Claude is found (a hook run by hand): the worker's."""
+    table = _processes() if table is None else table
+    if not table:
+        return False
+    pid, seen, claudes = pid or os.getpid(), set(), 0
+    while pid in table and pid not in seen and len(seen) < 64:
+        seen.add(pid)
+        ppid, args = table[pid]
+        if _is_claude(args):
+            claudes += 1
+            if claudes > 1:
+                return True
+        pid = ppid
+    return False
 
 
 def parse_report(text):
@@ -50,6 +105,52 @@ def prose_summary(message, report):
     return (message[:cut] if cut >= 0 else message).strip()[-SUMMARY_LIMIT:]
 
 
+def has_report_line(text) -> bool:
+    return any(line.strip().startswith("ATHENA-REPORT") for line in (text or "").splitlines())
+
+
+def _head(cwd):
+    if not cwd:
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", str(cwd), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _missing(message, report, cwd):
+    """Why this turn may not end yet, or None. Never asks more of BLOCKED or NEEDS_CONTEXT than the line itself."""
+    if report is None:
+        if has_report_line(message):
+            return ("Your ATHENA-REPORT line is not valid JSON. End your message with one line, exactly: "
+                    + REPORT_FORMAT)
+        return ("End your turn with an ATHENA-REPORT line, even mid-task: report BLOCKED with your question in "
+                "concerns if you are stuck or waiting on someone, or keep working and report when done. If you are "
+                "waiting on background work you started, wait for it in this turn. The last line of your message, "
+                "exactly: " + REPORT_FORMAT)
+    status = str(report.get("status") or "").upper()
+    if status not in DONE:
+        return None
+    verify = str(report.get("verify") or "")
+    if not _PASS.search(verify) or _NOT_PASS.search(verify):
+        return (f"{status} needs VERIFY passing: run the brief's VERIFY at your final commit, show its passing output, "
+                f"and report `\"verify\":\"<command> -> pass\"`. If it cannot pass, report BLOCKED with the failure "
+                f"in concerns instead.")
+    head = _head(cwd)
+    if head:
+        from athena_lib import pr  # only for a DONE: pr is not needed on other events
+        if not pr.same_head(report.get("head"), head):
+            return (f"Your report's head ({report.get('head') or 'empty'}) is not your worktree's HEAD "
+                    f"({head[:12]}). Commit and push, re-run VERIFY there, and report that head.")
+    return None
+
+
+def gate(data):
+    """The Stop hook's answer for a worker's turn end: Claude Code's block decision, or None to let it end."""
+    return (data or {}).get("gate")
+
+
 def _file(name):
     return paths.ensure("workers") / f"{name}.json"
 
@@ -70,7 +171,31 @@ def _write(name, data):
     os.replace(tmp, target)
 
 
-def apply(event, name):
+def _gate(prev, event, report, state, gated):
+    """The report gate on one hook event (module docstring): (state, report, its fields for the file, the decision).
+    Only a gated Stop changes the state or report: blocked, it goes on working; given way, it goes idle unreported."""
+    kind = event.get("hook_event_name")
+    blocks, block_ts = prev.get("stop_blocks") or 0, prev.get("stop_block_ts")
+    if time.time() - (block_ts or 0) > BLOCKS_FORGOTTEN_AFTER:
+        blocks = 0  # under /goal one prompt can run for hours: only blocks in a row count
+    decision = None
+    if kind in ("UserPromptSubmit", "SessionStart"):  # a new prompt or a new session starts the count again
+        blocks = 0
+    elif kind == "Stop":
+        why = _missing(event.get("last_assistant_message") or "", report, event.get("cwd")) if gated else None
+        if why and blocks < MAX_STOP_BLOCKS:
+            decision = {"decision": "block", "reason": why}
+            state, report, blocks, block_ts = "working", None, blocks + 1, time.time()
+        elif why:
+            state, report = "idle", None
+        elif report is not None:
+            blocks = 0
+    return state, report, {"stop_blocks": blocks, "stop_block_ts": block_ts}, decision
+
+
+def apply(event, name, gated=False):
+    """Record a hook event in the worker's file. `gated`: a Stop goes through the report gate (module docstring);
+    its decision is in the result's `gate`, never in the file."""
     prev = read(name) or {}
     kind = event.get("hook_event_name") or ""
     state = prev.get("state", "starting")
@@ -98,13 +223,14 @@ def apply(event, name):
         state = "exited"
     else:
         return prev
+    state, report, gate_fields, decision = _gate(prev, event, report, state, gated)
     data = {
         "name": name, "state": state, "event": kind, "ts": time.time(), "summary": summary,
         "report": report, "last_report": report or prev.get("last_report"),
-        "session_id": event.get("session_id") or prev.get("session_id"),
+        "session_id": event.get("session_id") or prev.get("session_id"), **gate_fields,
     }
     _write(name, data)
-    return data
+    return {**data, "gate": decision} if decision else data
 
 
 def _resume_args(name, w):
@@ -180,9 +306,13 @@ def main():
         if not isinstance(event, dict):
             return
         name = worker_name(os.environ, event.get("cwd") or os.getcwd())
+        if (name or os.environ.get("ATHENA_ROLE") == "hq") and nested():
+            return  # a Claude the worker (or HQ) started: nothing of it is theirs, not even a resume command
         if name:
-            apply(event, name)
+            decision = gate(apply(event, name, gated=bool((os.environ.get("ATHENA_WORKER") or "").strip())))
             register_resume(event, name, os.environ)
+            if decision:
+                print(json.dumps(decision))
         else:
             register_hq_resume(event, os.environ)
             log_request(event, os.environ)

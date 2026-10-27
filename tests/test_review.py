@@ -42,7 +42,7 @@ class ReviewCommandTest(unittest.TestCase):
             code, out, err = self.athena("review", "abc-7", "start")
         self.assertEqual(code, 0, err)
         summary.assert_called_once_with("/src/web", "you/abc-7")
-        record = {"verdict": "start", "head": HEAD, "at": 1000.0}
+        record = {"verdict": "start", "head": HEAD, "at": 1000.0, "round": 1}
         self.assertEqual(ledger.workers()["abc-7"]["review"], record)
         self.assertEqual(json.loads(out)["review"], record)
 
@@ -104,6 +104,58 @@ class ReviewCommandTest(unittest.TestCase):
         ledger.append("retire", "abc-7")
         ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
         self.assertNotIn("review", ledger.workers()["abc-7"])
+
+
+class ReviewRoundsTest(unittest.TestCase):
+    """Reviews converge: each round after the first diffs only what changed since the last verdict, and after two
+    failed rounds the worker restarts fresh from the updated brief instead of a third nudge."""
+    setUp, tearDown, athena = ReviewCommandTest.setUp, ReviewCommandTest.tearDown, ReviewCommandTest.athena
+
+    def round(self, head, verdict, *extra):
+        with mock.patch.object(cli.pr, "summary", return_value=_pr(head=head)):
+            code, out, err = self.athena("review", "abc-7", "start", *extra)
+        if code:
+            return code, out, err
+        started = json.loads(out)["review"]
+        self.assertEqual(self.athena("review", "abc-7", verdict)[0], 0)
+        return code, started, err
+
+    def test_the_first_round_reviews_the_whole_diff(self):
+        _, started, _ = self.round("aaaaaaa1", "pass")
+        self.assertEqual(started["round"], 1)
+        self.assertNotIn("since", started)
+
+    def test_a_later_round_reviews_the_delta_since_the_last_verdict(self):
+        self.round("aaaaaaa1", "fail")
+        _, started, _ = self.round("bbbbbbb2", "pass")
+        self.assertEqual((started["round"], started["since"]), (2, "aaaaaaa1"))
+
+    def test_after_two_failed_rounds_restart_fresh_rather_than_a_third(self):
+        self.round("aaaaaaa1", "fail")
+        self.round("bbbbbbb2", "fail")
+        code, _, err = self.round("ccccccc3", "pass")
+        self.assertEqual(code, 2)
+        self.assertIn("Restart it fresh", err)
+        self.assertIn("--force", err)
+        self.assertEqual(ledger.workers()["abc-7"]["review"]["verdict"], "fail")  # nothing recorded
+        code, started, _ = self.round("ccccccc3", "pass", "--force")
+        self.assertEqual((code, started["round"]), (0, 3))
+
+    def test_a_round_past_three_warns_but_goes_on(self):
+        """A rebase after a pass needs a review at the new head too, so a fourth round is allowed, with a word."""
+        for head in ("aaaaaaa1", "bbbbbbb2", "ccccccc3"):
+            self.round(head, "pass")
+        code, started, err = self.round("ddddddd4", "pass")
+        self.assertEqual((code, started["round"]), (0, 4))
+        self.assertIn("round 4", err)
+
+    def test_a_respawn_counts_from_one_again(self):
+        self.round("aaaaaaa1", "fail")
+        self.round("bbbbbbb2", "fail")
+        ledger.append("retire", "abc-7")
+        ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
+        _, started, _ = self.round("ccccccc3", "pass")
+        self.assertEqual(started["round"], 1)
 
 
 class WatchReviewTest(unittest.TestCase):

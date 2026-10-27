@@ -16,7 +16,8 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from athena_lib import asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, slack, sockets, spawn, status
+from athena_lib import (asks, config, dash, dashstate, gitops, herdr, hq, ledger, paths, pr, reviewpost, slack,
+                        sockets, spawn, status)
 from athena_lib.retire import workspace_owned
 
 
@@ -763,6 +764,8 @@ def step(prev, fetch=False, with_pr=True):
         last = prev or {}
         cur["stacks"], cur["prs"] = dict(last.get("stacks") or {}), dict(last.get("prs") or {})
         cur["review_requests"] = list(last.get("review_requests") or [])
+    # After the stacks: a chain's merged bottom PR no longer holds back the next. Nothing without a review channel.
+    lines += reviewpost.run(cur, reviewpost.ring_hq)
     return cur, lines + ([] if prev is None else diff(prev, cur))
 
 

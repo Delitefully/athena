@@ -27,10 +27,24 @@ def append(event: str, name: str, **fields) -> dict:
     return record
 
 
-def review(name: str, verdict: str, head: str) -> dict:
+def review(name: str, verdict: str, head: str, **extra) -> dict:
     """HQ's own review of a worker's PR (`athena review`): start, pass or fail at the head it reviewed. The latest one
-    stands; a respawn starts with none."""
-    return append("review", name, review={"verdict": verdict, "head": head, "at": time.time()})
+    stands; a respawn starts with none. A start also carries its `round` and, after the first, `since`: the head the
+    last verdict was for, so the reviewer reads only what changed."""
+    return append("review", name, review={"verdict": verdict, "head": head, "at": time.time(), **extra})
+
+
+def reviews(name: str) -> list:
+    """The review records of the worker's current life (since its latest spawn), oldest first."""
+    out = []
+    for ev in events():
+        if ev.get("name") != name:
+            continue
+        if ev.get("event") == "spawn":
+            out = []
+        elif ev.get("event") == "review" and isinstance(ev.get("review"), dict):
+            out.append(ev["review"])
+    return out
 
 
 def touch():

@@ -23,7 +23,7 @@ class SpawnTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name, "proj")
         self.brief = Path(self.tmp.name) / "brief.md"
-        self.brief.write_text("# ABC-1\nGOAL: fix it\n")
+        self.brief.write_text(helpers.BRIEF)
 
     def tearDown(self):
         self.env.restore()
@@ -37,6 +37,56 @@ class SpawnTest(unittest.TestCase):
                     goal="ABC-1 is done when the test passes.", linear="ABC-1", title="fix it")
         args.update(kw)
         return spawn.spawn(**args)
+
+    def test_a_skipped_brief_check_is_recorded_on_the_spawn(self):
+        self.scenario()
+        self.brief.write_text(helpers.BRIEF.replace("GOAL: The parser", "GOAL: Ship the parser"))
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn()
+        self.run_spawn(brief_check=False)
+        record = ledger.workers()["abc-1"]
+        self.assertEqual(len(record["brief_check_skipped"]), 1)
+        self.assertIn("GOAL (outcome)", record["brief_check_skipped"][0])
+
+    def test_a_passing_brief_records_no_skip(self):
+        self.scenario()
+        self.run_spawn()
+        self.assertNotIn("brief_check_skipped", ledger.workers()["abc-1"])
+
+    def test_a_respawn_starts_with_no_status_from_the_old_life(self):
+        """Its old workers/<name>.json (a DONE report, a block count) would read as the new worker's until the new
+        Claude's first hook event; it is set aside before that Claude starts."""
+        self.scenario()
+        old = paths.ensure("workers") / "abc-1.json"
+        old.write_text(json.dumps({"name": "abc-1", "state": "done", "report": {"status": "DONE"}, "stop_blocks": 3}))
+        self.run_spawn()
+        self.assertFalse(old.exists())
+        self.assertEqual(json.loads((old.parent / "abc-1.json.prev").read_text())["state"], "done")
+
+    def test_the_preferences_file_is_pasted_into_every_brief(self):
+        self.scenario()
+        prefs = "# Preferences\n\n## Build\n- No feature flags unless asked.\n"
+        (paths.ensure() / "preferences.md").write_text(prefs)
+        self.run_spawn()
+        copy = (paths.state_dir() / "briefs" / "abc-1.md").read_text()
+        self.assertTrue(copy.startswith(helpers.BRIEF))
+        self.assertIn("\nPREFERENCES (the human's standing preferences, from " + str(paths.state_dir() / "preferences.md"),
+                      copy)
+        self.assertIn("- No feature flags unless asked.", copy)
+        self.assertNotIn("# Preferences", copy)  # its title, not its rules
+
+    def test_no_preferences_file_leaves_the_brief_as_written(self):
+        self.scenario()
+        self.run_spawn()
+        self.assertEqual((paths.state_dir() / "briefs" / "abc-1.md").read_text(), helpers.BRIEF)
+
+    def test_a_brief_with_its_own_preferences_keeps_them(self):
+        self.scenario()
+        (paths.ensure() / "preferences.md").write_text("- No feature flags unless asked.\n")
+        self.brief.write_text(helpers.BRIEF + "PREFERENCES: HQ pasted them already.\n")
+        self.run_spawn()
+        copy = (paths.state_dir() / "briefs" / "abc-1.md").read_text()
+        self.assertEqual(copy.count("PREFERENCES"), 1)
 
     def test_spawn_calls_in_order(self):
         self.scenario([{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_session": {"value": "s"}}}}}])
@@ -334,7 +384,7 @@ class UltracodeCliTest(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name, "proj")
         self.brief = Path(self.tmp.name) / "brief.md"
-        self.brief.write_text("# ABC-1\nGOAL: fix it\n")
+        self.brief.write_text(helpers.BRIEF)
 
     def tearDown(self):
         self.env.restore()
@@ -461,3 +511,8 @@ class BuildGoalTest(unittest.TestCase):
         self.assertIn("ATHENA-REPORT line: that line is the report, and the goal is met once it is written", goal)
         self.assertIn("try SendMessage to athena once; if it fails, don't retry", goal)
         self.assertNotIn("Report to the session named", goal)
+
+    def test_any_report_status_meets_the_goal_and_what_follows_done_is_out_of_scope(self):
+        goal = spawn.build_goal("Open the PR", "abc-1", "/briefs/abc-1.md")
+        self.assertIn("whatever its status (a BLOCKED or NEEDS_CONTEXT report with your question meets it too)", goal)
+        self.assertIn("Merging, approvals, undrafting and checks you cannot fix are out of scope", goal)
