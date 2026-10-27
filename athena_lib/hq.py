@@ -9,7 +9,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from athena_lib import board, config, dash, handoff, herdr, paths, retire
+from athena_lib import board, composer, config, dash, handoff, herdr, paths, retire
 
 
 def _file():
@@ -409,6 +409,11 @@ def _restart(update, force_update=False):
             _say("FAILED: " + msg)
             _notify("athena: HQ restart skipped", msg)
             raise RestartError(msg)
+        if not composer.wait_clear(name):
+            msg = f"someone is typing in HQ's input box ({name} in pane {pane}); not restarting. Retry once it is sent"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ restart skipped", msg)
+            raise RestartError(msg)
         grace = float(os.environ.get("ATHENA_EXIT_GRACE") or 20)
         exiting = time.monotonic()
         if not retire.exit_claude(name, grace):
@@ -545,6 +550,12 @@ def _rotate():
         # The same clean exit as a restart: never /exit into a running turn or a permission dialog, never kill.
         if not _wait_idle():
             msg = f"HQ ({name} in pane {pane}) is busy or waiting on you; not rotating. Retry when it is idle"
+            _say("FAILED: " + msg)
+            _notify("athena: HQ rotation skipped", msg)
+            raise RestartError(msg)
+        if not composer.wait_clear(name):
+            # /exit typed now would join the human's half-typed message and send it.
+            msg = f"someone is typing in HQ's input box ({name} in pane {pane}); not rotating. Retry once it is sent"
             _say("FAILED: " + msg)
             _notify("athena: HQ rotation skipped", msg)
             raise RestartError(msg)
