@@ -53,7 +53,7 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 
 ## State files
 
-State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json`, `actions.jsonl`. Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`, and `watch-suppressed.log`, the watch lines kept from HQ, rotated to `.1` at 1 MB). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
+State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json` (the items; `items-archive.jsonl` holds those resolved over a week ago), `actions.jsonl`, `health.json` (athena doctor's last check) and `requests.jsonl` (what you typed into HQ, the request log; private). Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`, and `watch-suppressed.log`, the watch lines kept from HQ, rotated to `.1` at 1 MB). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
 
 ## Per-repo worktree setup
 
