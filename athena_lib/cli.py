@@ -8,7 +8,7 @@ import time
 import sys
 from pathlib import Path
 
-from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, retire, sockets, spawn, status, watch
+from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, requestlog, retire, sockets, spawn, status, watch
 
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
@@ -52,7 +52,59 @@ def _context_hint():
         print(f"{'hq':<12}  context {handoff.describe(ctx)}: rotate soon (athena hq rotate, skill §1a)")
 
 
+REPORT_LISTS = ("decisions", "concerns")
+
+
+def _worker_detail(r):
+    """`athena status <worker>`: everything known about one worker, the whole report one field a line."""
+    out = [f"{r['name']}  {r['state']}  ({r.get('state_source')})  branch {r.get('branch') or '-'}"]
+    git = r.get("git") or {}
+    if git:
+        out.append(f"  git: head {git.get('head') or '-'}, {git.get('ahead', '-')} ahead, {len(git.get('dirty') or [])} dirty")
+    if r.get("pr"):
+        p = r["pr"]
+        out.append(f"  pr: #{p.get('number')} {p.get('state') or ''} checks {p.get('checks') or '-'} "
+                   f"review {p.get('review') or 'none'} {p.get('url') or ''}".rstrip())
+    verdict = r.get("athena_review") or {}
+    if verdict.get("verdict"):
+        out.append(f"  athena review: {verdict['verdict']} @ {str(verdict.get('head') or '-')[:7]}")
+    if r.get("socket_missing"):
+        out.append(f"  messaging socket missing: {r['socket_missing']}")
+    if r.get("summary"):
+        out.append("  last words:")
+        out += ["    " + line for line in r["summary"].strip().splitlines() if line.strip()]
+    report = r.get("report") or r.get("last_report")
+    if report:
+        out.append("  report" + ("" if r.get("report") else " (the last one; none since its last prompt)") + ":")
+        for k in ("status", "pr", "head", "verify"):
+            if report.get(k):
+                out.append(f"    {k}: {report[k]}")
+        for k in REPORT_LISTS:
+            entries = [e for e in report.get(k) or [] if isinstance(e, str)]
+            if entries:
+                out.append(f"    {k}:")
+                out += [f"      - {e}" for e in entries]
+        for k, v in report.items():
+            if k not in ("status", "pr", "head", "verify", *REPORT_LISTS) and v not in (None, "", []):
+                out.append(f"    {k}: {v if isinstance(v, str) else json.dumps(v)}")
+    else:
+        out.append("  no report yet")
+    return "\n".join(out)
+
+
 def cmd_status(a):
+    if a.names:
+        live = {w["name"]: w for w in ledger.live()}
+        missing = [n for n in a.names if n not in live]
+        if missing:
+            print(f"not a live worker: {', '.join(missing)}", file=sys.stderr)
+            return 2
+        rows = [status.collect(live[n], with_pr=a.pr) for n in a.names]
+        if a.json:
+            _print(rows)
+        else:
+            print("\n\n".join(_worker_detail(r) for r in rows))
+        return 0
     rows = [status.collect(w, with_pr=a.pr) for w in ledger.live()]
     rows.sort(key=lambda r: (r["urgency"], r["name"]))
     left = ledger.leftovers()
@@ -155,35 +207,118 @@ def _read_text(path):
     return sys.stdin.read() if path == "-" else Path(os.path.expanduser(path)).read_text()
 
 
+ADD_USAGE = ('athena item add "<one-sentence title>" [--name "<2-4 words>"] [--kind decision|request|result|promise|incident] '
+             '[--why ...] [--pr ...] [--body ... | --body-file <path|->] [--option label[:icon[:do]]] ... [--rec <option>] '
+             '[--auto] [--next ...] [--due ...] [--words ...] [--request rN] [--worker w] [--link title|url] [--stakes ...] '
+             '[--preview <file|dir>] ...')
+
+
+def _fields(a):
+    """The item fields add and edit share, from the parsed flags; None for each flag not given."""
+    words = _read_text(a.words_file) if a.words_file else a.words
+    stakes = None if a.stakes is None else [s for s in re.split(r"[,\s]+", a.stakes) if s]
+    return {"name": a.name, "kind": a.kind, "next": a.next, "due": a.due, "words": words,
+            "requests": a.request or [], "workers": a.worker or [], "links": a.link or [], "rec": a.rec,
+            "stakes": stakes}
+
+
+def _item_line(i, now=None):
+    """One item as a person reads it: its name first, never a bare id."""
+    now = time.time() if now is None else now
+    bits = [f"{i.get('name') or '?'}", f"({i['id']}, {i.get('kind')}, next: {i.get('next')})"]
+    if i.get("due"):
+        bits.append("due " + time.strftime("%a %d %b %H:%M", time.localtime(i["due"])))
+    if i.get("snooze") and i["snooze"].get("until", 0) > now:
+        bits.append("snoozed")
+    if i.get("applied"):
+        bits.append(f"default applied: {i['applied'].get('label')}")
+    elif i.get("auto"):
+        bits.append(f"default: {i.get('rec')}")
+    if i.get("name_derived"):
+        bits.append("name derived: rename it")
+    return " ".join(bits) + f": {i.get('text', '')}"
+
+
 def cmd_ask(a):
     if a.action == "add":
         if not a.args or len(a.args) > 1:
-            print('athena ask add "<one-sentence title>" [--why ...] [--pr ...] [--body ... | --body-file <path|->] '
-                  '[--option label[:icon[:do]]] ... [--preview <file|dir>] ...', file=sys.stderr)
+            print(ADD_USAGE, file=sys.stderr)
             return 2
-        kind = "note" if a.note else "question" if a.question else None
+        kind = a.kind or ("note" if a.note else "decision" if a.question else None)  # a note with options is a decision
         body = _read_text(a.body_file) if a.body_file else a.body or ""
-        print(asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or []))
+        f = _fields(a)
+        new = asks.add(a.args[0], kind=kind, why=a.why, pr=a.pr, options=a.option or [], body=body, previews=a.preview or [],
+                       name=f["name"], next=f["next"], due=f["due"], words=f["words"], requests=f["requests"],
+                       workers=f["workers"], links=f["links"], rec=f["rec"], auto=a.auto, stakes=f["stakes"] or (),
+                       fyi=a.fyi)
+        print(new)
+        if not a.name:
+            print(f"athena item: named it {asks.show(new)['name']!r} from its title; give it 2 to 4 words the human would "
+                  f"recognise: athena item edit {new} --name \"...\"", file=sys.stderr)
+    elif a.action == "edit":
+        if len(a.args) != 1:
+            print("athena item edit <id> [--name ...] [--title ...] [--why ...] [--kind ...] [--next ...] [--due ...|none] "
+                  "[--words ...] [--pr ...|''] [--option ...] [--rec ...] [--auto|--no-auto] [--stakes ...] [--request rN] "
+                  "[--worker w] [--link title|url]", file=sys.stderr)
+            return 2
+        f = _fields(a)
+        if a.note or a.question:
+            f["kind"] = "note" if a.note else "decision"  # a note with options is a decision
+        _print(asks.edit(a.args[0], text=a.title, why=a.why, pr=a.pr, options=a.option,
+                         auto=a.auto if a.auto or a.no_auto else None, **f))
     elif a.action == "body":
         if len(a.args) != 1 or not a.file:
-            print("athena ask body <id> --file <path|->  (an empty file clears it)", file=sys.stderr)
+            print("athena item body <id> --file <path|->  (an empty file clears it)", file=sys.stderr)
             return 2
         _print(asks.set_body(a.args[0], _read_text(a.file)))
     elif a.action == "done":
         if len(a.args) != 1:
-            print("athena ask done <id>", file=sys.stderr)
+            print('athena item done <id> [--resolution "you merged it"] [--keep]', file=sys.stderr)
             return 2
-        _print(asks.done(a.args[0], keep=a.keep))
+        _print(asks.done(a.args[0], keep=a.keep, note=a.note_text or ""))
+    elif a.action == "snooze":
+        if len(a.args) != 1 or not (a.until or a.wake):
+            print("athena item snooze <id> --until <YYYY-MM-DD[THH:MM]|+Nh|+Nd>  (or --wake to bring it back now)", file=sys.stderr)
+            return 2
+        _print(asks.snooze(a.args[0], None if a.wake else a.until))
     elif a.action == "queue":
         _print(asks.queue())
+    elif a.action == "migrate":
+        _print(asks.migrate_items(dry_run=a.dry_run))
+    elif a.action == "requests":
+        for r in requestlog.requests(since=time.time() - a.days * 86400):
+            home = requestlog.filed().get(r["id"])
+            print(requestlog.describe(r) + (f"  -> {home}" if home else "  (chat)" if r["ignored"] else "  NO ITEM"))
+    elif a.action == "check":
+        lost = requestlog.check(days=a.days)
+        if a.json:
+            _print(lost)
+        elif not lost:
+            print(f"every request of the last {a.days:g} days has an item")
+        else:
+            print(f"{len(lost)} request{'s' if len(lost) != 1 else ''} of the last {a.days:g} days with no item "
+                  "(file each: athena item add ... --request <id>, or athena item ignore <id> for chat):")
+            for r in lost:
+                print("  " + requestlog.describe(r))
+    elif a.action == "ignore":
+        if not a.args:
+            print("athena item ignore <request id> ...", file=sys.stderr)
+            return 2
+        _print(requestlog.ignore(a.args))
     elif a.args:
         item = asks.show(a.args[0])
         if not item:
-            print(f"no ask {a.args[0]}", file=sys.stderr)
+            print(f"no item {a.args[0]}", file=sys.stderr)
             return 2
         _print(item)
-    else:
+    elif a.json:
         _print(asks.items())
+    else:
+        found = asks.items()
+        for i in found:
+            print(_item_line(i))
+        if not found:
+            print("no open items")
     return 0
 
 
@@ -374,7 +509,8 @@ def parser():
                    help="the worker's workflow size guideline; needs --ultracode")
     s.set_defaults(func=cmd_spawn)
 
-    s = sub.add_parser("status", help="merged status of live workers")
+    s = sub.add_parser("status", help="merged status of live workers; with names, each one's full report")
+    s.add_argument("names", nargs="*", help="a worker's name: everything known about it, its whole report included")
     s.add_argument("--json", action="store_true")
     s.add_argument("--pr", action="store_true", help="include PR state from gh (slower)")
     s.set_defaults(func=cmd_status)
@@ -397,24 +533,57 @@ def parser():
                    help="with --slack-once: a conversation seen for the first time counts back this many seconds")
     s.set_defaults(func=cmd_watch)
 
-    s = sub.add_parser("ask", help="athena's asks on the dashboard (needs-you.json) and the human's answers: add, body, done, show, queue")
-    s.add_argument("action", choices=["add", "body", "done", "show", "queue"], nargs="?", default="show")
-    s.add_argument("args", nargs="*", help="add: the title, one sentence; body, done, show: the id (show alone lists every ask)")
+    s = sub.add_parser("item", aliases=["ask"],
+                       help="athena's items on the dashboard (needs-you.json) and the human's answers: add, edit, body, done, "
+                            "snooze, show, queue, migrate; the request log: requests, check, ignore")
+    s.add_argument("action", choices=["add", "edit", "body", "done", "snooze", "show", "queue", "migrate", "requests",
+                                      "check", "ignore"], nargs="?", default="show")
+    s.add_argument("args", nargs="*", help="add: the title, one sentence; edit, body, done, snooze, show: the id (show alone "
+                                           "lists the open items); ignore: request ids")
     k = s.add_mutually_exclusive_group()
-    k.add_argument("--question", action="store_true", help="add: Discuss in Athena and Reply… on the dashboard (default when it has a ?)")
-    k.add_argument("--note", action="store_true", help="add: only its options, or × with none")
-    s.add_argument("--why", default="", help="add: one sentence, shown under it")
-    s.add_argument("--pr", help="add: owner/name#n or a PR URL: shown under that PR's row")
+    k.add_argument("--question", action="store_true", help="add: a decision (the default when the title has a ?)")
+    k.add_argument("--note", action="store_true", help="add: a result, for the human to read (the default without a ?)")
+    s.add_argument("--name", help="add, edit: 2 to 4 words the human would recognise (add derives one from the title "
+                                  "without it, marked for renaming)")
+    s.add_argument("--kind", choices=list(asks.KINDS), help="add, edit: what it is (default: decision with a ?, else result)")
+    s.add_argument("--title", help="edit: the new title, one sentence")
+    s.add_argument("--why", default=None, help="add, edit: one sentence, shown under it")
+    s.add_argument("--next", choices=list(asks.NEXT), help="add, edit: whose move it is (default: you for a decision or "
+                                                          "result, athena otherwise)")
+    s.add_argument("--due", help="add, edit: YYYY-MM-DD (09:00), YYYY-MM-DDTHH:MM, +Nh, +Nd, or none")
+    w = s.add_mutually_exclusive_group()
+    w.add_argument("--words", help="add, edit: the human's own words, quoted in its full view")
+    w.add_argument("--words-file", metavar="PATH", help="add, edit: the words from a file, or - for stdin")
+    s.add_argument("--request", action="append", metavar="rN", help="add, edit: the request-log id(s) it files")
+    s.add_argument("--worker", action="append", help="add, edit: a worker on it (its row shows the item's name)")
+    s.add_argument("--link", action="append", metavar="TITLE|URL", help="add, edit: a report, screenshot or page it links")
+    s.add_argument("--pr", help="add, edit: owner/name#n or a PR URL ('' unlinks)")
     b = s.add_mutually_exclusive_group()
-    b.add_argument("--body", help=f"add: Markdown the dashboard expands under it, up to {asks.BODY_MAX} characters")
+    b.add_argument("--body", help=f"add: Markdown its full view shows, up to {asks.BODY_MAX} characters")
     b.add_argument("--body-file", metavar="PATH", help="add: the body from a file, or - for stdin")
     s.add_argument("--file", metavar="PATH", help="body: the new body from a file, or - for stdin; empty clears it")
     s.add_argument("--option", action="append", metavar="LABEL[:ICON[:DO]]",
-                   help=f"add: at most {asks.OPTIONS_MAX}, {asks.OPTIONS_MAX_BODY} with a body; label up to {asks.LABEL_MAX} "
-                        "characters, icon from dash/icons.txt, do reply (default) or dismiss")
+                   help=f"add, edit (replaces them): at most {asks.OPTIONS_MAX}, {asks.OPTIONS_MAX_BODY} with a body; label up "
+                        f"to {asks.LABEL_MAX} characters, icon from dash/icons.txt, do reply (default) or dismiss")
+    s.add_argument("--rec", help="add, edit: the recommended option's id (its label in lower case, dashes for spaces): "
+                                 "Take rec on the dashboard")
+    d = s.add_mutually_exclusive_group()
+    d.add_argument("--auto", action="store_true", help="add, edit: the rec applies on its own after 12 h (2 h once the human "
+                                                       "is away); reversible, low-stakes decisions only (decision 4)")
+    d.add_argument("--no-auto", action="store_true", help="edit: no default applies on its own")
+    s.add_argument("--stakes", metavar="LIST", help=f"add, edit: any of {', '.join(asks.STAKES)} (comma-separated; '' clears): "
+                                                    "never a default on its own")
+    s.add_argument("--fyi", action="store_true", help="add: a tiny result, resolved at once: a line in Done")
     s.add_argument("--preview", action="append", metavar="FILE|DIR",
-                   help=f"add: local HTML the ask links to, copied into the state dir and served sandboxed; at most {asks.PREVIEWS_MAX}")
-    s.add_argument("--keep", action="store_true", help="done: mark its answers done but keep the ask on the dashboard")
+                   help=f"add: local HTML its full view embeds, copied into the state dir and served sandboxed; at most {asks.PREVIEWS_MAX}")
+    s.add_argument("--keep", action="store_true", help="done: mark its answers done but keep the item open")
+    s.add_argument("--note-text", "--resolution", dest="note_text", metavar="TEXT",
+                   help='done: how it resolved, on its timeline ("you merged it", "you replied in chat")')
+    s.add_argument("--until", help="snooze: YYYY-MM-DD (09:00), YYYY-MM-DDTHH:MM, +Nh or +Nd")
+    s.add_argument("--wake", action="store_true", help="snooze: bring it back now")
+    s.add_argument("--dry-run", action="store_true", help="migrate: count and list what would change, write nothing")
+    s.add_argument("--days", type=float, default=requestlog.CHECK_DAYS, help="requests, check: how far back (default 7)")
+    s.add_argument("--json", action="store_true", help="show, check: JSON")
     s.set_defaults(func=cmd_ask)
 
     s = sub.add_parser("stack", help="the stacked-PR chains athena watch follows (stack.json): set, clear, show")
@@ -454,7 +623,7 @@ def parser():
                                    "restart: update Claude Code and plugins (unless they last ran without a warning "
                                    "within config hq_update_interval_hours, 6 by default), exit HQ's Claude and resume "
                                    "its conversation in the same pane. "
-                                   "rotate: write the handoff (handoff.md in the state dir: fleet, PRs, open asks, "
+                                   "rotate: write the handoff (handoff.md in the state dir: fleet, PRs, every open item, "
                                    "in-flight threads, notes tail, standing orders) from athena's state, then, once HQ is "
                                    "idle, /exit its Claude (its conversation stays resumable) and start a NEW HQ "
                                    "conversation in the same pane, told to read the handoff and run session start. "

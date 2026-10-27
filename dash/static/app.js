@@ -1,5 +1,7 @@
-// Live updates: the server pushes a new <main> over Server-Sent Events whenever athena's state files change.
+// Live updates: the server pushes a new <main> over Server-Sent Events whenever athena's state files change. An item's
+// full view (/item/<id>) fetches its own <main> again on each push.
 const main = document.querySelector("main");
+const fullItem = main.matches(".full[data-item]") ? main.dataset.item : "";
 const motion = matchMedia("(prefers-reduced-motion: no-preference)");
 
 function ago(ts) {
@@ -9,8 +11,37 @@ function ago(ts) {
   if (s < 86400) return Math.floor(s / 3600) + " h ago";
   return Math.floor(s / 86400) + " d ago";
 }
+// A row's age, as server.go short says it: now, 10m, 2h, 7d.
+function short(seconds) {
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + "h";
+  return Math.floor(seconds / 86400) + "d";
+}
+// When an item is due, as server.go dueText says it.
+function dueText(ts) {
+  const now = new Date();
+  const due = new Date(ts * 1000);
+  const d = ts - now / 1000;
+  if (d < 0) return "overdue " + short(-d);
+  if (d < 3600) return "due in " + Math.floor(d / 60) + "m";
+  const day = (t) => new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  const days = Math.round((day(due) - day(now)) / 86400000);
+  if (days === 0) return "due " + due.toTimeString().slice(0, 5);
+  if (days === 1) return "due tmrw";
+  if (days < 7) return "due " + due.toLocaleDateString("en-GB", { weekday: "short" });
+  return "due " + due.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+// athena doctor's dot is rendered in <main>, which every push replaces, and shown in the header.
+function placeHealth() {
+  const h = main.querySelector(":scope > .health");
+  const slot = document.querySelector(".health-slot");
+  if (h && slot) slot.replaceChildren(h);
+}
 function tick() {
-  for (const t of document.querySelectorAll("time[data-ts]")) t.textContent = ago(+t.dataset.ts);
+  for (const t of document.querySelectorAll("time[data-ts]"))
+    t.textContent = t.hasAttribute("data-short") ? short(Date.now() / 1000 - +t.dataset.ts) : ago(+t.dataset.ts);
+  for (const t of document.querySelectorAll("time[data-due]")) t.textContent = dueText(+t.dataset.due);
 }
 
 // Quick actions. A new page waits while the human is mid-gesture (a press, a collapse, typing a reply), so a push
@@ -23,37 +54,6 @@ let shown = main.innerHTML;
 let collapsing = 0;
 let pressing = false;
 
-// An ask's open panel stays open across pushes and reloads of this tab: its id is kept here and in sessionStorage,
-// which may be unavailable (a private window, blocked storage), so every use of it is wrapped.
-const OPEN = "athena-open-asks";
-const opened = new Set(
-  (() => {
-    try {
-      const ids = JSON.parse(sessionStorage.getItem(OPEN) || "[]");
-      return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-    } catch {
-      return [];
-    }
-  })(),
-);
-function keepOpened() {
-  try {
-    sessionStorage.setItem(OPEN, JSON.stringify([...opened]));
-  } catch {}
-}
-function reopen() {
-  const shown = new Set();
-  for (const d of main.querySelectorAll("details[data-ask]")) {
-    shown.add(d.dataset.ask);
-    if (!opened.has(d.dataset.ask)) continue;
-    d.classList.add("kept"); // open already: no unfolding again
-    d.open = true;
-  }
-  let gone = false;
-  for (const id of opened) if (!shown.has(id) && !answered.has(id)) gone = opened.delete(id); // done, or a new state dir
-  if (gone) keepOpened();
-}
-
 // Where a reply is typed: a row's pills, or the answers in its panel, which share the item.
 const where = (acts) => acts.dataset.item + (acts.matches(".bar") ? "|bar" : "");
 function actsAt(key) {
@@ -61,11 +61,11 @@ function actsAt(key) {
   return main.querySelector(`.acts${bar ? ".bar" : ":not(.bar)"}[data-item="${CSS.escape(item)}"]`);
 }
 
-// Text selected in a panel, being read or copied: a push would drop the selection. Only while this window has focus:
-// a page left with a selection in it still takes pushes, so it is never stale when looked at again.
+// Text selected in a full view, being read or copied: a push would drop the selection. Only while this window has
+// focus: a page left with a selection in it still takes pushes, so it is never stale when looked at again.
 function selecting() {
   const sel = getSelection();
-  return document.hasFocus() && !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main .panel");
+  return document.hasFocus() && !!sel && !sel.isCollapsed && !!sel.anchorNode?.parentElement?.closest("main.full");
 }
 
 function busy() {
@@ -84,11 +84,11 @@ function render(html) {
   document.title = main.querySelector("[data-title]")?.dataset.title || document.title;
   for (const item of answered) {
     const all = main.querySelectorAll(`.acts[data-item="${CSS.escape(item)}"]`); // the row's, and its panel's
-    for (const acts of all) (acts.closest(".fold") || acts.closest(".apr") || acts.closest("li"))?.remove();
+    for (const acts of all) (acts.closest(".apr") || acts.closest("li"))?.remove();
     if (!all.length) answered.delete(item); // the server's page has it too
   }
   if (tipFor && !tipFor.isConnected) hideTip(); // its pill went with the old page
-  reopen();
+  placeHealth();
   for (const [key, text] of drafts) {
     const acts = actsAt(key);
     if (acts) openReply(acts, text, false);
@@ -165,10 +165,15 @@ function say(text, undoable) {
   }, 5000);
 }
 
-// hides: the answer takes its ask, or its pill, off the page.
+// hides: the answer takes its item, or its pill, off the page. "Don't ask me this again", ticked in a full view, rides
+// on the answer given with it.
 function answer(acts, body, text, hides = acts.hasAttribute("data-hides")) {
   const item = acts.dataset.item;
-  const row = hides ? acts.closest(".fold") || acts.closest(".apr") || acts.closest("li") : null;
+  const row = hides ? acts.closest(".apr") || acts.closest("li") : null;
+  if (acts.querySelector('input[name="rule"]')?.checked && !body.discuss) {
+    body = { ...body, rule: true };
+    text += ", and athena won't ask again";
+  }
   drafts.delete(where(acts));
   if (row) {
     answered.add(item);
@@ -188,8 +193,58 @@ function answer(acts, body, text, hides = acts.hasAttribute("data-hides")) {
     });
 }
 
+// The dash's own calls, which work while athena is busy or down: Done and Snooze, undone by Reopen and Wake.
+async function postItem(body) {
+  const r = await fetch("/api/item", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Athena-Token": token },
+    body: JSON.stringify(body),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error || "not done");
+  return out;
+}
+function snoozeUntil(what) {
+  const t = new Date();
+  if (/^\d+$/.test(what || "")) return Math.floor(t / 1000) + +what;
+  t.setHours(9, 0, 0, 0);
+  if (what === "monday") t.setDate(t.getDate() + (((8 - t.getDay()) % 7) || 7));
+  else t.setDate(t.getDate() + 1); // tomorrow, 09:00
+  return Math.floor(t / 1000);
+}
+function itemCall(pill) {
+  const item = pill.closest("[data-item]").dataset.item;
+  const what = pill.dataset.do;
+  const body = { item, do: what };
+  if (what === "snooze") body.until = snoozeUntil(pill.dataset.for);
+  const row = !fullItem && (what === "done" || what === "snooze") ? pill.closest("li") : null;
+  if (row) collapse(row);
+  const said = { done: "Done", snooze: "Snoozed", reopen: "Reopened", wake: "Back now" }[what];
+  say(said, what === "done" || what === "snooze");
+  last = null;
+  postItem(body)
+    .then(() => {
+      last = { item, undoes: what === "done" ? "reopen" : "wake" };
+      undo.disabled = false;
+      if (fullItem) refresh();
+    })
+    .catch((err) => {
+      say("Not done: " + err.message, false);
+      if (row) render(held ?? shown);
+    });
+}
+
 undo.addEventListener("click", () => {
   if (!last) return;
+  if (last.undoes) {
+    const { item, undoes } = last;
+    last = null;
+    undo.disabled = true;
+    postItem({ item, do: undoes })
+      .then(() => (say("Undone", false), fullItem && refresh()))
+      .catch((err) => say("Not undone: " + err.message, false));
+    return;
+  }
   const { seq, item } = last;
   last = null;
   undo.disabled = true;
@@ -222,8 +277,9 @@ function closeReply(acts) {
 
 main.addEventListener("click", (e) => {
   const pill = e.target.closest(".pill");
+  if (pill?.hasAttribute("data-do")) return itemCall(pill);
   const acts = pill?.closest(".acts");
-  if (!acts || pill.matches("a")) return; // Open PR is a plain link to the PR
+  if (!acts || pill.matches("a")) return; // Open, Open PR: plain links
   const label = pill.textContent.trim();
   const apr = acts.closest(".apr");
   if (pill.hasAttribute("data-reply")) openReply(acts);
@@ -237,6 +293,8 @@ main.addEventListener("click", (e) => {
   else if (pill.dataset.option === "request-review") answer(acts, { option: "request-review" }, "athena will request a review");
   // A go names the head this page shows: the server takes it only while the PR is still there.
   else if (pill.dataset.option === "go") answer(acts, { option: "go", head: pill.dataset.head }, "Merge go sent to athena");
+  else if (pill.dataset.option === "undo-default") answer(acts, { option: "undo-default" }, "athena will take it back", true);
+  else if (pill.matches(".rec")) answer(acts, { option: pill.dataset.option }, "Rec taken: athena has it");
   else answer(acts, { option: pill.dataset.option }, `“${label}” sent to athena`);
 });
 main.addEventListener("submit", (e) => {
@@ -258,21 +316,6 @@ main.addEventListener("input", (e) => {
   const acts = e.target.closest(".reply")?.closest(".acts");
   if (acts) drafts.set(where(acts), e.target.value);
 });
-// toggle does not bubble: listen in the capture phase. A panel the human closes unfolds again when reopened.
-main.addEventListener(
-  "toggle",
-  (e) => {
-    const d = e.target;
-    if (!d.matches?.("details[data-ask]")) return;
-    if (d.open) opened.add(d.dataset.ask);
-    else {
-      opened.delete(d.dataset.ask);
-      d.classList.remove("kept");
-    }
-    keepOpened();
-  },
-  true,
-);
 document.addEventListener("selectionchange", () => release());
 addEventListener("blur", () => setTimeout(release));
 main.addEventListener("focusout", (e) => {
@@ -328,9 +371,14 @@ const events = new EventSource("/events");
 const boot = document.querySelector('meta[name="athena-boot"]')?.content;
 // A restarted dash has a new token and maybe new files: a page from before it reloads, once per start.
 events.addEventListener("boot", (e) => boot && e.data !== boot && location.reload());
-events.addEventListener("main", (e) => render(e.data));
+// A full view takes its own <main> again on each push: the server's is the main page's.
+async function refresh() {
+  const r = await fetch(location.pathname + "?fragment=1", { headers: { Accept: "text/html" } }).catch(() => null);
+  if (r?.ok) render(await r.text());
+}
+events.addEventListener("main", (e) => (fullItem ? refresh() : render(e.data)));
 events.onopen = () => document.body.classList.remove("offline");
 events.onerror = () => document.body.classList.add("offline");
 setInterval(tick, 30000);
-reopen();
+placeHealth();
 tick();

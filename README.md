@@ -47,7 +47,8 @@ and `athena` brings you back.
 - **`prefix+shift+b`** (or `athena board toggle`): show or hide the worker columns. To select text in a column, hold Shift while you drag (the column's `herdr terminal attach` takes the mouse; Ghostty and most terminals let Shift through to their own selection).
 - **`prefix+shift+h`** (or `athena hq restart`): update Claude Code and the plugins (at most every 6 hours; `--update` forces it), then restart athena in place.
 - **`athena hq rotate`**: replace a long HQ conversation with a fresh one that starts from a handoff written from athena's state, instead of compacting it again.
-- **`athena dash open`:** the dashboard in your browser: what needs you, what is in progress, what is done.
+- **Every request is an item:** what you ask HQ for becomes a named item on the dashboard, so nothing is kept only in chat. `athena item` lists them; [Items](docs/items.md) says how they work.
+- **`athena dash open`:** the dashboard in your browser: what needs you, what is ready for you to read, what is in flight, and what was done today, with a full view per item.
 - **Remote Control:** athena's own session always connects to Remote Control, so you can reach it from your phone or claude.ai/code; workers never do, whatever `remoteControlAtStartup` says in `~/.claude/settings.json`. A worker that was already running keeps its connection until it next starts.
 
 ## Learn more
@@ -55,6 +56,7 @@ and `athena` brings you back.
 - [How it works](docs/how-it-works.md): the supervision loop, the watch mod, what it may say and what it keeps quiet (`logs/watch-suppressed.log`).
 - [Commands](docs/commands.md): every `athena` command and flag.
 - [Configuration](docs/configuration.md): `athena init`, `config.json`, environment variables, state files.
+- [Items](docs/items.md): what an item is, how HQ files, names, resolves and snoozes them, and defaults that apply on their own.
 - [Dashboard](docs/dashboard.md): what each row means, and how the page is built.
 - [Troubleshooting](docs/troubleshooting.md): common errors and their fixes.
 - [Development](docs/development.md): the code layout, tests, the lab, and updating after an edit.

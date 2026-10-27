@@ -12,9 +12,12 @@ FIXTURE_NOW = 1791500000
 SRC = Path(__file__).resolve().parent / "state"
 
 
+TIMES = {"ts", "created", "updated", "due", "resolved", "until", "at"}  # every timestamp the state files hold
+
+
 def shift(value, delta):
     if isinstance(value, dict):
-        return {k: (v + delta if k == "ts" and isinstance(v, (int, float)) else shift(v, delta)) for k, v in value.items()}
+        return {k: (v + delta if k in TIMES and isinstance(v, (int, float)) else shift(v, delta)) for k, v in value.items()}
     if isinstance(value, list):
         return [shift(v, delta) for v in value]
     return value

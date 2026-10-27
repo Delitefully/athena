@@ -1,4 +1,4 @@
-{{define "page"}}<!doctype html>
+{{define "head"}}<!doctype html>
 <html lang="en"{{if .Scheme}} data-scheme="{{.Scheme}}"{{end}}>
 <head>
 <meta charset="utf-8">
@@ -12,45 +12,111 @@
 <link rel="preload" href="/static/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/style.css?v={{.Boot}}">
 </head>
-<body>
+<body{{with .Body}} class="{{.}}"{{end}}>
 {{template "sprite"}}
 <header>
 <a class="lockup" href="/" aria-label="athena">{{template "lockup"}}</a>
+<span class="health-slot"></span>
+<form class="search" action="/items" role="search"><input type="search" name="q" placeholder="Search items" aria-label="Search items" autocomplete="off"{{with .Q}} value="{{.}}"{{end}}></form>
 <p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
-</header>
-<main>{{template "main" .View}}</main>
-<div class="tip" aria-hidden="true" hidden></div>
+</header>{{end}}
+
+{{define "foot"}}<div class="tip" aria-hidden="true" hidden></div>
 <div class="toast" role="status" aria-live="polite" hidden><span class="toast-text"></span><button type="button" class="undo">Undo</button></div>
 <script src="/static/app.js?v={{.Boot}}"></script>
 </body>
 </html>{{end}}
 
+{{define "page"}}{{template "head" .}}
+<main>{{template "main" .View}}</main>
+{{template "foot" .}}{{end}}
+
+{{/* An item's own page, with its own link: chat can point at it. app.js swaps its <main> on each push. */}}
+{{define "itempage"}}{{template "head" .}}
+<main class="full" data-item="{{.Item.Ask.ID}}">{{template "itemmain" .Item}}</main>
+{{template "foot" .}}{{end}}
+
+{{define "itemmain"}}<span hidden data-title="{{.Ask.Name}} · athena"></span>
+<p class="back"><a href="/">← all items</a></p>
+<article class="view">
+<h1>{{.Ask.Name}}</h1>
+<p class="facts"><span>{{.Kind}}</span><span class="state">{{.State}}</span><span>filed <time data-ts="{{printf "%.0f" .Ask.Created}}" datetime="{{iso .Ask.Created}}">{{ago .Ask.Created}}</time></span>{{if .Ask.Due}}<span class="due"><time data-due="{{printf "%.0f" .Ask.Due}}" datetime="{{iso .Ask.Due}}">{{due .Ask.Due}}</time></span>{{end}}{{if .Ask.Stakes}}<span class="stakes">{{range $i, $s := .Ask.Stakes}}{{if $i}}, {{end}}{{$s}}{{end}}: always your call</span>{{end}}</p>
+{{with .Ask.Words}}<section><h2>You asked</h2><blockquote class="words">{{.}}</blockquote></section>{{end}}
+<section><h2>Where it stands</h2><p class="call">{{.Call}}</p>{{with .Ask.Why}}<p>{{.}}</p>{{end}}</section>
+{{if .Actions}}{{if eq .Ask.Kind "decision"}}<section class="brief"><h2>What's needed from you</h2>
+{{with .Body}}<div class="md">{{.}}</div>{{end}}
+{{if .AutoAt}}<p class="auto">athena takes the rec at {{at .AutoAt}} unless you object.</p>{{end}}
+{{template "bar" .Actions}}</section>
+{{else}}{{with .Body}}<section><h2>Report</h2><div class="md">{{.}}</div></section>{{end}}
+{{if .Actions.Undo}}<section class="brief">{{template "bar" .Actions}}</section>{{end}}{{end}}
+{{else}}{{with .Body}}<section><h2>{{if eq $.Ask.Kind "decision"}}The brief{{else}}Report{{end}}</h2><div class="md">{{.}}</div></section>{{end}}{{end}}
+{{with .Previews}}<section><h2>Previews</h2>{{range .}}<figure class="preview"><iframe src="{{.URL}}" sandbox="allow-scripts" loading="lazy" title="{{.Name}}"></iframe><figcaption><a class="pill" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-tip="Opens in a tab of its own, sandboxed: the preview can run its script but reach nothing of the dash"><svg class="pi" aria-hidden="true"><use href="#i-external-link"/></svg>{{.Name}}</a></figcaption></figure>{{end}}</section>{{end}}
+{{if or .Workers .PR .Ask.Links}}<section><h2>Workers and links</h2><ul class="links">
+{{- range .Workers}}<li><span class="name">{{.Title}}</span> <span class="label">{{.Label}}</span>{{if .TicketURL}} <a href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}} {{.Ticket}}{{end}}{{with .PR}} <a href="{{.URL}}">{{.Text}}</a>{{end}}</li>{{end}}
+{{- with .PR}}<li><a href="{{.URL}}">{{.Text}}</a></li>{{end}}
+{{- range .Ask.Links}}<li><a href="{{.URL}}">{{.Title}}</a></li>{{end}}
+</ul></section>{{end}}
+<section><h2>Timeline</h2><ol class="timeline">{{range .Timeline}}<li><time data-ts="{{printf "%.0f" .TS}}" datetime="{{iso .TS}}">{{ago .TS}}</time> {{.Text}}</li>{{else}}<li>Nothing yet.</li>{{end}}</ol></section>
+<div class="item-acts" data-item="{{.Ask.ID}}">
+{{- if .Done}}<button type="button" class="pill" data-do="done"><svg class="pi" aria-hidden="true"><use href="#i-check"/></svg>Done</button>{{end}}
+{{- if .Snooze}}<button type="button" class="pill" data-do="snooze" data-for="7200">Snooze 2 h</button><button type="button" class="pill" data-do="snooze" data-for="tomorrow">Until tomorrow</button><button type="button" class="pill" data-do="snooze" data-for="monday">Until Monday</button>{{end}}
+{{- if .Wake}}<button type="button" class="pill" data-do="wake">Bring it back now</button>{{end}}
+{{- if .Reopen}}<button type="button" class="pill" data-do="reopen"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Reopen</button>{{end -}}
+</div>
+</article>{{end}}
+
+{{define "searchpage"}}{{template "head" .}}
+<main class="full"><p class="back"><a href="/">← all items</a></p>
+<section class="group"><h2>{{if .Q}}Items matching “{{.Q}}” <span class="count">{{len .Hits}}</span>{{else}}Search items{{end}}</h2>
+{{if .Hits}}<ul>{{range .Hits}}<li class="item has-view"><div class="body"><p class="line"><span class="name"><a href="/item/{{.ID}}">{{.Name}}</a></span> <span class="call">{{.Call}}</span></p><p class="meta"><span class="label">{{.Kind}}</span><span>{{.State}}</span></p></div></li>{{end}}</ul>
+{{else if .Q}}<p class="empty">No item matches.</p>{{else}}<p class="empty">Names, titles, your words and how each resolved, open or done.</p>{{end}}
+</section></main>
+{{template "foot" .}}{{end}}
+
 {{define "main"}}<span hidden data-title="{{.Title}}"></span>
+{{template "health" .Health}}
+<div class="col yours">
+{{template "needs" .}}
+{{if .Ready}}{{template "group" (group "ready" "Ready for you" .Ready "")}}{{end}}
+</div>
+<div class="col others">
 {{if .Awaiting}}{{template "awaiting" .}}{{end}}
-{{template "group" (group "needs" "Needs you" .NeedsYou "Nothing waits on you.")}}
-{{template "group" (group "progress" "In progress" .InProgress "No live workers.")}}
-{{template "group" (group "done" "Done" .Done "Nothing finished in the last two weeks.")}}
+{{template "group" (group "progress" "In flight" .InProgress "Nothing in flight.")}}
+{{if .Done}}<details class="group done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">{{len .Done}}</span></h2></summary>
+<ul>{{range .Done}}{{template "item" .}}{{end}}</ul></details>{{end}}
+{{if .Snoozed}}<p class="snoozed">{{.Snoozed}} snoozed: each comes back when its time is up, or sooner if something happens to it.</p>{{end}}
+</div>
 {{if .Notices}}<aside class="notices">{{range .Notices}}<p>{{.}}</p>{{end}}</aside>{{end}}
 {{end}}
+
+{{/* athena doctor's one dot: green, red with what is wrong, or grey while it is unknown (never green then). */}}
+{{define "health"}}<p class="health {{.State}}" title="{{.Title}}" role="status"><span class="dot" aria-hidden="true"></span>{{.Text}}</p>{{end}}
+
+{{/* Needs you: at most needsShown rows; the rest fold behind "n more", saying when the first default applies. */}}
+{{define "needs"}}<section class="group needs" aria-labelledby="h-needs">
+<h2 id="h-needs">Needs you <span class="count">{{len .NeedsYou}}</span></h2>
+{{if .NeedsYou}}<ul>{{range first .NeedsYou}}{{template "item" .}}{{end}}</ul>
+{{with rest .NeedsYou}}<details class="more"><summary>{{len .}} more{{with autoNote .}} · {{.}}{{end}}</summary><ul>{{range .}}{{template "item" .}}{{end}}</ul></details>{{end}}
+{{else}}<p class="empty">Nothing waits on you.</p>{{end}}
+</section>{{end}}
 
 {{define "group"}}<section class="group {{.Key}}" aria-labelledby="h-{{.Key}}">
 <h2 id="h-{{.Key}}">{{.Name}} <span class="count">{{len .Items}}</span></h2>
 {{if .Items}}<ul>{{range .Items}}{{template "item" .}}{{end}}</ul>{{else}}<p class="empty">{{.Empty}}</p>{{end}}
 </section>{{end}}
 
-{{define "item"}}{{if .Note}}<li id="{{.ID}}" class="item note">
-<svg class="icon" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
-<div class="body"><p class="note-text">{{.Note}}</p><div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{end}}{{end}}"><p class="meta">{{.Label}}</p>{{template "actions" .Actions}}</div>
-{{if .Panel}}{{template "panel" .Panel}}{{else if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}</div>
-</li>{{else}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}">
+{{/* A row: its name first, then its call or title, its age or due date on the right; the meta line under it says where
+     it stands, with the ticket, repo and PR, and swaps for the row's pills on hover. An item's name opens its full view. */}}
+{{define "item"}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}{{if .Href}} has-view{{end}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body">
-<p class="line">{{if .When}}<time data-ts="{{printf "%.0f" .When}}" datetime="{{iso .When}}">{{ago .When}}</time>{{end}}<span class="who">{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{else}}<span class="ticket">{{.Name}}</span>{{end}}</span> <span class="title">{{.Title}}</span></p>
-<div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{if .ForPR}} keep{{end}}{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
-{{if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
-{{range .Folds}}<div class="fold" id="{{.ID}}"><p>{{.Text}}</p><div class="swap{{if .Actions.OnRow}} has-acts{{end}}"><p class="fold-label">{{.Label}}</p>{{template "actions" .Actions}}</div>{{if .Panel}}{{template "panel" .Panel}}{{else if .Why}}<p class="detail" title="{{.Why}}">{{.Why}}</p>{{end}}</div>{{end}}
+<p class="line"><span class="name">{{if .Href}}<a href="{{.Href}}">{{.Lead}}</a>{{else}}{{.Lead}}{{end}}</span>{{with .Second}} <span class="call">{{.}}</span>{{end}}
+{{- if .Due}}<time class="when due" data-due="{{printf "%.0f" .Due}}" datetime="{{iso .Due}}">{{due .Due}}</time>{{else if .When}}<time class="when" data-ts="{{printf "%.0f" .When}}" data-short datetime="{{iso .When}}">{{short .When}}</time>{{end}}</p>
+<div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{if .ForPR}} keep{{end}}{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
+{{if .AutoAt}}<p class="detail auto">athena takes the rec at {{at .AutoAt}} unless you object</p>{{end}}
+{{- if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
 </div>
-</li>{{end}}{{end}}
+</li>{{end}}
 
 {{/* The Awaiting review row: a pill per PR that waits on a teammate's review, shown only when there is one. A PR stacked
      on one stacks behind its pill, a quiet edge and a "+n" while collapsed, and fans out below it on hover and focus. */}}
@@ -144,31 +210,29 @@
 {{/* The pills: real buttons that take the place of the row's label line on hover and focus (below it, always, on
      touch and narrow screens). An icon-only pill shows its aria-label as a tooltip (.tip, app.js) on hover and keyboard focus. app.js posts each to
      /api/action; data-hides marks an answer that hides its ask until athena takes it up. */}}
-{{define "actions"}}{{with .}}{{if .OnRow}}<div class="acts{{if or .RowOptions .ForPR}} options{{end}}" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
+{{define "actions"}}{{with .}}{{if .OnRow}}<div class="acts{{if or .RowOptions .ForPR .Open}} options{{end}}" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
 {{- range .RowOptions}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
+{{- with .TakeRec}}<button type="button" class="pill rec" data-option="{{.ID}}" data-tip="Recommended: {{.Label}}"><svg class="pi" aria-hidden="true"><use href="#i-check"/></svg>Take rec</button>{{end}}
+{{- if .Undo}}<button type="button" class="pill" data-option="undo-default" data-tip="Undo {{.Undo}}: athena takes it back"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Undo</button>{{end}}
+{{- if .Done}}<button type="button" class="pill" data-do="done"><svg class="pi" aria-hidden="true"><use href="#i-check"/></svg>Done</button>{{end}}
+{{- if .Snooze}}<button type="button" class="pill" data-do="snooze" data-tip="Until tomorrow 09:00"><svg class="pi" aria-hidden="true"><use href="#i-clock"/></svg>Snooze</button>{{end}}
+{{- with .Open}}<a class="pill" href="{{.}}"><svg class="pi" aria-hidden="true"><use href="#i-external-link"/></svg>Open</a>{{end}}
 {{- if .RequestReview}}<button type="button" class="pill" data-option="request-review" aria-label="Request review"><svg class="pi" aria-hidden="true"><use href="#i-eye"/></svg>Request review</button>{{end}}
 {{- if .Recheck}}<button type="button" class="pill" data-option="recheck" aria-label="Re-check and fix"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Re-check</button>{{end}}
 {{- with .OpenPR}}<a class="pill" href="{{.}}" aria-label="Open PR {{$.Num}} on GitHub"><svg class="pi" aria-hidden="true"><use href="#i-git-pull-request"/></svg>Open PR</a>{{end}}
 {{- if .Go}}<button type="button" class="pill" data-option="go" data-head="{{.Head}}" aria-label="Merge: tell athena go"><svg class="pi" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge</button>{{end}}
 {{- if .Dismiss}}<button type="button" class="pill dismiss" data-option="dismiss" aria-label="Dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg></button>{{end}}
-{{- if .Discuss}}<button type="button" class="pill" data-discuss aria-label="Discuss in Athena"><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg><span class="lbl">Discuss in Athena</span></button>{{end}}
-{{- if .Reply}}<button type="button" class="pill" data-reply aria-label="Reply…"><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg><span class="lbl">Reply…</span></button>{{end -}}
+{{- if not .Open}}{{if .Discuss}}<button type="button" class="pill" data-discuss aria-label="Discuss in Athena"><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg><span class="lbl">Discuss in Athena</span></button>{{end}}
+{{- if .Reply}}<button type="button" class="pill" data-reply aria-label="Reply…"><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg><span class="lbl">Reply…</span></button>{{end}}{{end -}}
 </div>{{end}}{{end}}{{end}}
 
-{{/* An ask's detail: a native <details> whose summary is the ask's why line, with a "Details" hint and a chevron, so a
-     row looks as it did until opened. The summary holds text only (a button in it would toggle the panel); the panel
-     holds the ask's whole text when its title cuts it, its Markdown body (renderMarkdown), links to its previews, each
-     in a sandboxed tab of its own, and its answers as full-size buttons. app.js keeps it open across pushes. */}}
-{{define "panel"}}<details class="ask-detail" data-ask="{{.Ask}}"><summary>{{with .Why}}<span class="detail">{{.}}</span>{{end}}<span class="more">Details<svg class="pi chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></summary>
-<div class="panel">{{with .Text}}<div class="md"><p>{{.}}</p></div>{{end}}{{with .Body}}<div class="md">{{.}}</div>{{end}}
-{{- with .Previews}}<p class="previews">{{range .}}<a class="pill" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-tip="Opens in a tab of its own, sandboxed: the preview can run its script but reach nothing of the dash"><svg class="pi" aria-hidden="true"><use href="#i-external-link"/></svg>{{.Name}}</a>{{end}}</p>{{end}}
-{{- template "bar" .Actions}}</div>
-</details>{{end}}
-
-{{/* The panel's answers: the row's own actions, every option with its label and Discuss and Reply named in full. */}}
+{{/* The full view's answers: every option with its label (the recommended one marked), Discuss and Reply named in
+     full, and "Don't ask me this again", which rides on the answer given with it. */}}
 {{define "bar"}}{{with .}}<div class="acts bar" data-item="{{.Item}}"{{if .Hides}} data-hides{{end}}>
-{{- range .Options}}<button type="button" class="pill" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}</button>{{end}}
+{{- range .Options}}<button type="button" class="pill{{if and $.TakeRec (eq .ID $.TakeRec.ID)}} rec{{end}}" data-option="{{.ID}}">{{if .Icon}}<svg class="pi" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>{{end}}{{.Label}}{{if and $.TakeRec (eq .ID $.TakeRec.ID)}} <span class="tag">rec</span>{{end}}</button>{{end}}
+{{- if .Undo}}<button type="button" class="pill" data-option="undo-default"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Undo {{.Undo}}</button>{{end}}
 {{- if .Dismiss}}<button type="button" class="pill" data-option="dismiss"><svg class="pi" aria-hidden="true"><use href="#i-x"/></svg>Dismiss</button>{{end}}
 {{- if .Discuss}}<button type="button" class="pill" data-discuss><svg class="pi" aria-hidden="true"><use href="#i-message-circle"/></svg>Discuss in Athena</button>{{end}}
 {{- if .Reply}}<button type="button" class="pill" data-reply><svg class="pi" aria-hidden="true"><use href="#i-send"/></svg>Reply…</button>{{end -}}
+{{- if .Rule}}<label class="rule"><input type="checkbox" name="rule"> Don't ask me this again</label>{{end -}}
 </div>{{end}}{{end}}

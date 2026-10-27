@@ -22,6 +22,8 @@ const (
 	actionsFile = "actions.jsonl"      // the human's answers from the page, appended by this server (actions.go)
 	dismissFile = "dismissed-prs.json" // PRs the human dismissed from Awaiting review, written by this server (actions.go)
 	stackFile   = "stack.json"         // the stacked-PR chains athena watches (`athena stack`)
+	healthFile  = "health.json"        // athena doctor's last check: {ts, ok, problems: [{check, detail, since}], checks}
+	requestFile = "requests.jsonl"     // what the human typed into HQ (athena_lib/requestlog.py): their last activity
 	configFile  = "dash.json"          // local settings, outside the repository: {"linear_workspace": "..."}
 	workersDir  = "workers"
 )
@@ -114,6 +116,10 @@ type Snapshot struct {
 	// Dismissed: the PRs the human took off the Awaiting review row, by owner/name#n, each as it was then.
 	Dismissed map[string]Dismissal
 	Notices   []string
+	Health    *Health // health.json, nil while athena doctor has written none
+	// LastSeen: the human's last activity athena can see, in Unix seconds: a prompt typed into HQ, or an answer given
+	// on this page. A default applies on its own sooner once they have been away (items.go applyAt).
+	LastSeen float64
 	// LinearWorkspace comes from dash.json; ATHENA_LINEAR_WORKSPACE overrides it. Empty leaves ticket ids unlinked.
 	LinearWorkspace string
 }
@@ -143,7 +149,7 @@ func (s *Store) watched() map[string]sig {
 			out[rel] = sig{fi.Size(), fi.ModTime().UnixNano()}
 		}
 	}
-	for _, f := range []string{ledgerFile, watchFile, historyFile, asksFile, actionsFile, configFile, dismissFile, stackFile} {
+	for _, f := range []string{ledgerFile, watchFile, historyFile, asksFile, actionsFile, configFile, dismissFile, stackFile, healthFile, requestFile} {
 		add(f)
 	}
 	entries, _ := os.ReadDir(filepath.Join(s.dir, workersDir))
@@ -279,6 +285,15 @@ func (s *Store) Load() Snapshot {
 	}
 	if m := s.object(dismissFile, &snap.Notices); m != nil {
 		snap.Dismissed = parseDismissed(m)
+	}
+	if m := s.object(healthFile, &snap.Notices); m != nil {
+		snap.Health = parseHealth(m)
+	}
+	snap.LastSeen = lastRequest(filepath.Join(s.dir, requestFile))
+	for _, a := range snap.Actions {
+		if !a.Auto && a.TS > snap.LastSeen {
+			snap.LastSeen = a.TS
+		}
 	}
 	sort.Strings(snap.Notices)
 	return snap
@@ -446,12 +461,52 @@ func parseDismissed(m map[string]any) map[string]Dismissal {
 	return out
 }
 
-// Ask is one item of needs-you.json: a decision or note of athena's that belongs to no worker.
+// Ask is one item of needs-you.json (athena_lib/asks.py): anything the human asked for or needs to know about.
 type Ask struct {
-	ID, Kind, Text, Why, PR string // Kind: question or note; PR: owner/name#n, the row it folds into
-	Body                    string // Markdown the page expands under it
+	ID, Kind, Text, Why, PR string // Kind: decision, request, result, promise or incident; PR: owner/name#n
+	Body                    string // Markdown its full view shows
 	Previews                []string
 	Options                 []Option
+	Name                    string // 2 to 4 words; NameDerived when made up from an item from before names
+	NameDerived             bool
+	Next                    string  // whose move: you, athena, worker, reviewer, customer, colleague or ci
+	Due                     float64 // Unix seconds, 0 for none
+	Words                   string  // the human's own words
+	Workers                 []string
+	Links                   []Link
+	Rec                     string   // the recommended option's id: Take rec
+	Auto                    bool     // Rec applies on its own (decision 4); never with Stakes
+	Stakes                  []string // security, customer, money, one-way
+	Created, Updated        float64
+	Resolved                float64 // when it resolved, 0 while open
+	ResolvedNote            string
+	ResolvedBy              string // "you": the human resolved it here
+	SnoozeUntil, SnoozedAt  float64
+	Applied                 *Applied // the default athena applied on its own, waiting for the human's Done or Undo
+	Log                     []LogEntry
+}
+
+// Link is a report, page or screenshot an item links.
+type Link struct{ Title, URL string }
+
+// LogEntry is a line of an item's timeline.
+type LogEntry struct {
+	TS   float64
+	Text string
+}
+
+// Applied is a default that applied on its own: the option athena took.
+type Applied struct {
+	Option, Label string
+	TS            float64
+}
+
+// Open: not resolved.
+func (a Ask) Open() bool { return a.Resolved == 0 }
+
+// Snoozed: hidden until SnoozeUntil, unless something happened to it since it was snoozed.
+func (a Ask) Snoozed(now float64) bool {
+	return a.SnoozeUntil > now && a.Updated < a.SnoozedAt
 }
 
 // Option is one answer athena offers. Do is reply (athena acts on it) or dismiss (nothing to do).
@@ -469,6 +524,20 @@ const (
 	askBodyMax     = 8000
 	previewsMax    = 4
 	askTextMax     = 600 // an ask from before titles were one short sentence still shows, in full in its panel
+	nameMax        = 32
+	wordsMax       = 2000
+	logMax         = 50
+	linksMax       = 10
+	workersMax     = 6
+)
+
+// The kinds an item is, and whose move it can wait on (athena_lib/asks.py KINDS, NEXT; tests/test_asks.py checks).
+var (
+	itemKinds  = map[string]bool{"decision": true, "request": true, "result": true, "promise": true, "incident": true}
+	itemNext   = map[string]bool{"you": true, "athena": true, "worker": true, "reviewer": true, "customer": true, "colleague": true, "ci": true}
+	nextByKind = map[string]string{"decision": "you", "result": "you", "request": "athena", "promise": "athena", "incident": "athena"}
+	itemStakes = map[string]bool{"security": true, "customer": true, "money": true, "one-way": true}
+	httpLink   = regexp.MustCompile(`^https?://\S+$`)
 )
 
 var (
@@ -500,9 +569,6 @@ func parseAsks(m map[string]any) []Ask {
 			continue
 		}
 		seen[a.ID] = true
-		if a.Kind != "note" {
-			a.Kind = "question"
-		}
 		most := optionsMax
 		if a.Body != "" {
 			most = optionsMaxBody
@@ -514,8 +580,8 @@ func parseAsks(m map[string]any) []Ask {
 				continue
 			}
 			o := Option{ID: str(om, "id"), Label: strings.TrimSpace(str(om, "label")), Icon: str(om, "icon"), Do: str(om, "do")}
-			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax ||
-				a.Kind == "question" && discussLabel.MatchString(o.Label) {
+			if !askID.MatchString(o.ID) || o.ID == "dismiss" || o.ID == undoDefault || o.Label == "" || utf8.RuneCountInString(o.Label) > labelMax ||
+				a.Kind != "note" && a.Kind != "result" && discussLabel.MatchString(o.Label) {
 				continue
 			}
 			if !knownIcon(o.Icon) {
@@ -526,12 +592,14 @@ func parseAsks(m map[string]any) []Ask {
 			}
 			a.Options = append(a.Options, o)
 		}
+		a.Kind = itemKind(a.Kind, a.Options)
 		previews, _ := im["previews"].([]any)
 		for _, pv := range previews {
 			if p, ok := pv.(string); ok && previewEntry.MatchString(p) && len(a.Previews) < previewsMax {
 				a.Previews = append(a.Previews, p)
 			}
 		}
+		parseItemFields(&a, im)
 		out = append(out, a)
 	}
 	return out
@@ -616,6 +684,8 @@ type Action struct {
 	Option  string
 	Text    string
 	Discuss bool
+	Auto    bool // a default this server applied on its own
+	Rule    bool // "Don't ask me this again" was ticked with it
 	Status  string
 }
 
@@ -637,7 +707,7 @@ func foldActions(lines []map[string]any) []Action {
 			continue
 		}
 		bySeq[seq] = &Action{Seq: seq, TS: num(m, "ts"), Item: str(m, "item"), Option: str(m, "option"), Text: str(m, "text"),
-			Discuss: truthy(m["discuss"]), Status: str(m, "status")}
+			Discuss: truthy(m["discuss"]), Auto: m["auto"] == true, Rule: m["rule"] == true, Status: str(m, "status")}
 		order = append(order, seq)
 	}
 	sort.Ints(order)

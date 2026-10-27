@@ -43,6 +43,7 @@ type actionRequest struct {
 	Head    string  `json:"head"`
 	Text    *string `json:"text"`
 	Discuss bool    `json:"discuss"`
+	Rule    bool    `json:"rule"` // "Don't ask me this again", with an option or a reply on a decision
 	Seq     int     `json:"seq"`
 	Undo    bool    `json:"undo"`
 }
@@ -75,19 +76,27 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int{"seq": seq})
 }
 
-func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error) {
+// checkPost: a POST from this server's own page, with a JSON body and the token of this start.
+func (s *Server) checkPost(r *http.Request) error {
 	if r.Method != http.MethodPost {
-		return 0, &httpError{http.StatusMethodNotAllowed, "POST only"}
+		return &httpError{http.StatusMethodNotAllowed, "POST only"}
 	}
 	// A cross-origin page cannot send this Origin or a JSON body without a CORS preflight, which is never answered.
 	if o := r.Header.Get("Origin"); o == "" || o != "http://"+r.Host {
-		return 0, &httpError{http.StatusForbidden, "this page's origin only"}
+		return &httpError{http.StatusForbidden, "this page's origin only"}
 	}
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		return 0, &httpError{http.StatusUnsupportedMediaType, "JSON only"}
+		return &httpError{http.StatusUnsupportedMediaType, "JSON only"}
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Athena-Token")), []byte(s.token)) != 1 {
-		return 0, &httpError{http.StatusForbidden, "reload the page"}
+		return &httpError{http.StatusForbidden, "reload the page"}
+	}
+	return nil
+}
+
+func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error) {
+	if err := s.checkPost(r); err != nil {
+		return 0, err
 	}
 	var req actionRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, bodyMax))
@@ -106,7 +115,7 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 		return 0, s.undismiss(strings.TrimPrefix(req.Item, pillItem))
 	}
 	if req.Undo {
-		if req.Seq <= 0 || req.Item != "" || req.Option != "" || req.Text != nil || req.Discuss {
+		if req.Seq <= 0 || req.Item != "" || req.Option != "" || req.Text != nil || req.Discuss || req.Rule {
 			return 0, &httpError{http.StatusBadRequest, "undo names a seq only"}
 		}
 		return req.Seq, s.appendAction(func(cur map[int]Action, _ int) (map[string]any, error) {
@@ -144,6 +153,9 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 	if acts == nil || !acts.allows(req.Option, text, req.Discuss) {
 		return 0, &httpError{http.StatusUnprocessableEntity, "the page does not offer that answer"}
 	}
+	if req.Rule && (!acts.Rule || req.Discuss) {
+		return 0, &httpError{http.StatusUnprocessableEntity, "don't ask again goes with an answer to a decision"}
+	}
 	if req.Option == "go" && (acts.Head == "" || req.Head != acts.Head) {
 		return 0, &httpError{http.StatusConflict, "the PR moved on: look again"}
 	}
@@ -162,6 +174,9 @@ func (s *Server) takeAction(r *http.Request, w http.ResponseWriter) (int, error)
 		}
 		seq = max + 1
 		line := map[string]any{"seq": seq, "ts": now, "item": req.Item, "status": "queued"}
+		if req.Rule {
+			line["rule"] = true
+		}
 		switch {
 		case req.Discuss:
 			line["discuss"] = true

@@ -58,25 +58,31 @@ func TestListenBindsLoopbackOnly(t *testing.T) {
 	}
 }
 
-func TestPageRendersTheThreeGroups(t *testing.T) {
+func TestPageRendersTheGroups(t *testing.T) {
 	_, base := start(t, copyFixture(t))
 	resp, body := get(t, base+"/", "")
 	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("%d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 	for _, want := range []string{
-		"<title>(12) athena</title>",
+		"<title>(13) athena</title>",
+		`<p class="health ok" title="athena doctor&#39;s last check: `,
 		`<h2 id="h-awaiting">Awaiting review <span class="count">7</span></h2>`,
-		`<h2 id="h-needs">Needs you <span class="count">12</span></h2>`,
-		`<h2 id="h-progress">In progress <span class="count">4</span></h2>`,
-		`<div class="fold" id="ask-a3"><p>Approve and merge ABC-108</p>`,
-		`<p class="meta">athena asks</p>`,
-		`<h2 id="h-done">Done <span class="count">4</span></h2>`,
+		`<h2 id="h-needs">Needs you <span class="count">13</span></h2>`,
+		`<details class="more"><summary>6 more · athena takes the rec at `,
+		`<p class="detail auto">athena takes the rec at `,
+		`<h2 id="h-ready">Ready for you <span class="count">2</span></h2>`,
+		`<h2 id="h-progress">In flight <span class="count">6</span></h2>`,
+		`<details class="group done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">2</span></h2></summary>`,
+		`<p class="snoozed">1 snoozed`,
 		`<a class="ticket" href="https://linear.app/acme/issue/ABC-108">ABC-108</a>`,
 		`<a href="https://github.com/acme/web/pull/48">#48</a>`,
 		`<span class="checks failure">checks failing</span>`,
-		"Start <strong>ABC-111</strong> now",
-		`<a href="https://github.com/acme/web/pull/50">acme/web#50</a>`,
+		`<span class="name"><a href="/item/a1">Export queue start</a></span> <span class="call">Start <strong>ABC-111</strong> now`,
+		`<span class="name"><a href="/item/a7">Customer meeting</a></span>`,
+		`<time class="when due" data-due="`,
+		`>due tmrw</time>`,
+		`<span class="name">Rate limits for the export API</span>`, // a worker's row leads with its title, the ticket in its meta
 		`<li id="w-abc-102" class="item act">`,
 	} {
 		if !strings.Contains(body, want) {
@@ -170,7 +176,7 @@ func TestEventsPushAChangedFileToAnOpenPage(t *testing.T) {
 		t.Fatalf("the stream opens with its start id, not %q", boot)
 	}
 	first := readEvent(t, r)
-	if !strings.Contains(first, `id="w-abc-101"`) || !strings.Contains(first, "In progress") {
+	if !strings.Contains(first, `id="w-abc-101"`) || !strings.Contains(first, "In flight") {
 		t.Fatalf("first event is not the page: %.200s", first)
 	}
 	write(t, filepath.Join(dir, "workers", "abc-101.json"),
@@ -282,19 +288,19 @@ func TestEveryRowGlyphIsInTheSpriteAtOneWeight(t *testing.T) {
 	}
 }
 
-func TestNotesShowTheQuestionMarkOrTheDash(t *testing.T) {
+func TestItemsShowTheirKindsGlyph(t *testing.T) {
 	dir := copyFixture(t)
-	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "kind": "question", "text": "Close ABC-4550?"},
-		{"id": "a2", "kind": "note", "text": "The quota resets at 14:00."}]}`)
+	write(t, filepath.Join(dir, asksFile), `{"items": [{"id": "a1", "kind": "question", "name": "Duplicate ticket", "text": "Close ABC-4550?"},
+		{"id": "a2", "kind": "note", "name": "Quota reset", "text": "The quota resets at 14:00."}]}`)
 	_, base := start(t, dir)
 	_, body := get(t, base+"/", "")
-	ask := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-ask"/></svg>\s*<div class="body"><p class="note-text">Close ABC-4550`)
-	note := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-note"/></svg>\s*<div class="body"><p class="note-text">The quota resets`)
+	ask := regexp.MustCompile(`<svg class="icon" [^>]*><use href="#i-ask"/></svg>\s*<div class="body">\s*<p class="line"><span class="name"><a href="/item/a1">Duplicate ticket</a></span> <span class="call">Close ABC-4550\?</span>`)
+	result := regexp.MustCompile(`<svg class="icon badge" [^>]*><use href="#i-done"/></svg>\s*<div class="body">\s*<p class="line"><span class="name"><a href="/item/a2">Quota reset</a></span> <span class="call">The quota resets`)
 	if !ask.MatchString(body) {
-		t.Error("a question lacks the question mark")
+		t.Error("a decision lacks the question mark")
 	}
-	if !note.MatchString(body) {
-		t.Error("a plain note lacks the dash")
+	if !result.MatchString(body) {
+		t.Error("a result lacks its badge")
 	}
 }
 

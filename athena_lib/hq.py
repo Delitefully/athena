@@ -464,7 +464,7 @@ def restart(update=True, force_update=False) -> dict:
 
 
 ROTATE_ROUTINE = ("Fresh HQ after `athena hq rotate`: load the athena skill, then read {handoff} in full (your fleet, "
-                  "PRs, open asks, in-flight threads, notes tail and standing orders). Run the skill's session start "
+                  "PRs, every open item by name, in-flight threads, notes tail and standing orders). Run the skill's session start "
                   "(§1) from it, including §1a: check the athena-watch mod runs athena watch, re-create the fallback "
                   "sweep cron with the sweep subagent brief, act on `athena ask queue`. Then tell me in at most five "
                   "lines what needs me and what is live.")

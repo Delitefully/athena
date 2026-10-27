@@ -21,54 +21,36 @@ const (
 	stuckWhy   = "athena hasn't picked this up yet"
 )
 
-// Item is one row on the page.
+// Item is one row on the page: an item's, a worker's or a PR's. Its name comes first (plan §3): an item's 2 to 4
+// words, a worker's title; ticket ids, repos and PR numbers are in its meta line and its full view.
 type Item struct {
 	ID        string // stable across renders, so the page animates only rows that are new
 	Ticket    string
 	TicketURL string
-	Name      string
-	Title     string
+	Name      string        // what the row leads with
+	Href      string        // the item's full view, /item/<id>, when the row is an item's
+	Call      template.HTML // an item's call or where it stands, in athena's voice
+	Title     string        // a worker's or PR's title, when Name is its worker's name
 	Repo      string
 	Icon      string // an icon id from the page's sprite
 	Badge     bool   // the human acts on it: its label is set in ink
 	Label     string
 	Detail    string
-	When      float64
+	When      float64 // its age is from this
+	Due       float64 // an item's due date
 	PR        *PRView
-	Note      template.HTML // an ask's text, in athena's voice
-	Panel     *Panel        // an ask's detail, expanded under it
-	Folds     []Fold        // asks about this row's PR, shown under it
-	Actions   *Actions      // the pills the row offers, or nil
-	Sent      string        // a PR row's button answer athena has queued: "merge go sent"
+	Actions   *Actions // the pills the row offers, or nil
+	Sent      string   // a PR row's button answer athena has queued: "merge go sent"
+	AutoAt    float64  // a default that applies on its own then, unless the human objects
 
+	item   string // the item it is, or that a worker's row carries
 	pr     *PR    // its PR, for the Awaiting review row
 	branch string // that PR's head branch
 	moved  bool   // placed by its PR's whose-move state, not by its worker's own state
+	rank   int    // Needs you's order: due soon first
 }
 
-// Fold is an ask shown under the row of the PR it is about.
-type Fold struct {
-	ID      string
-	Text    template.HTML
-	Label   string // "athena asks" or "note": the line its pills take the place of
-	Why     string
-	Actions *Actions
-	Panel   *Panel
-}
-
-// Panel is an ask's detail, a native <details> under its row or fold: its why line is the summary, which opens on the
-// ask's whole text (when its title cuts it), its Markdown body, its previews, and its answers as full-size buttons.
-// Its Actions are the row's own, so the server checks an answer from either the same way.
-type Panel struct {
-	Ask      string        // the ask's id: the page keeps a panel open across pushes by it
-	Why      string        // the summary's line
-	Text     template.HTML // the ask's whole text, when its title is cut (an ask from before titles were short)
-	Body     template.HTML // rendered by renderMarkdown
-	Previews []Preview
-	Actions  *Actions
-}
-
-// Preview is a link to a preview the dash serves sandboxed, opened in a tab of its own.
+// Preview is a link to a preview the dash serves sandboxed: embedded in an item's full view, or opened in a tab of its own.
 type Preview struct {
 	Name, URL string
 }
@@ -76,7 +58,13 @@ type Preview struct {
 // Actions are what a row or fold lets the human answer from the page, each a POST to /api/action naming Item.
 type Actions struct {
 	Item    string
-	Options []Option // athena's, at most two
+	Options []Option // athena's: every one in the item's full view
+	TakeRec *Option  // the recommended option: "Take rec" on the row
+	Done    bool     // the dash's own: the human took the last step, or read it
+	Snooze  bool     // the dash's own: hide it for a while
+	Undo    string   // a default athena applied on its own: "Undo <label>" queues undo-default for athena
+	Rule    bool     // "Don't ask me this again" may go with an answer (a decision's)
+	Open    string   // its full view
 	Discuss bool     // "Discuss in Athena"
 	Reply   bool     // "Reply…": a line of free text
 	Dismiss bool     // a note athena gave no options, or a PR on the Awaiting review row: "×"
@@ -96,18 +84,19 @@ type Actions struct {
 // sentText: what a PR row says while its button's answer waits for athena; each such answer is one at a time.
 var sentText = map[string]string{"recheck": "re-check sent", "request-review": "review request sent", "go": "merge go sent"}
 
-// RowOptions are the options the row's pills show: past two they are the panel's alone, with Discuss and Reply on the row.
+// RowOptions are the options the row's pills show: a worker's or PR's row has none; an item's row offers only the
+// one-click calls (Take rec, Done, Snooze, Open), and its options are in its full view.
 func (a *Actions) RowOptions() []Option {
-	if len(a.Options) > optionsMax {
+	if a.Open != "" || len(a.Options) > optionsMax {
 		return nil
 	}
 	return a.Options
 }
 
-// OnRow: whether the row has any pill to show. A note whose 3 or 4 options are its panel's alone has none, and its
-// label line then stays as it is on hover.
+// OnRow: whether the row has any pill to show.
 func (a *Actions) OnRow() bool {
-	return len(a.RowOptions()) > 0 || a.Discuss || a.Reply || a.Dismiss || a.Recheck || a.RequestReview || a.Go || a.OpenPR != ""
+	return len(a.RowOptions()) > 0 || a.TakeRec != nil || a.Done || a.Snooze || a.Undo != "" || a.Open != "" ||
+		a.Open == "" && (a.Discuss || a.Reply) || a.Dismiss || a.Recheck || a.RequestReview || a.Go || a.OpenPR != ""
 }
 
 // allows: whether a POST's answer is one these actions offer.
@@ -125,6 +114,8 @@ func (a *Actions) allows(option, text string, discuss bool) bool {
 		return a.RequestReview
 	case option == "go":
 		return a.Go
+	case option == undoDefault:
+		return a.Undo != ""
 	}
 	for _, o := range a.Options {
 		if o.ID == option {
@@ -155,11 +146,16 @@ type Pill struct {
 }
 
 type View struct {
-	Title                      string
-	Awaiting                   []Pill
-	AwaitingCount              int // every PR on the row, those stacked behind a pill too
-	NeedsYou, InProgress, Done []Item
-	Notices                    []string
+	Title         string
+	Health        HealthView
+	Awaiting      []Pill
+	AwaitingCount int // every PR on the row, those stacked behind a pill too
+	NeedsYou      []Item
+	Ready         []Item // results and applied defaults the human has not read: Done takes them off
+	InProgress    []Item // In flight: athena's, a worker's or someone else's move
+	Done          []Item // today's
+	Snoozed       int
+	Notices       []string
 
 	actionable map[string]*Actions // every row and fold the page offers actions on, by Item
 	pills      map[string]*Pill    // every pill on the Awaiting review row, front or behind, by its action item
@@ -260,8 +256,8 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 				}
 				pr = f
 			}
-			if pr == nil && w.Linear == "" {
-				continue // a probe or experiment: it stays in the ledger, off the page
+			if pr == nil && w.Linear == "" || now-w.Updated > doneToday {
+				continue // a probe or experiment stays in the ledger, off the page; Done is today's
 			}
 			it.PR = prView(pr, 0)
 			it.Icon, it.Label = "retired", "retired"
@@ -311,13 +307,29 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 	v.Done = append(v.Done, retired...)
 	stackAwaiting(&v, s.Stacks, s.Dismissed, waiting(s.Actions), now)
 	v.AwaitingCount = len(v.pills)
-	foldAsks(&v, s.Asks, waiting(s.Actions), now) // once every row is in, retired ones too
+	placeItems(&v, s, now) // once every row is in: an item on a worker names its row
 	markSent(&v, s.Actions, now)
-	sort.SliceStable(v.NeedsYou, func(i, j int) bool { return needRank(v.NeedsYou[i]) < needRank(v.NeedsYou[j]) })
+	for i := range v.NeedsYou {
+		v.NeedsYou[i].rank = needRank(v.NeedsYou[i], now)
+	}
+	sort.SliceStable(v.NeedsYou, func(i, j int) bool {
+		a, b := v.NeedsYou[i], v.NeedsYou[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
+		switch a.rank {
+		case 0:
+			return a.Due < b.Due
+		case 2:
+			return a.When < b.When // the oldest call first: it has waited longest
+		}
+		return false
+	})
 	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
 	if len(v.Done) > doneMax {
 		v.Done = v.Done[:doneMax]
 	}
+	v.Health = healthView(s.Health, now)
 	v.Title = "athena"
 	if n := len(v.NeedsYou); n > 0 {
 		v.Title = fmt.Sprintf("(%d) athena", n)
@@ -326,15 +338,10 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 	for key, p := range v.pills {
 		v.actionable[key] = p.Actions
 	}
-	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
+	for _, group := range [][]Item{v.NeedsYou, v.Ready, v.InProgress, v.Done} {
 		for _, it := range group {
 			if it.Actions != nil {
 				v.actionable[it.Actions.Item] = it.Actions
-			}
-			for _, f := range it.Folds {
-				if f.Actions != nil {
-					v.actionable[f.Actions.Item] = f.Actions
-				}
 			}
 		}
 	}
@@ -355,85 +362,200 @@ func waiting(actions []Action) map[string]float64 {
 	return out
 }
 
-func needRank(it Item) int {
+// needRank: Needs you's order. An item due within a day (or overdue) first, by due date: the meeting sorts to the top
+// the day before. Then a blocked worker or failing checks, then the human's own calls (items), then PR rows.
+func needRank(it Item, now float64) int {
 	switch {
-	case it.Note != "":
-		return 2
-	case it.Icon == "blocked" || it.Icon == "fail":
+	case it.Due > 0 && it.Due-now < doneToday:
 		return 0
+	case it.Icon == "blocked" || it.Icon == "fail":
+		return 1
+	case strings.HasPrefix(it.ID, "ask-"):
+		return 2
 	}
-	return 1
+	return 3
 }
 
-// foldAsks: an ask about a PR with a row (its `pr`, else a PR URL in its text) shows under that row; any other is a
-// row of its own, "athena asks" with the question-mark glyph for a question, and "note" with the thread's dash otherwise. An ask the human answered from the page is
-// hidden while athena has the answer queued, and shows again, saying so, once it has waited stuckAfter.
-func foldAsks(v *View, asks []Ask, queued map[string]float64, now float64) {
+// kindLabel is how a row names an item's kind and whose move it is.
+func kindLabel(a Ask) string {
+	switch a.Kind {
+	case "decision":
+		if a.Next == "you" {
+			return "your call"
+		}
+	case "result":
+		return "result"
+	case "promise":
+		return "athena promised"
+	case "incident":
+		return "incident"
+	}
+	if a.Next == "you" {
+		return "your move"
+	}
+	return a.Next + "'s move"
+}
+
+// placeItems puts every open item where whose move it is says (plan §3): Needs you when it is the human's call,
+// Ready for you while a result or a default athena applied on its own is unread, In flight while it is anyone
+// else's move, Done when it resolved today. A snoozed item waits off the page; one the human answered here is hidden
+// while athena has the answer queued, and shows again, saying so, once it has waited stuckAfter. An item on a live
+// worker (request, promise or incident) names that worker's row instead of a row of its own.
+func placeItems(v *View, s Snapshot, now float64) {
+	queued := waiting(s.Actions)
+	auto := map[string]Action{}
+	for _, a := range s.Actions {
+		if a.Auto && a.Status == "queued" { // done or undone: the item's applied (or gone) says the rest
+			auto[a.Item] = a
+		}
+	}
 	rows := map[string]*Item{}
 	for _, group := range [][]Item{v.NeedsYou, v.InProgress, v.Done} {
 		for i := range group {
-			if group[i].PR != nil && prKey(group[i].PR.URL) != "" {
-				rows[prKey(group[i].PR.URL)] = &group[i]
-			}
+			rows[group[i].ID] = &group[i]
 		}
 	}
-	var own []Item
-	for _, a := range asks {
-		why := a.Why
+	merged := mergedPRs(s)
+	for _, a := range s.Asks {
+		title, _ := a.Title()
+		it := Item{ID: "ask-" + a.ID, Name: a.Name, Href: "/item/" + a.ID, Call: inline(title), Icon: "note", Label: kindLabel(a),
+			Detail: a.Why, When: a.Created, Due: a.Due, item: a.ID}
+		if a.Name == "" {
+			it.Name = "Untitled item"
+		}
+		if a.PR != "" {
+			it.PR = &PRView{URL: "https://github.com/" + strings.Replace(a.PR, "#", "/pull/", 1), Text: "#" + strconv.Itoa(prNumberOf(a.PR))}
+		}
+		acts := &Actions{Item: a.ID, Options: a.Options, Open: it.Href}
+		it.Actions = acts
+		if !a.Open() {
+			if now-a.Resolved < doneToday {
+				it.Icon, it.Label, it.When, it.Due, it.Actions = "ok", "resolved", a.Resolved, 0, nil
+				if a.ResolvedNote != "" {
+					it.Label = a.ResolvedNote
+				}
+				v.Done = append(v.Done, it)
+			}
+			continue
+		}
+		if a.Snoozed(now) {
+			v.Snoozed++
+			continue
+		}
+		if ap, ok := auto[a.ID]; ok || a.Applied != nil {
+			label, verb := a.option(ap.Option).Label, "athena is taking the rec on its own: " // queued: HQ has yet to act
+			if a.Applied != nil {
+				label, verb = a.Applied.Label, "athena took the rec on its own: "
+			}
+			it.Icon, it.Badge, it.Label = "ready", true, verb+label
+			acts.Done, acts.Undo = true, label
+			v.Ready = append(v.Ready, it)
+			continue
+		}
 		if ts, ok := queued[a.ID]; ok {
 			if now-ts < stuckAfter {
 				continue
 			}
-			why = stuckWhy
+			it.Detail = stuckWhy
 		}
-		acts := &Actions{Item: a.ID, Options: a.Options, Hides: true}
-		if a.Kind == "question" {
-			acts.Discuss, acts.Reply = true, true
-		} else if len(a.Options) == 0 {
-			acts.Dismiss = true
-		}
-		row := rows[a.PR]
-		for _, m := range prURL.FindAllString(a.Text, -1) {
-			if row != nil {
-				break
+		switch a.Kind {
+		case "decision":
+			acts.Discuss, acts.Reply, acts.Hides, acts.Rule = true, true, true, true
+			acts.Snooze = true
+			if a.Rec != "" {
+				o := a.option(a.Rec)
+				acts.TakeRec = &o
 			}
-			row = rows[prKey(m)]
+			if a.Auto {
+				it.AutoAt = applyAt(a, s.LastSeen, now)
+			}
+			it.Icon = "ask"
+		case "result":
+			acts.Done, acts.Snooze = true, true
+			it.Icon, it.Badge = "done", true
+		default:
+			acts.Done = true
+			it.Icon = map[string]string{"request": "working", "promise": "idle", "incident": "fail"}[a.Kind]
 		}
-		icon, label := "note", "note"
-		if a.Kind == "question" {
-			icon, label = "ask", "athena asks"
-		}
-		title, long := a.Title()
-		ownPR := ""
-		if row != nil {
-			ownPR = prKey(row.PR.URL)
-		}
-		panel := askPanel(a, why, long, ownPR, acts)
-		if row != nil {
-			row.Folds = append(row.Folds, Fold{ID: "ask-" + a.ID, Text: inlineNote(title, ownPR), Label: label, Why: why, Actions: acts, Panel: panel})
+		if a.Kind != "result" && a.Kind != "decision" && a.PR != "" && merged[a.PR] {
+			it.Icon, it.Badge, it.Label = "merged", true, "merged: done when you have looked"
+			acts.Snooze = true
+			v.Ready = append(v.Ready, it)
 			continue
 		}
-		own = append(own, Item{ID: "ask-" + a.ID, Note: inline(title), Icon: icon, Label: label, Detail: why, Actions: acts, Panel: panel})
+		if a.Kind != "decision" && a.Next != "you" {
+			if row := workerRow(rows, a.Workers); row != nil {
+				if row.Title == "" {
+					row.Title = row.Name
+				}
+				row.Name, row.Href, row.item = it.Name, it.Href, a.ID
+				if row.Ticket == "" {
+					row.Ticket = strings.ToUpper(strings.TrimPrefix(row.ID, "w-"))
+				}
+				continue
+			}
+		}
+		switch {
+		case a.Kind == "result":
+			v.Ready = append(v.Ready, it)
+		case a.Next == "you":
+			v.NeedsYou = append(v.NeedsYou, it)
+		default:
+			v.InProgress = append(v.InProgress, it)
+		}
 	}
-	v.NeedsYou = append(v.NeedsYou, own...)
 }
 
-// askPanel is an ask's detail, or nil for an ask with only its title and why: nothing more to show.
-func askPanel(a Ask, why string, long bool, ownPR string, acts *Actions) *Panel {
-	if a.Body == "" && !long && len(a.Previews) == 0 {
-		return nil
+// Lead is what the row starts with: an item's name, else a worker's or PR's title, else its name.
+func (it Item) Lead() string {
+	if it.Href == "" && it.Title != "" {
+		return it.Title
 	}
-	p := &Panel{Ask: a.ID, Why: why, Actions: acts}
-	if long {
-		p.Text = inlineNote(a.Text, ownPR)
+	return it.Name
+}
+
+// Second is what follows the lead: an item's call, or the title of the worker an item's name now leads.
+func (it Item) Second() template.HTML {
+	if it.Call != "" {
+		return it.Call
 	}
-	if a.Body != "" {
-		p.Body = renderMarkdown(a.Body)
+	if it.Href != "" && it.Title != "" && it.Title != it.Name {
+		return template.HTML(template.HTMLEscapeString(it.Title))
 	}
-	for _, name := range a.Previews {
-		p.Previews = append(p.Previews, Preview{Name: strings.TrimSuffix(name, "/"), URL: "/preview/" + a.ID + "/" + name})
+	return ""
+}
+
+// workerRow: the row of the first of an item's workers that has one.
+func workerRow(rows map[string]*Item, workers []string) *Item {
+	for _, w := range workers {
+		if row := rows["w-"+w]; row != nil {
+			return row
+		}
 	}
-	return p
+	return nil
+}
+
+// mergedPRs: the PRs athena saw merged, by owner/name#n.
+func mergedPRs(s Snapshot) map[string]bool {
+	out := map[string]bool{}
+	if s.Watch != nil {
+		for _, ww := range s.Watch.Workers {
+			if ww.PR != nil && ww.PR.State == "MERGED" {
+				out[prKey(ww.PR.URL)] = true
+			}
+		}
+		for _, p := range s.Watch.PRs {
+			if p.State == "MERGED" {
+				out[prKey(p.URL)] = true
+			}
+		}
+	}
+	for _, h := range s.History {
+		if h.PR != nil && h.PR.State == "MERGED" {
+			out[prKey(h.PR.URL)] = true
+		}
+	}
+	return out
 }
 
 var (

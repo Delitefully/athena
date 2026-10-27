@@ -1,7 +1,7 @@
 """The handoff a fresh HQ starts from (`athena hq rotate`), and how full HQ's context is.
 
 The handoff is generated from athena's own state, the authority a fresh HQ trusts: the ledger and each live worker's
-merged status (PR from gh, no herdr call), the open dashboard asks, the tail of notes.md, the standing-orders path,
+merged status (PR from gh, no herdr call), every open item by name (never capped), the tail of notes.md, the standing-orders path,
 and the in-flight threads only HQ knows, which it writes before rotating (`--threads`, or threads.md).
 
 HQ's context is read from its own transcript, `<claude config dir>/projects/*/<session>.jsonl`: the last main-thread
@@ -20,7 +20,6 @@ MAX_LINES = 150
 LINE_MAX = 300  # characters: a pasted log line must not blow up the handoff
 NOTES_ENTRIES = 12
 THREADS_MAX = 40
-ASKS_MAX = 15
 HINT_PERCENT = 60  # `athena status` suggests a rotation from here
 
 
@@ -91,19 +90,32 @@ def _prs(rows):
     return out or ["no open PRs on live workers, no stacks"]
 
 
+def _item(i):
+    bits = [i.get("kind") or "item", f"next: {i.get('next') or '?'}"]
+    if i.get("due"):
+        bits.append("due " + time.strftime("%a %d %b %H:%M", time.localtime(i["due"])))
+    if i.get("snooze"):
+        bits.append("snoozed until " + time.strftime("%a %d %b %H:%M", time.localtime(i["snooze"].get("until") or 0)))
+    if i.get("auto"):
+        bits.append(f"default {i.get('rec')} applies on its own")
+    if i.get("applied"):
+        bits.append(f"default applied: {i['applied'].get('label')}")
+    line = f"- {i.get('name') or '?'} ({i['id']}, {', '.join(bits)}): {i.get('text', '')}"
+    return line + (f" (pr {i['pr']})" if i.get("pr") else "") + (f" · workers {', '.join(i['workers'])}" if i.get("workers") else "")
+
+
 def _asks(dry_run=False):
+    """Every open item, by name, one line each: never cut, so a rotation loses none (the plan's "no cap")."""
     items = [i for i in asks.items(import_legacy=not dry_run) if i.get("id")]
-    out = [f"- {i['id']} ({i.get('kind') or 'ask'}) {i.get('text', '')}" + (f" (pr {i['pr']})" if i.get("pr") else "")
-           for i in items[:ASKS_MAX]]
+    out = [_item(i) for i in items]
     if dry_run:  # a real rotation imports these first; a dry run only shows them
-        out += [f"- (needs-you.md, not imported yet) {line}" for line in asks.legacy_lines()][:ASKS_MAX - len(out)]
-    if len(items) > ASKS_MAX:
-        out.append(f"… {len(items) - ASKS_MAX} more: `athena ask`")
+        out += [f"- (needs-you.md, not imported yet) {line}" for line in asks.legacy_lines()]
     return out or ["none"]
 
 
 def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
-    """The handoff's Markdown, at most MAX_LINES lines. `threads`: HQ's text, else threads.md, else none.
+    """The handoff's Markdown: at most MAX_LINES lines besides the open items, which are never cut (the notes tail
+    gives way instead). `threads`: HQ's text, else threads.md, else none.
     `dry_run` writes nothing, not even the import of a legacy needs-you.md."""
     state = paths.state_dir()
     rows = [status.collect(w, with_pr=True, with_herdr=False) for w in ledger.live()]
@@ -120,7 +132,7 @@ def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
     sections = [
         ("Fleet", _fleet(rows)),
         ("PRs", _prs(rows)),
-        ("Open asks", _asks(dry_run)),
+        ("Open items", _asks(dry_run)),
         ("In-flight threads", thread_lines),
         ("Standing orders", [f"Read in full: {state / 'standing-orders.md'}", f"Repo map: {state / 'repo-map.md'}",
                              f"Notes: {state / 'notes.md'}"]),
@@ -142,7 +154,7 @@ def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
     if len(notes) > room:
         notes = ["… (older notes cut)"] + notes[len(notes) - room + 1:]
     lines = render(notes or ["notes.md is empty"])
-    clipped = [line if len(line) <= LINE_MAX else line[:LINE_MAX - 1] + "…" for line in lines[:MAX_LINES]]
+    clipped = [line if len(line) <= LINE_MAX else line[:LINE_MAX - 1] + "…" for line in lines]
     return "\n".join(clipped) + "\n"
 
 
