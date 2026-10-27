@@ -261,7 +261,21 @@ def clear():
             save({})
 
 
+def claim() -> bool:
+    """Be the one board watcher: record this process in board.pid, unless another watcher runs."""
+    pid = running_pid()
+    if pid and pid != os.getpid():
+        return False
+    _pidfile().write_text(str(os.getpid()))
+    return True
+
+
 def watch(interval=2.0):
+    """Keep the board in step, in the foreground. `athena board on` runs it detached; a service manager runs it
+    directly (`athena service`). A second watcher exits at once, with 0."""
+    if not claim():
+        print(f"board: a watcher already runs (pid {running_pid()})", file=sys.stderr, flush=True)
+        return
     last_error = None
     while True:
         try:

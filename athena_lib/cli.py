@@ -204,6 +204,9 @@ def cmd_dash(a):
         print(_dash_line(rec, "" if rec["started"] else " (already running)"))
         if a.action == "open":
             subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", rec["url"]], check=False)
+    elif a.action == "run":
+        rec = dash.run()  # returns only when a dashboard already runs: this process became the dashboard otherwise
+        print(f"dash already runs: {_dash_line(rec)}", file=sys.stderr)
     elif a.action == "off":
         rec = dash.stop()
         print(f"dash off (stopped pid {rec['pid']})" if rec else "dash off")
@@ -643,8 +646,8 @@ def parser():
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_board)
 
-    s = sub.add_parser("dash", help="the dashboard on 127.0.0.1: on, off, show, open")
-    s.add_argument("action", choices=["on", "off", "show", "open"], nargs="?", default="show")
+    s = sub.add_parser("dash", help="the dashboard on 127.0.0.1: on, off, show, open; run (foreground, for a service)")
+    s.add_argument("action", choices=["on", "off", "show", "open", "run"], nargs="?", default="show")
     s.set_defaults(func=cmd_dash)
 
     s = sub.add_parser("watch", help="print one line per change (the athena-watch mod runs it in HQ; Monitor is the fallback)")

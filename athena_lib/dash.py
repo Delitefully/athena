@@ -190,6 +190,18 @@ def start(hq=None) -> dict:
     raise DashError(f"the dashboard did not answer on {url(p)} within 5 s; see {log}")
 
 
+def run():
+    """The dashboard in the foreground, for a service manager (`athena service`): build it if needed, then become it
+    (exec, same pid), bound to no HQ, so it runs until stopped. Returns the running record instead when one
+    already answers for this state dir."""
+    rec = running() or _adopt(port())
+    if rec:
+        return rec
+    exe, p = binary(), port()
+    _pidfile().write_text(json.dumps({"pid": os.getpid(), "port": p, "url": url(p), "hq_pid": None, "bin": str(exe)}))
+    os.execv(str(exe), [str(exe), "-state-dir", str(paths.state_dir()), "-port", str(p)])
+
+
 def stop():
     rec = running()
     if rec:
