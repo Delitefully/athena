@@ -84,7 +84,9 @@ class RealHerdrTest(unittest.TestCase):
         dash.stop()
         board.stop_watcher()
         self.assertTrue(self.wait(lambda: not board.running_pid()))
-        third = doctor.run(fix=True)
+        # Three minutes on: past the backoff that follows the first run's repairs (they count for an hour).
+        with mock.patch.object(doctor.time, "time", return_value=time.time() + 180):
+            third = doctor.run(fix=True)
         self.assertEqual({c for c, v in third["checks"].items() if v.get("fixed")}, {"herdr", "dash", "board"}, third)
         self.assertTrue(launch.server_running())
         self.assertTrue(self.wait(lambda: dash._health(dash.port())))
