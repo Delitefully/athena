@@ -57,4 +57,4 @@ with no text. Never repeat a pending ask in chat: the dashboard holds it.
 A never-ask entry only holds if Claude Code's permission settings let the command through without a prompt.
 Narrow `permissions.allow` rules (`Bash(gh run rerun *)`, `Bash(gh pr ready *)` in HQ's settings only) run before
 auto mode's classifier; auto mode's `autoMode.environment` must name the repos and orgs athena works in, or every
-write there counts as external. These live in the human's own settings: athena proposes a diff and never edits them.
+write there counts as external. These live in the human's own settings, and HQ-only rules in config `hq_allow`, which only the human sets: athena proposes a diff and never edits either.

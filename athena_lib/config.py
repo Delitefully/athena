@@ -38,7 +38,7 @@ DEFAULTS = {
     # this many hours ago (`--update` forces them). 0: update on every restart.
     "hq_update_interval_hours": 6,
     # Permission rules (`Bash(gh pr ready *)`) added to HQ's own settings alone, never a worker's: the never-ask
-    # steps only HQ takes.
+    # steps only HQ takes. Set by the human alone; nothing in athena writes it.
     "hq_allow": [],
 }
 

@@ -25,13 +25,13 @@ From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs,
 | board | no board watcher | starts the board service, else `athena board on`'s watcher |
 | HQ | HQ's pane runs no `athena` agent | after 90 s (herdr resumes its own agents first), resumes HQ's conversation in its space or a new one; never a fresh one. No known conversation: flagged |
 | watch | `watch.json` not written for 5 min while HQ runs | `athena hq restart --no-update` at HQ's next idle: the resumed HQ starts the watch mod again |
-| messaging sockets | a live session's socket file is gone | HQ: `athena hq restart --no-update`; a worker: exits it and resumes its conversation in its pane. Only when idle with an empty input box |
+| messaging sockets | a live session's socket file is gone | HQ: `athena hq restart --no-update`, unattended; a worker: exits it and resumes its conversation in its pane. Only when idle with an empty input box, never with background work running (the dialog is cancelled), and never a fresh HQ: with no known conversation, it is flagged |
 | resumed sessions | herdr resumed HQ, or a worker mid-turn | HQ gets its start routine; the worker is told to carry on, once. A blocked or done worker is left alone |
 | HQ's context | at least 60% full | HQ is asked (`athena doctor: your context is ...`) to write its in-flight threads and run `athena hq rotate`, at most every two hours |
 | disk, memory | under 10 GB free, under 10% free memory | flagged only |
 | sleep (macOS) | a worker mid-turn, on AC power | `caffeinate -i -t 180`, renewed each run, so nothing holds the Mac awake once doctor stops |
 
-Nothing is typed into a pane that is busy or whose input box holds text not yet sent. A repair that fails backs off (2, then 4 minutes) and stops after 3 tries in an hour; a new problem raises one herdr notification. Every run writes `health.json` in the state dir (`ts`, `ok`, `problems` with `check`, `detail` and `since`, `checks`, `actions`), which the dashboard's health dot reads. Exit 1 when something is wrong.
+Nothing is typed into a pane that is busy or whose input box holds text not yet sent. A repair that fails backs off (2, then 4 minutes), and any part gets at most 3 repairs in an hour, healthy or not in between, then it is flagged; a new problem raises one herdr notification. Every run writes `health.json` in the state dir (`ts`, `ok`, `problems` with `check`, `detail` and `since`, `checks`, `actions`), which the dashboard's health dot reads. Exit 1 when something is wrong.
 
 ## Key bindings and everyday use
 

@@ -325,6 +325,45 @@ class HqResumeHookTest(unittest.TestCase):
                                       {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w9:p9"})  # not HQ's pane
         self.assertFalse((paths.state_dir() / "hq-start.json").exists())
 
+    def hq_session(self, session):
+        (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1", "claude_args": HQ_ARGS,
+                                                               "session": session}))
+
+    def start(self, sid, source, pane="w1:p1"):
+        hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": sid, "source": source},
+                                      {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": pane})
+
+    def test_a_nested_claude_started_from_hqs_bash_is_never_hq(self):
+        # `claude -p` from HQ's Bash tool inherits ATHENA_ROLE=hq and HERDR_PANE_ID: a startup next to HQ's known
+        # session is that, not HQ.
+        self.hq_session("hq-1")
+        self.start("nested-9", "startup")
+        self.assertEqual(self.reports(), [])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
+        self.assertFalse((paths.state_dir() / "hq-start.json").exists())
+
+    def test_hqs_own_resume_clear_or_compaction_is_hq_and_becomes_its_session(self):
+        for n, source in enumerate(("resume", "clear", "compact")):
+            self.hq_session("hq-1")
+            self.start(f"hq-{n + 2}", source)
+            self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], f"hq-{n + 2}")
+            self.assertEqual(json.loads((paths.state_dir() / "hq-start.json").read_text())["source"], source)
+        self.assertEqual(len(self.reports()), 3)
+
+    def test_the_known_session_or_the_first_one_is_hq(self):
+        self.hq_session("hq-1")
+        self.start("hq-1", "startup")
+        self.hq_session(None)
+        self.start("hq-new", "startup")
+        self.assertEqual(len(self.reports()), 2)
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-new")
+
+    def test_another_pane_is_never_hq(self):
+        self.hq_session("hq-1")
+        self.start("hq-2", "resume", pane="w9:p1")
+        self.assertEqual(self.reports(), [])
+        self.assertEqual(json.loads((paths.state_dir() / "hq.json").read_text())["session"], "hq-1")
+
     def test_an_hq_json_without_args_registers_nothing(self):
         (paths.state_dir() / "hq.json").write_text(json.dumps({"pane": "w1:p1"}))
         hookstatus.register_hq_resume({"hook_event_name": "SessionStart", "session_id": "hq-2"},

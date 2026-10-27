@@ -290,24 +290,49 @@ def log_request(event, env):
     return requestlog.record(event.get("prompt"), event.get("session_id"))
 
 
-def register_hq_resume(event, env):
-    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json."""
+HQ_RESTARTS = ("resume", "clear", "compact")  # how HQ's own Claude starts a new session in its pane
+
+
+def hq_owns(event, env, record) -> bool:
+    """Whether a SessionStart is HQ's own Claude, not a `claude -p` HQ ran from its Bash tool: that one inherits
+    ATHENA_ROLE=hq and HERDR_PANE_ID, and must never become the conversation herdr or doctor resumes. It is HQ's
+    when it comes from HQ's pane and is the session hq.json knows, or the first one (hq.json knows none yet), or a
+    new session that a resume, /clear or a compaction made. A fresh startup next to a known session is not HQ's:
+    `athena hq rotate` records its new HQ itself."""
     sid = _session_started(event)
     if not sid or env.get("ATHENA_ROLE") != "hq":
-        return
+        return False
+    pane = record.get("pane")
+    if not pane or env.get("HERDR_PANE_ID") != pane:
+        return False
+    known = record.get("session")
+    return not known or sid == known or event.get("source") in HQ_RESTARTS
+
+
+def _write_json(target, data):
+    tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, target)
+
+
+def register_hq_resume(event, env):
+    """The same for HQ (ATHENA_ROLE=hq) in its own pane, with the args `athena hq` kept in hq.json. Only HQ's own
+    sessions count (`hq_owns`); a new one becomes hq.json's session, so doctor resumes the conversation HQ is on."""
     try:
         record = json.loads((paths.state_dir() / "hq.json").read_text())
     except (OSError, ValueError):
         return
-    pane, args = record.get("pane"), record.get("claude_args")
-    if pane and env.get("HERDR_PANE_ID") == pane:
-        # For doctor: a resumed HQ that no one sent its start routine gets it.
-        target = paths.state_dir() / "hq-start.json"
-        tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
-        tmp.write_text(json.dumps({"source": event.get("source"), "session_id": sid, "ts": time.time()}))
-        os.replace(tmp, target)
-    if pane and args and env.get("HERDR_PANE_ID") == pane:
-        _register(pane, sid, args)
+    if not isinstance(record, dict) or not hq_owns(event, env, record):
+        return
+    sid = _session_started(event)
+    if record.get("session") != sid:
+        record["session"] = sid
+        _write_json(paths.state_dir() / "hq.json", record)
+    # For doctor: a resumed HQ that no one sent its start routine gets it.
+    _write_json(paths.state_dir() / "hq-start.json", {"source": event.get("source"), "session_id": sid,
+                                                      "ts": time.time()})
+    if record.get("claude_args"):
+        _register(record["pane"], sid, record["claude_args"])
 
 
 def main():
