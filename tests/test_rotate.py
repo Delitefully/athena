@@ -320,6 +320,49 @@ class RotateTest(Fixture):
         self.assertEqual(record["previous_session"], "old")
         self.assertIsNone(handoff.hq_context())
 
+    def test_after_a_rotation_a_nested_resume_of_the_old_conversation_never_becomes_hq(self):
+        write_scenario(self.tmp.name, [alive("sess-new", after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
+        hq.rotate_now()
+        start = json.loads((self.state / "hq-start.json").read_text())
+        self.assertEqual(start["session_id"], "sess-new")  # the rotation vouches for the fresh HQ
+        reports = len([c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]])
+        # HQ later runs `claude -p --resume old` from its Bash: herdr reports `old` for HQ's pane.
+        self.assertFalse(hq.sync_session("old"))
+        with mock.patch.object(hq, "_session", return_value="old"):
+            self.assertEqual(hq.trusted_session(), "sess-new")
+        self.assertEqual(json.loads((self.state / "hq.json").read_text())["session"], "sess-new")
+        self.assertEqual(len([c for c in self.calls() if c[:2] == ["pane", "report-agent-session"]]), reports)
+
+    def test_the_hook_owns_the_fresh_hqs_first_session_start(self):
+        # Between the old HQ's exit and the fresh one's start, hq.json names no conversation and hq-start.json is gone.
+        from athena_lib import hookstatus
+        seen = {}
+
+        def start_agent(pane, *extra):
+            seen["record"] = hq.load()
+            seen["start"] = (self.state / "hq-start.json").exists()
+            seen["owns"] = hookstatus.hq_owns({"hook_event_name": "SessionStart", "session_id": "sess-new",
+                                               "source": "startup"}, {"ATHENA_ROLE": "hq", "HERDR_PANE_ID": "w8:p1"},
+                                              seen["record"])
+        (self.state / "hq-start.json").write_text(json.dumps({"source": "resume", "session_id": "old", "ts": 1}))
+        write_scenario(self.tmp.name, [{**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
+        with mock.patch.object(hq, "_start_agent", side_effect=start_agent):
+            hq.rotate_now()
+        self.assertIsNone(seen["record"]["session"])
+        self.assertEqual(seen["record"]["previous_session"], "old")
+        self.assertFalse(seen["start"])
+        self.assertTrue(seen["owns"])
+
+    def test_a_fresh_hq_that_never_starts_leaves_the_old_conversation_as_hqs(self):
+        err = json.dumps({"error": {"code": "agent_not_ready", "message": "trust dialog"}})
+        write_scenario(self.tmp.name, [{"match": ["agent", "start"], "stdout": "", "stderr": err, "exit": 1},
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("old"), HQ_SPACE, ON_EXIT])
+        with self.assertRaises(hq.RestartError):
+            hq.rotate_now()
+        self.assertEqual(json.loads((self.state / "hq.json").read_text())["session"], "old")
+        self.assertEqual(json.loads((self.state / "hq-start.json").read_text())["session_id"], "old")
+
     def test_a_busy_hq_is_not_rotated(self):
         err = json.dumps({"error": {"code": "timeout", "message": "still blocked"}})
         write_scenario(self.tmp.name, [{"match": ["agent", "wait"], "stdout": "", "stderr": err, "exit": 1},
