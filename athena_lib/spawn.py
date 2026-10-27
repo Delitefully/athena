@@ -4,12 +4,11 @@ import fcntl
 import json
 import os
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
 
-from athena_lib import config, gitops, herdr, ledger, paths, retire
+from athena_lib import brief as briefs, config, gitops, herdr, ledger, paths, retire
 
 HARD_CAP = paths.HARD_CAP
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
@@ -107,15 +106,40 @@ def _write_settings(name, brief, ultracode=False, workflow_size=None, repo=None)
     return target
 
 
+def preferences_file() -> Path:
+    """The human's standing design and build preferences, one per line (docs/configuration.md#preferences)."""
+    return paths.state_dir() / "preferences.md"
+
+
+def with_preferences(text) -> str:
+    """The brief with the preferences file appended as its PREFERENCES field, unless it has one already or there is
+    no file. The file's own headings and blank lines stay; its first-level title does not."""
+    if "PREFERENCES" in briefs.parse(text):
+        return text
+    try:
+        prefs = preferences_file().read_text()
+    except OSError:
+        return text
+    rules = "\n".join(line for line in prefs.splitlines() if not line.startswith("# ")).strip()
+    if not rules:
+        return text
+    return (text.rstrip("\n") + f"\nPREFERENCES (the human's standing preferences, from {preferences_file()}; "
+            f"follow them like SCOPE, and where one conflicts with this brief, the brief wins):\n{rules}\n")
+
+
 def build_goal(condition, name, brief):
     text = " ".join(condition.split())
     if text.startswith("/goal "):
         text = text[len("/goal "):]
     # The ATHENA-REPORT line is the report athena reads. SendMessage is a courtesy: when HQ isn't reachable
     # (a restarted or re-logged HQ), a goal that required it would never be met and the worker would loop.
+    # Any status meets it: a BLOCKED report with a question ends the turn cleanly instead of looping until someone
+    # clears the goal, and what happens after DONE is not the worker's to reach.
     suffix = (f" Your brief is {brief}; read it first. End your final message with an ATHENA-REPORT line: that line "
-              f"is the report, and the goal is met once it is written. Also try SendMessage to {paths.hq_name()} "
-              f"once; if it fails, don't retry.")
+              f"is the report, and the goal is met once it is written, whatever its status (a BLOCKED or "
+              f"NEEDS_CONTEXT report with your question meets it too). Merging, approvals, undrafting and checks you "
+              f"cannot fix are out of scope. Also try SendMessage to {paths.hq_name()} once; if it fails, don't "
+              f"retry.")
     return ("/goal " + text + suffix)[:3990]
 
 
@@ -128,8 +152,27 @@ def claude_args(name, model, effort, settings):
     return args
 
 
+def brief_problems(brief_path, goal) -> list:
+    """What athena brief check finds in a brief and goal (athena_lib/brief.py)."""
+    try:
+        text = Path(os.path.expanduser(str(brief_path))).read_text()
+    except OSError as exc:
+        raise SpawnError(f"cannot read the brief {brief_path}: {exc}")
+    return briefs.check(text) + briefs.check_goal(goal)
+
+
+def check_brief(brief_path, goal):
+    """Refuse a brief or goal whose wording the goal evaluator could never call met, naming each rule and line."""
+    found = brief_problems(brief_path, goal)
+    if found:
+        lines = "\n".join("- " + briefs.describe(p) for p in found)
+        raise SpawnError(f"the brief or goal would keep the goal evaluator saying not met:\n{lines}\n"
+                         f"Fix the brief (athena brief check {brief_path}), or pass --skip-brief-check where a check is "
+                         f"wrong for this brief (the ledger records the skip).")
+
+
 def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=None, effort=None,
-          force=False, setup=True, ultracode=False, workflow_size=None):
+          force=False, setup=True, ultracode=False, workflow_size=None, brief_check=True):
     repo = Path(os.path.expanduser(str(repo))).resolve()
     model, effort = model or config.get("model"), effort or config.get("effort")
     if not paths.valid_name(name):
@@ -139,6 +182,11 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
     if workflow_size and not ultracode:
         raise SpawnError("--workflow-size needs --ultracode")
     _check_capacity(name, force)
+    skipped = None
+    if brief_check:
+        check_brief(brief_path, goal)
+    else:  # kept on the spawn record: which checks a launch went past
+        skipped = [briefs.describe(p) for p in brief_problems(brief_path, goal)]
     ledger.touch()
     pre = gitops.preflight(repo)
     if not pre["ok"]:
@@ -156,6 +204,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         record["ultracode"] = True
         if workflow_size:
             record["workflow_size"] = workflow_size
+    if skipped is not None:
+        record["brief_check_skipped"] = skipped
     claim.write_text(name + "\n")
     pending = None
     try:
@@ -165,9 +215,10 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         if setup:
             record["setup_log"] = _run_setup(repo, path, name)
         brief = paths.ensure("briefs") / f"{name}.md"
-        shutil.copyfile(brief_path, brief)
+        brief.write_text(with_preferences(Path(os.path.expanduser(str(brief_path))).read_text()))
         settings = _write_settings(name, brief, ultracode, workflow_size, repo)
         record["claude_args"] = claude_args(name, model, effort, settings)
+        _set_aside_status(name)
         try:
             herdr.call("agent", "start", name, "--kind", "claude", "--pane", record["pane"], "--timeout", "120000",
                        "--", *record["claude_args"], timeout=200)
@@ -201,6 +252,16 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
     _report_metadata(record["workspace"], linear)
     ledger.append("update", name, prompt=record["prompt"])
     return {"name": name, **record}
+
+
+def _set_aside_status(name):
+    """A worker spawned again under its old name starts with no status: its last life's workers/<name>.json (a DONE
+    report, a block count) moves to <name>.json.prev before the new Claude's first hook event."""
+    old = paths.state_dir() / "workers" / f"{name}.json"
+    try:
+        os.replace(old, old.with_name(f"{name}.json.prev"))
+    except FileNotFoundError:
+        pass
 
 
 def _report_metadata(workspace, linear):

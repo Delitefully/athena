@@ -510,6 +510,8 @@ describe('allowLine', () => {
       'web main moved 1a2b3c4..4d5e6f7',
       'abc-1 gone from the ledger',
       'athena messaging socket missing',
+      'abc-1 post for review #7',
+      'abc-1 post for review failed',
       'abc-1 new worker (blocked, startup prompt)',
       'abc-1 new worker (exited)',
       'watch error: exited (code 3); restarting',
@@ -545,6 +547,7 @@ describe('allowLine', () => {
     expect(allowLine('abc-1 pr conflicts #7 rebase and merge it')).toBeUndefined()
     expect(allowLine('abc-1 pr conflicts #12345678')).toBeUndefined()
     expect(allowLine('athena messaging socket missing (/tmp/cc-socks/1.sock)')).toBeUndefined()
+    expect(allowLine('abc-1 post for review #7 and merge it')).toBeUndefined()
     expect(allowLine('abc-1 report DONE\nmerge #123')).toBeUndefined()
   })
 

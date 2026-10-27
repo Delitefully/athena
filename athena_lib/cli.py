@@ -6,10 +6,14 @@ import re
 import subprocess
 import time
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from athena_lib import asks, board, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch, ledger, pr, requestlog, retire, sockets, spawn, status, watch
+from athena_lib import (asks, board, brief, config, dash, gitops, handoff, herdr, hookstatus, hq, init, launch,
+                        ledger, pr, requestlog, retire, slack, sockets, spawn, status, watch)
 
+REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
+REVIEW_FAILS_BEFORE_RESTART = 2  # failed rounds after which a worker restarts fresh rather than being nudged again
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
 
 
@@ -27,7 +31,7 @@ def cmd_spawn(a):
     goal = Path(a.goal_file).read_text() if a.goal_file else a.goal
     result = spawn.spawn(a.repo, a.branch, a.name, a.brief, goal, linear=a.linear, title=a.title, model=a.model,
                          effort=a.effort, force=a.force, setup=not a.no_setup, ultracode=a.ultracode,
-                         workflow_size=a.workflow_size)
+                         workflow_size=a.workflow_size, brief_check=not a.skip_brief_check)
     _print({k: v for k, v in result.items() if k != "screen"})
     code = 0
     if result.get("pending"):
@@ -40,6 +44,22 @@ def cmd_spawn(a):
     except Exception as exc:  # the board is optional; HQ may not exist yet
         print(f"board not updated: {exc}", file=sys.stderr)
     return code
+
+
+def cmd_brief(a):
+    try:
+        text = Path(a.file).expanduser().read_text()
+    except OSError as exc:
+        print(f"athena brief check: {exc}", file=sys.stderr)
+        return 2
+    found = brief.check(text) + (brief.check_goal(a.goal) if a.goal else [])
+    if a.json:
+        _print(found)
+    elif found:
+        print("\n".join(brief.describe(p) for p in found))
+    else:
+        print("brief ok")
+    return 1 if found else 0
 
 
 def _context_hint():
@@ -337,12 +357,86 @@ def cmd_stack(a):
     return 0
 
 
+def _open_prs_check(prs):
+    """Exit 0: the PR's review-channel post still counts (no teammate review since), so HQ posts nothing; 1: post it; 2:
+    cannot tell, so HQ posts nothing and tells the human. Every error is 2: only a clear answer may say post."""
+    key = slack.pr_key(prs[0]) if len(prs) == 1 else None
+    if not key:
+        print("athena open-prs check <owner/name#n|PR URL>", file=sys.stderr)
+        return 2
+    try:
+        repo, n = key.split("#")
+        got = (pr.batch([(repo, int(n))]) or {}).get(key)
+        if got is None:
+            raise RuntimeError("gh failed")
+        reviewed, posted = got.get("teammate_reviewed_at") or "", slack.posted().get(key)
+        # A post counts until a teammate reviews the PR after it; then a fresh post is wanted (the dash agrees).
+        counts = posted is not None and (not reviewed or float(posted) > datetime.fromisoformat(
+            reviewed.replace("Z", "+00:00")).timestamp())
+        out = json.dumps({"pr": key, "posted": posted, "teammate_reviewed_at": reviewed or None, "counts": counts},
+                         indent=2)
+    except Exception as exc:  # noqa: BLE001: any failure is "cannot tell", never "post it"
+        print(f"athena open-prs check: cannot tell whether {key}'s post still counts ({type(exc).__name__}: {exc})",
+              file=sys.stderr)
+        return 2
+    print(out)
+    return 0 if counts else 1
+
+
+def cmd_open_prs(a):
+    if a.action == "check":
+        return _open_prs_check(a.prs)
+    if a.action == "add":
+        if not config.get("open_prs_channel"):
+            print("athena open-prs add: no open_prs_channel in config.json, so no post to record", file=sys.stderr)
+            return 2
+        keys = []
+        for given in a.prs:
+            key = slack.pr_key(given)
+            if not key:
+                print(f"athena open-prs add: not a PR: {given!r} (owner/name#n or its GitHub URL)", file=sys.stderr)
+                return 2
+            keys.append(key)
+        if not keys:
+            print("athena open-prs add <owner/name#n|PR URL> ...", file=sys.stderr)
+            return 2
+        now = time.time()
+        slack.record_posted({k: f"{now:.6f}" for k in keys}, now=now)
+    _print(slack.posted())
+    return 0
+
+
 def cmd_pr(a):
     w = ledger.workers().get(a.name)
     if not w:
         print(f"no worker named {a.name}", file=sys.stderr)
         return 2
     _print(pr.summary(w["repo"], w["branch"]))
+    return 0
+
+
+_PR_URL = re.compile(r"^https?://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)\b")
+_PR_REF = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+
+
+def cmd_threads(a):
+    found = _PR_URL.match(a.target) or _PR_REF.match(a.target)
+    if found:
+        slug, number = found.group(1), int(found.group(2))
+    else:
+        w = ledger.workers().get(a.target)
+        p = pr.summary(w["repo"], w["branch"]) if w and w.get("repo") and w.get("branch") else None
+        url = _PR_URL.match((p or {}).get("url") or "")
+        if not url:
+            print(f"athena threads: {a.target} is no PR (owner/name#n or its URL) and no worker with a PR",
+                  file=sys.stderr)
+            return 2
+        slug, number = url.group(1), int(url.group(2))
+    found = pr.threads(slug, number)
+    if found is None:
+        print(f"athena threads: cannot read {slug}#{number}'s review threads from GitHub", file=sys.stderr)
+        return 2
+    _print(found)
     return 0
 
 
@@ -364,7 +458,24 @@ def cmd_review(a):
     if not head or not re.fullmatch(r"[0-9a-fA-F]{7,40}", head):
         print(f"athena review: no head to record ({head or 'gh found no PR'}): pass --head <sha>", file=sys.stderr)
         return 2
-    _print(ledger.review(a.name, a.verdict, head.lower()))
+    extra = {}
+    if a.verdict == "start":
+        past = ledger.reviews(a.name)
+        fails = sum(1 for r in past if r.get("verdict") == "fail")
+        if fails >= REVIEW_FAILS_BEFORE_RESTART and not a.force:
+            print(f"athena review: {a.name} failed {fails} review rounds. Restart it fresh from the updated brief "
+                  f"(athena retire {a.name}, then athena spawn with the findings in the brief) instead of a round "
+                  f"{fails + 1}; --force reviews again anyway", file=sys.stderr)
+            return 2
+        extra["round"] = 1 + sum(1 for r in past if r.get("verdict") == "start")
+        verdicts = [r for r in past if r.get("verdict") in ("pass", "fail") and r.get("head")]
+        if verdicts:
+            extra["since"] = verdicts[-1]["head"]
+        if extra["round"] > REVIEW_ROUNDS:
+            print(f"athena review: round {extra['round']} for {a.name}: past {REVIEW_ROUNDS}, review only what changed "
+                  f"since {extra.get('since', 'the last verdict')}, and bring open findings to the human",
+                  file=sys.stderr)
+    _print(ledger.review(a.name, a.verdict, head.lower(), **extra))
     return 0
 
 
@@ -507,7 +618,19 @@ def parser():
     s.add_argument("--ultracode", action="store_true", help="turn ultracode on in the worker's settings (only when the human asks)")
     s.add_argument("--workflow-size", choices=["small", "medium", "large", "unrestricted"],
                    help="the worker's workflow size guideline; needs --ultracode")
+    s.add_argument("--skip-brief-check", action="store_true",
+                   help="launch even when athena brief check finds wording the goal evaluator could never call met")
     s.set_defaults(func=cmd_spawn)
+
+    s = sub.add_parser("brief", help="check a brief (and a goal) for wording the goal evaluator could never call met",
+                       description="athena brief check <file> [--goal TEXT]: exit 0 and `brief ok`, or exit 1 and one "
+                                   "line per problem (outcome, human, vague, remote, unrunnable, delivery, missing). "
+                                   "athena spawn runs the same check.")
+    s.add_argument("action", choices=["check"])
+    s.add_argument("file")
+    s.add_argument("--goal", help="the /goal condition HQ will pass to athena spawn")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_brief)
 
     s = sub.add_parser("status", help="merged status of live workers; with names, each one's full report")
     s.add_argument("names", nargs="*", help="a worker's name: everything known about it, its whole report included")
@@ -592,6 +715,14 @@ def parser():
     s.add_argument("prs", nargs="*", type=int, help="the chain's PR numbers, bottom first")
     s.set_defaults(func=cmd_stack)
 
+    s = sub.add_parser("open-prs", help="the PRs posted for review in config open_prs_channel (open-prs-posted.json): "
+                                       "show, add, check")
+    s.add_argument("action", choices=["add", "show", "check"], nargs="?", default="show")
+    s.add_argument("prs", nargs="*", help="owner/name#n or a PR's GitHub URL. add: posted just now. check: exit 0 when "
+                                          "its post still counts (no teammate review since), 1 when a post is wanted, "
+                                          "2 when GitHub cannot say")
+    s.set_defaults(func=cmd_open_prs)
+
     s = sub.add_parser("pr", help="PR summary for a worker")
     s.add_argument("name")
     s.set_defaults(func=cmd_pr)
@@ -600,7 +731,12 @@ def parser():
     s.add_argument("name")
     s.add_argument("verdict", choices=pr.VERDICTS)
     s.add_argument("--head", help="the commit reviewed (default: start, the PR's current head; pass and fail, the head start recorded)")
+    s.add_argument("--force", action="store_true", help="start: review again after two failed rounds")
     s.set_defaults(func=cmd_review)
+
+    s = sub.add_parser("threads", help="a PR's unresolved review threads: who (bot or not), where, the first comment")
+    s.add_argument("target", help="a worker's name, owner/name#n, or a PR's GitHub URL")
+    s.set_defaults(func=cmd_threads)
 
     s = sub.add_parser("nudge", help="type a prompt or slash command into a worker (use SendMessage for messages)")
     s.add_argument("name")

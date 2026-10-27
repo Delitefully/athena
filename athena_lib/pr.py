@@ -6,8 +6,8 @@ import subprocess
 FIELDS = ("number,url,title,state,isDraft,reviewDecision,headRefOid,mergeable,statusCheckRollup,comments,reviews,"
           "reviewRequests,latestReviews,autoMergeRequest,mergeStateStatus,baseRefName,headRefName,author")
 
-# Accounts whose comments never count as review comments: gh names them without the `[bot]` suffix REST uses. The
-# last two are platform bots that post as ordinary accounts.
+# Bot accounts (is_bot): their comments never count as review comments, nor their reviews as a teammate's. gh names
+# them without the `[bot]` suffix REST uses. The last two are platform bots that post as ordinary accounts.
 BOTS = {"github-actions", "github-advanced-security", "copilot", "linear-code", "sun-merge-queue"}
 
 
@@ -71,6 +71,22 @@ def _reviewer(r) -> str:
     return ((r or {}).get("name") or (r or {}).get("login") or (r or {}).get("slug") or "").strip()
 
 
+def _teammate_reviewed_at(data) -> str:
+    """When a teammate last reviewed the PR (ISO time), or "": a person's review, not the PR author's own, never a
+    bot's (is_bot) nor an account with no association to the repo."""
+    author = ((data.get("author") or {}).get("login") or "").lower()
+    times = []
+    for r in data.get("latestReviews") or []:
+        who = (r or {}).get("author") or {}
+        login = (who.get("login") or "").lower()
+        association = r.get("authorAssociation")
+        if not login or login == author or is_bot(who, association) or association == "NONE":
+            continue
+        if isinstance(r.get("submittedAt"), str) and r["submittedAt"]:
+            times.append(r["submittedAt"])
+    return max(times, default="")  # ISO 8601 in UTC sorts as time
+
+
 def reduce(data: dict) -> dict:
     return {
         "number": data.get("number"), "url": data.get("url"), "title": data.get("title") or "",
@@ -83,6 +99,7 @@ def reduce(data: dict) -> dict:
         "requested": [n for n in (_reviewer(r) for r in data.get("reviewRequests") or []) if n],
         "reviews": {r["author"]["login"]: r.get("state") for r in data.get("latestReviews") or []
                     if (r.get("author") or {}).get("login")},
+        "teammate_reviewed_at": _teammate_reviewed_at(data),
         "auto_merge": bool(data.get("autoMergeRequest")), "queued": _queued(data),
         "merge_state": data.get("mergeStateStatus"),
     }
@@ -204,11 +221,11 @@ def is_slug(text) -> bool:
     return isinstance(text, str) and _SLUG.fullmatch(text) is not None
 
 
-_NODE = """number url title state isDraft baseRefName headRefName mergeable reviewDecision headRefOid isInMergeQueue
+_NODE = """number url title state isDraft author { login } baseRefName headRefName mergeable reviewDecision headRefOid isInMergeQueue
 mergeStateStatus autoMergeRequest { enabledAt }
 reviewRequests(first: 20) { nodes { requestedReviewer { __typename
   ... on User { login name } ... on Team { slug name } ... on Bot { login } ... on Mannequin { login } } } }
-latestReviews(first: 20) { nodes { author { login } state } }
+latestReviews(first: 20) { nodes { author { __typename login } state submittedAt authorAssociation } }
 commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename
   ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } }"""
 
@@ -261,6 +278,40 @@ def batch(keys):
             node = repo.get(f"p{j}")
             if isinstance(node, dict):
                 out[f"{slug}#{n}"] = reduce(_flatten(node))
+    return out
+
+
+THREAD_BODY = 300  # characters of a thread's first comment kept
+_THREADS = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
+pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path line
+comments(first: 1) { nodes { author { __typename login } body url } } } } } } }"""
+
+
+def threads(slug, number):
+    """A PR's unresolved review threads, oldest first: [{"id", "author", "bot", "path", "line", "outdated", "body",
+    "url"}], the first comment's body cut to THREAD_BODY. None when gh cannot say, never [] for a failure."""
+    if not is_slug(slug) or not isinstance(number, int) or isinstance(number, bool) or number < 1:
+        return None
+    owner, name = slug.split("/", 1)
+    try:
+        proc = subprocess.run(["gh", "api", "graphql", "-f", f"query={_THREADS}", "-f", f"owner={owner}",
+                               "-f", f"name={name}", "-F", f"number={number}"], capture_output=True, text=True,
+                              timeout=60)
+        nodes = json.loads(proc.stdout)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        return None
+    if proc.returncode != 0 or not isinstance(nodes, list):
+        return None
+    out = []
+    for t in nodes:
+        if not isinstance(t, dict) or t.get("isResolved"):
+            continue
+        first = (((t.get("comments") or {}).get("nodes") or [{}])[0]) or {}
+        author = first.get("author") or {}
+        body = " ".join(str(first.get("body") or "").split())
+        out.append({"id": t.get("id"), "author": author.get("login") or "", "bot": is_bot(author),
+                    "path": t.get("path"), "line": t.get("line"), "outdated": bool(t.get("isOutdated")),
+                    "body": body[:THREAD_BODY] + ("…" if len(body) > THREAD_BODY else ""), "url": first.get("url")})
     return out
 
 

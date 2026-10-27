@@ -32,7 +32,7 @@ class PendingBase(unittest.TestCase):
         self.env = helpers.isolated_env(self.tmp.name)
         self.repo, _ = make_repo(self.tmp.name, "proj")
         self.brief = Path(self.tmp.name) / "brief.md"
-        self.brief.write_text("# ABC-1\nGOAL: fix it\n")
+        self.brief.write_text(helpers.BRIEF)
         self.wt = paths.worktree_path(self.repo, "you/abc-1-fix")
 
     def tearDown(self):

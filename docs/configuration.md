@@ -43,6 +43,7 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
   - `slack_ext_channels` (default `true`): also poll every `ext-` channel you are a member of.
   - `slack_allow_bots` (default `[]`): bot or app ids whose messages count; no other bot's do.
   - `slack_dm_active_minutes` (default `15`): a DM or group DM you wrote in within this many minutes does not wake HQ; its new messages go to `logs/watch-suppressed.log`, and once the window lapses the doorbell rings once with the messages that came after your last one. `0` turns it off.
+- `open_prs_channel` (default unset, optional like the watch's keys): the Slack channel id where ready PRs are posted for review. When set, `athena watch` asks HQ to post each live worker's PR once it is ready (HQ's review passed at its head, checks green, not a draft, not yet approved), the bottom of a stack only and at most once per PR, and HQ posts it through its Slack connector and records it with `athena open-prs add`. Unset, nothing is ever posted. athena's own Slack token only reads.
 - `hq_update_interval_hours` (default `6`, optional like the watch's keys): `athena hq restart` skips `claude update` and the plugin updates when they last ran without a warning less than this many hours ago (kept in `hq-update.json` in the state dir), and says so in `logs/hq-restart.log`. `0` updates on every restart; `athena hq restart --update` forces one, `--no-update` skips it.
 - An environment variable overrides its key: `ATHENA_HQ_CWD` (`projects_dir`), `ATHENA_WORKTREE_ROOT`, `ATHENA_MODEL`, `ATHENA_EFFORT`. `ATHENA_CONFIG` points at another file. `ATHENA_HQ_CONTEXT_WINDOW` sets the context window `athena status` and `athena hq rotate --if-context-over` measure HQ against (default: 1M when HQ's model ends in `[1m]`, else 200k).
 - Upgrading from a version without `config.json`: the first athena command writes that version's values down (one line on stderr, no prompt). Nothing changes. Per-repo setup scripts are not moved: put yours in `repos/` next to `config.json`.
@@ -53,7 +54,28 @@ and writes them to `config.json` in athena's state dir. Run it again any time to
 
 ## State files
 
-State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json` (the items; `items-archive.jsonl` holds those resolved over a week ago), `actions.jsonl`, `health.json` (athena doctor's last check) and `requests.jsonl` (what you typed into HQ, the request log; private). Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`, and `watch-suppressed.log`, the watch lines kept from HQ, rotated to `.1` at 1 MB). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
+State lives in `~/.local/state/athena/` (`ATHENA_STATE_DIR` moves it): `ledger.jsonl`, `workers/`, `briefs/`, `preferences.md`, `open-prs-posted.json` and `open-prs-auto.json` (the PRs posted for review, and those the watch asked HQ to post), `settings/`, `claims/`, `board.json`, `hq.json`, `stack.json`, and for the dashboard `watch.json`, `history.jsonl`, `needs-you.json` (the items; `items-archive.jsonl` holds those resolved over a week ago), `actions.jsonl`, `health.json` (athena doctor's last check) and `requests.jsonl` (what you typed into HQ, the request log; private). Logs are in `logs/` there (`herdr-server.log`, `hq-restart.log`, `dash.log`, and `watch-suppressed.log`, the watch lines kept from HQ, rotated to `.1` at 1 MB). Who writes each dashboard file and what it holds is in [Dashboard](dashboard.md#files-read).
+
+## Preferences
+
+`preferences.md` in the state dir holds the human's standing design and build preferences: the corrections they would otherwise repeat on every ticket ("no feature flags unless asked", "one PR per feature"). `athena spawn` appends it to every worker's copy of its brief as a `PREFERENCES` field (unless the brief already has one), and `worker.md` tells the worker to follow it like SCOPE, with the brief winning where they conflict. No file, no field.
+
+The format is plain Markdown, one preference per line:
+
+```markdown
+# Preferences
+
+## Scope
+- No feature flags unless the request asks for one.
+- One PR per feature; split only when a part is risky or blocked on someone.
+
+## UI
+- Secondary actions appear on hover.
+```
+
+- A `# ` title line is dropped when pasted; `## ` headings, bullets and blank lines stay.
+- Each line is one rule in the human's words, short enough to apply without context. Keep it under about 60 lines: every brief carries it.
+- A new correction becomes a new line once the human okays it (the skill, section 2). No names, customers or secrets: it goes into every brief.
 
 ## Per-repo worktree setup
 

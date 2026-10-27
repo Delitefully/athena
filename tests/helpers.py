@@ -12,8 +12,19 @@ ATHENA_VARS = (
     "ATHENA_MAX_WORKERS", "ATHENA_WORKER", "ATHENA_ROLE", "ATHENA_HQ_PANE", "ATHENA_PLUGIN_DIR",
     "FAKE_HERDR_SCENARIO", "FAKE_HERDR_LOG", "ATHENA_EXIT_GRACE", "ATHENA_HQ_CWD", "ATHENA_DASH_PORT",
     "ATHENA_LINEAR_WORKSPACE", "ATHENA_CONFIG", "ATHENA_MODEL", "ATHENA_EFFORT", "ATHENA_HERDR_INSTALL", "ATHENA_PYTHON",
-    "ATHENA_HQ_CONTEXT_WINDOW", "ATHENA_HQ_SESSION_WAIT", "ATHENA_SESSION_WAIT",
+    "ATHENA_HQ_CONTEXT_WINDOW", "ATHENA_HQ_SESSION_WAIT", "ATHENA_SESSION_WAIT", "ATHENA_PS", "FAKE_PS_CLAUDE",
 )
+
+
+# A brief athena brief check passes, for tests that spawn.
+BRIEF = """# ABC-1: fix it
+GOAL: The parser accepts an empty line.
+SCOPE: In: the parser and its tests. Out: everything else.
+ACCEPTANCE:
+- `make test` passes with a new case for an empty line.
+VERIFY: `make test`
+FORBIDDEN: merging.
+"""
 
 
 class EnvPatch:

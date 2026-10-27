@@ -22,5 +22,9 @@ if [ -z "${ATHENA_WORKER:-}" ] && ! { [ "${ATHENA_ROLE:-}" = hq ] && { [ "${1:-}
 	# No root known in shell (no config.json yet, or it changed since): hookstatus reads it from the config.
 fi
 here=$(cd "$(dirname "$0")/.." && pwd)
-PYTHONPATH="$here" "${ATHENA_PYTHON:-/usr/bin/python3}" -m athena_lib.hookstatus 2>/dev/null
+# -I and the plugin root first on sys.path: `python3 -m` would put the cwd first, so a worker inside an athena
+# checkout would run that branch's hook code against the live state.
+"${ATHENA_PYTHON:-/usr/bin/python3}" -I -c 'import sys; sys.path.insert(0, sys.argv[1])
+from athena_lib import hookstatus
+hookstatus.main()' "$here" 2>/dev/null
 exit 0

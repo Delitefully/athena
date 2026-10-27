@@ -121,6 +121,7 @@ const EXACT = [
   `${NAME} messaging socket missing`,
   `${NAME} new worker \\(${STATE}(?:, startup prompt)?\\)`,
   `${NAME} goal sent`,
+  `${NAME} post for review (?:#\\d{1,7}|failed)`,
   `watch error: exited \\(${EXIT}\\); restarting`,
   DOORBELL_RE,
   SLACK_RE,

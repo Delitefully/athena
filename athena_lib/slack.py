@@ -14,7 +14,12 @@ What it keeps, in slack.json in the state dir: the last-seen ts per conversation
 it has not rung yet, and per DM the ts of the human's last message and how many counted ones came after it. Never a
 message's text, its author or a link to it. The token goes in the Authorization
 header and nowhere else: not a URL, an error, a log line or a file.
+
+Review-channel posts (config `open_prs_channel`): open-prs-posted.json in the state dir records the PRs posted there
+for review, `{"owner/name#n": "<ts>"}`, nothing else of the message. `athena open-prs add` writes it once HQ has
+posted one (athena_lib/reviewpost.py says when a PR is due). This module never posts: its token only reads.
 """
+import fcntl
 import json
 import os
 import queue
@@ -51,10 +56,15 @@ THREAD_FOLLOW = 2 * 24 * 3600
 SKIP_FOR = 3600  # a channel Slack refuses (not_in_channel, channel_not_found) is left alone this long
 TIMEOUT = 15
 COUNT_MAX = 999999
+POSTED_KEEP = 90 * 24 * 3600  # a recorded post this old is dropped
 
 CHANNEL_ID = re.compile(r"^[A-Z][A-Z0-9]{5,20}$")
 _ERROR_CODE = re.compile(r"[a-z_]{1,60}")
 COUNTED_SUBTYPES = (None, "thread_broadcast", "file_share", "me_message")
+# A GitHub PR link, bare or in Slack's <url> and <url|label> forms; the key is the dash's prKey, in lower case.
+_PR_LINK = re.compile(r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/pull/"
+                      r"([1-9][0-9]{0,9})(?![0-9])")
+_PR_KEY = re.compile(r"^[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}#[1-9][0-9]{0,9}$")  # the dash's prKeyText
 
 
 # Errors that say the token itself no longer reads (revoked, a missing scope): not one channel's refusal.
@@ -171,6 +181,74 @@ def _latest(conversation):
 
 def _state_file():
     return paths.state_dir() / "slack.json"
+
+
+def pr_key(given):
+    """`owner/name#n` (any case) or a PR's GitHub URL as its key, else None."""
+    if not isinstance(given, str):
+        return None
+    found = pr_keys(given)
+    if found:
+        return found[0] if len(found) == 1 else None
+    return given.lower() if _PR_KEY.match(given.lower()) else None
+
+
+def pr_keys(text) -> list:
+    """The `owner/name#n` keys of the GitHub PR links in a message's text, in order, each once."""
+    if not isinstance(text, str):
+        return []
+    keys = [f"{m.group(1)}/{m.group(2)}#{m.group(3)}".lower() for m in _PR_LINK.finditer(text)]
+    return [k for k in dict.fromkeys(keys) if _PR_KEY.match(k)]
+
+
+def posted_file():
+    return paths.state_dir() / "open-prs-posted.json"
+
+
+def _parse_posted(text) -> dict:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # As the dash reads it (dash/state.go parsePosted): a key in any case, a ts as a string or a number.
+    return {k.lower(): str(v) for k, v in data.items() if isinstance(k, str) and _PR_KEY.match(k.lower())
+            and isinstance(v, (str, int, float)) and not isinstance(v, bool) and _ts(v) is not None}
+
+
+def posted() -> dict:
+    """open-prs-posted.json: the PRs posted in the review channel, `{"owner/name#n": "<ts>"}`; {} when unreadable."""
+    try:
+        return _parse_posted(posted_file().read_text())
+    except OSError:
+        return {}
+
+
+def record_posted(found, now=None) -> dict:
+    """Add `found` ({key: ts}) to open-prs-posted.json, keeping each key's latest post (a re-post after a teammate's
+    review counts from then) and dropping posts older than POSTED_KEEP. Writers hold open-prs-posted.lock; the file is
+    created if missing and rewritten only when it changes."""
+    now = time.time() if now is None else now
+    paths.ensure()
+    target = posted_file()
+    with open(target.with_name("open-prs-posted.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            before = target.read_text()
+        except OSError:
+            before = None
+        merged = {k: v for k, v in _parse_posted(before or "").items() if now - float(_ts(v)) < POSTED_KEEP}
+        for key, ts in found.items():
+            if _PR_KEY.match(key) and _ts(ts) is not None and now - float(_ts(ts)) < POSTED_KEEP and \
+                    (key not in merged or _ts(ts) > _ts(merged[key])):
+                merged[key] = str(ts)
+        text = json.dumps(merged, indent=1, sort_keys=True) + "\n"
+        if text != before:
+            tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+            tmp.write_text(text)
+            os.replace(tmp, target)
+    return merged
 
 
 def _settings() -> dict:
