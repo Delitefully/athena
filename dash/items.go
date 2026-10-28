@@ -172,19 +172,27 @@ func parseHealth(m map[string]any) *Health {
 }
 
 // HealthView is the page's one dot: ok (green), bad (red, with what is wrong), or unknown (grey: no health.json
-// yet, or one older than healthStale, which is never read as ok).
+// yet, or one older than healthStale, which is never read as ok), saying why in words and naming the fix.
 type HealthView struct {
 	State string // ok, bad, unknown
 	Text  string
-	Title string // every problem, for the tooltip
+	Title string // every problem, or the fix, for the tooltip
 }
+
+const doctorFix = "Install its service to run it every minute: athena service install. To check once now: athena doctor --fix."
 
 func healthView(h *Health, now float64) HealthView {
 	switch {
 	case h == nil:
-		return HealthView{"unknown", "health unknown", "athena doctor has not reported yet"}
+		return HealthView{"unknown", "doctor hasn't reported", "athena doctor has not reported yet (no health.json). " + doctorFix}
 	case now-h.TS > healthStale:
-		return HealthView{"unknown", "health unknown", "athena doctor's last check was at " + unix(h.TS).Local().Format("Mon 15:04") + "; it runs every minute"}
+		at, today := unix(h.TS).Local(), unix(now).Local()
+		last := at.Format("Mon 15:04")
+		if at.YearDay() == today.YearDay() && at.Year() == today.Year() {
+			last = at.Format("15:04")
+		}
+		return HealthView{"unknown", "doctor not running · last check " + last,
+			"athena doctor last checked at " + at.Format("Mon 15:04") + " and should check every minute. " + doctorFix}
 	case h.OK:
 		return HealthView{"ok", "all ok", "athena doctor's last check: " + unix(h.TS).Local().Format("15:04")}
 	}

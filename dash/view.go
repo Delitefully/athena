@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -43,11 +45,12 @@ type Item struct {
 	Sent      string   // a PR row's button answer athena has queued: "merge go sent"
 	AutoAt    float64  // a default that applies on its own then, unless the human objects
 
-	item   string // the item it is, or that a worker's row carries
-	pr     *PR    // its PR, for the Awaiting review row
-	branch string // that PR's head branch
-	moved  bool   // placed by its PR's whose-move state, not by its worker's own state
-	rank   int    // Needs you's order: due soon first
+	item   string   // the item it is, or that a worker's row carries
+	finds  []string // what else the filter matches it on: that item's whole title, PR and workers
+	pr     *PR      // its PR, for the Awaiting review row
+	branch string   // that PR's head branch
+	moved  bool     // placed by its PR's whose-move state, not by its worker's own state
+	rank   int      // Needs you's order: due soon first
 }
 
 // Preview is a link to a preview the dash serves sandboxed: embedded in an item's full view, or opened in a tab of its own.
@@ -418,8 +421,9 @@ func placeItems(v *View, s Snapshot, now float64) {
 	merged := mergedPRs(s)
 	for _, a := range s.Asks {
 		title, _ := a.Title()
-		it := Item{ID: "ask-" + a.ID, Name: a.Name, Href: "/item/" + a.ID, Call: inline(title), Icon: "note", Label: kindLabel(a),
-			Detail: a.Why, When: a.Created, Due: a.Due, item: a.ID}
+		// No why on the row: it is the full view's. The title leaves out the name it starts with, so the row says it once.
+		it := Item{ID: "ask-" + a.ID, Name: a.Name, Href: "/item/" + a.ID, Call: inline(withoutName(title, a.Name)), Icon: "note",
+			Label: kindLabel(a), When: a.Created, Due: a.Due, item: a.ID, finds: append([]string{a.Text, a.PR}, a.Workers...)}
 		if a.Name == "" {
 			it.Name = "Untitled item"
 		}
@@ -456,7 +460,7 @@ func placeItems(v *View, s Snapshot, now float64) {
 			if now-ts < stuckAfter {
 				continue
 			}
-			it.Detail = stuckWhy
+			it.Sent = stuckWhy
 		}
 		switch a.Kind {
 		case "decision":
@@ -489,6 +493,7 @@ func placeItems(v *View, s Snapshot, now float64) {
 					row.Title = row.Name
 				}
 				row.Name, row.Href, row.item = it.Name, it.Href, a.ID
+				row.finds = append(row.finds, it.finds...)
 				if row.Ticket == "" {
 					row.Ticket = strings.ToUpper(strings.TrimPrefix(row.ID, "w-"))
 				}
@@ -523,6 +528,37 @@ func (it Item) Second() template.HTML {
 		return template.HTML(template.HTMLEscapeString(it.Title))
 	}
 	return ""
+}
+
+// withoutName is an item's title less the name it starts with (any case) and the stop after it, so a row whose title
+// repeats its name says it once: "Disk cleanup: free 20 GB on the build box" under that name is "free 20 GB on the build box".
+func withoutName(title, name string) string {
+	if name == "" || len(title) < len(name) || !strings.EqualFold(title[:len(name)], name) {
+		return title
+	}
+	rest := title[len(name):]
+	if r, _ := utf8.DecodeRuneInString(rest); rest != "" && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+		return title // the name ends inside a word
+	}
+	return strings.TrimLeft(rest, " :,;·—–-")
+}
+
+// Search is what the header's filter matches a row on, lower-cased: its name, title (an item's in full), ticket,
+// repo, PR (#n and owner/repo#n) and workers.
+func (it Item) Search() string {
+	parts := append([]string{it.Name, it.Title, it.Ticket, it.Repo}, it.finds...)
+	if strings.HasPrefix(it.ID, "w-") {
+		parts = append(parts, strings.TrimPrefix(it.ID, "w-"))
+	}
+	if it.PR != nil {
+		parts = append(parts, it.PR.Text, prKey(it.PR.URL))
+	}
+	return strings.ToLower(strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
+}
+
+// Search: an Awaiting review pill's, as a row's.
+func (p Pill) Search() string {
+	return strings.ToLower(strings.Join([]string{p.Title, p.Num, p.Key}, " "))
 }
 
 // workerRow: the row of the first of an item's workers that has one.

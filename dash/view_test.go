@@ -518,3 +518,63 @@ func TestReviewRequestsAreCappedAndSkipFollowedPRs(t *testing.T) {
 		t.Fatalf("%+v", it)
 	}
 }
+
+func TestARowNeverPrintsItsNameTwice(t *testing.T) {
+	for _, c := range []struct{ name, title, want string }{
+		{"Release notes draft", "Release notes draft: the 2.4 date is in the doc", "the 2.4 date is in the doc"},
+		{"Staging login", "staging login — which fix?", "which fix?"},
+		{"ABC-101 rollout", "ABC-101 rollout · after #12 merges", "after #12 merges"},
+		{"Ship it", "Ship it", ""},
+		{"Ship", "Shipping the release notes", "Shipping the release notes"},                 // a word that only starts with the name
+		{"Tool upgrade", "Upgrade the tool 1.2 → 1.3 now", "Upgrade the tool 1.2 → 1.3 now"}, // the name is in it, not at its start
+		{"", "A title", "A title"},
+	} {
+		if got := withoutName(c.title, c.name); got != c.want {
+			t.Errorf("%q, %q: %q, want %q", c.name, c.title, got, c.want)
+		}
+	}
+	// An old item, as it is in needs-you.json: its row shows the name once, then the rest of its title.
+	s := Snapshot{Hooks: map[string]Hook{}, Asks: []Ask{{ID: "a1", Kind: "decision", Next: "you", Name: "Disk cleanup",
+		Text: "Disk cleanup: free 20 GB on the build box", Why: "the disk is 95% full"}}}
+	it := Build(s, fixtureNow, "").NeedsYou[0]
+	if it.Lead() != "Disk cleanup" || it.Second() != "free 20 GB on the build box" || it.Detail != "" {
+		t.Fatalf("%q %q %q", it.Lead(), it.Second(), it.Detail)
+	}
+}
+
+func TestTheFilterMatchesARowByNameTitlePRAndWorker(t *testing.T) {
+	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
+	all := append(append(append(append([]Item{}, v.NeedsYou...), v.Ready...), v.InProgress...), v.Done...)
+	row := func(id string) string {
+		for _, it := range all {
+			if it.ID == id {
+				return it.Search()
+			}
+		}
+		t.Fatalf("no row %s", id)
+		return ""
+	}
+	// An item's row: its name and its whole title (the part its row leaves out too), lower-cased.
+	if s := row("ask-a1"); !strings.Contains(s, "export queue start") || !strings.Contains(s, "start **abc-111** now, or after abc-101 merges?") {
+		t.Errorf("ask-a1: %q", s)
+	}
+	// A worker's row an item names: the item's name, the worker's name and title, its ticket, repo and PR.
+	for _, want := range []string{"billing export", "abc-103", "#906", "acme/web#906"} {
+		if s := row("w-abc-103"); !strings.Contains(s, want) {
+			t.Errorf("w-abc-103 lacks %q: %q", want, s)
+		}
+	}
+	// The Awaiting review pills match the same way.
+	for _, p := range v.Awaiting {
+		if s := p.Search(); !strings.Contains(s, strings.ToLower(p.Title)) || !strings.Contains(s, p.Num) || !strings.Contains(s, p.Key) {
+			t.Errorf("pill %s: %q", p.ID, s)
+		}
+	}
+	// On the page, every row and pill carries it.
+	_, base := start(t, copyFixture(t))
+	_, page := get(t, base+"/", "")
+	if !strings.Contains(page, `<li id="ask-a1" class="item has-view" data-search="export queue start`) ||
+		!strings.Contains(page, `class="apr" id="`) || strings.Count(page, `data-search="`) < len(all)+len(v.Awaiting) {
+		t.Errorf("rows without data-search: %d of %d+%d", strings.Count(page, `data-search="`), len(all), len(v.Awaiting))
+	}
+}

@@ -21,7 +21,7 @@ func TestRecheckQueuesForAthenaNamingThePR(t *testing.T) {
 	}
 	// The pill stays, re-checking, with no second Re-check until athena takes this one up.
 	main, _, _ := srv.snapshot()
-	pill := between(string(main), `<div class="apr rechecking" id="aw-acme-web-907">`, `</div>
+	pill := between(string(main), `<div class="apr rechecking" id="aw-acme-web-907"`, `</div>
 </div>`)
 	if pill == "" || strings.Contains(pill, `data-option="recheck"`) || !strings.Contains(pill, `data-option="dismiss"`) || !strings.Contains(pill, `, re-checking"`) {
 		t.Fatalf("pill %q", pill)
@@ -34,7 +34,7 @@ func TestRecheckQueuesForAthenaNamingThePR(t *testing.T) {
 		t.Fatalf("undo: %d %v", code, out)
 	}
 	main, _, _ = srv.snapshot()
-	if !strings.Contains(string(main), `<div class="apr" id="aw-acme-web-907">`) {
+	if !strings.Contains(string(main), `<div class="apr" id="aw-acme-web-907" `) {
 		t.Fatal("still re-checking after the undo")
 	}
 	// A pill stacked behind another has its own Re-check.

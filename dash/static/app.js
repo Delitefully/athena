@@ -1,7 +1,8 @@
 // Live updates: the server pushes a new <main> over Server-Sent Events whenever athena's state files change. An item's
-// full view (/item/<id>) fetches its own <main> again on each push.
+// full view (/item/<id>) fetches its own <main> again on each push; the search page (/items) keeps its own.
 const main = document.querySelector("main");
 const fullItem = main.matches(".full[data-item]") ? main.dataset.item : "";
+const searchPage = main.matches(".full:not([data-item])");
 const motion = matchMedia("(prefers-reduced-motion: no-preference)");
 
 function ago(ts) {
@@ -95,6 +96,7 @@ function render(html) {
     else drafts.delete(key);
   }
   tick();
+  filter();
   if (motion.matches) {
     let i = 0;
     for (const n of main.querySelectorAll("li[id]")) {
@@ -297,6 +299,17 @@ main.addEventListener("click", (e) => {
   else if (pill.matches(".rec")) answer(acts, { option: pill.dataset.option }, "Rec taken: athena has it");
   else answer(acts, { option: pill.dataset.option }, `“${label}” sent to athena`);
 });
+// A row with a full view opens it from anywhere on it. Its links, pills and fields do only their own thing, a drag
+// that selects text opens nothing, and Cmd- or Ctrl-click opens it in a tab of its own, as its name's link would.
+main.addEventListener("click", (e) => {
+  const row = e.target.closest("li.has-view");
+  const link = row?.querySelector(".name a");
+  if (!link || e.button !== 0 || e.target.closest("a, button, input, label, summary, form, .acts")) return;
+  const sel = getSelection();
+  if (sel && !sel.isCollapsed && row.contains(sel.anchorNode)) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey) open(link.href, "_blank", "noopener");
+  else location.href = link.href;
+});
 main.addEventListener("submit", (e) => {
   e.preventDefault();
   const acts = e.target.closest(".acts");
@@ -367,6 +380,37 @@ document.addEventListener("focusout", () => setTimeout(() => tipFor && !tipFor.m
 addEventListener("scroll", hideTip, true);
 addEventListener("resize", hideTip);
 
+// The header's filter, on the main page: typing in Search items hides every row and Awaiting review pill whose
+// data-search (its name, title, PR, repo, ticket and workers) lacks one of the words, case-insensitively, as you type;
+// a fold with a match opens while it is on. Escape or an empty box shows them all again. Enter opens the full search
+// (/items), which also finds resolved and archived items.
+const search = document.querySelector(".search input");
+function filter() {
+  if (fullItem || searchPage || !search) return;
+  const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+  for (const el of main.querySelectorAll("li.item[data-search], .aprs > li")) {
+    const hay = [el, ...el.querySelectorAll("[data-search]")].map((n) => n.dataset.search || "").join(" ");
+    el.hidden = !words.every((w) => hay.includes(w));
+  }
+  main.classList.toggle("filtering", words.length > 0);
+  for (const d of main.querySelectorAll("details")) {
+    if (words.length && !d.open && d.querySelector("li.item[data-search]:not([hidden])")) {
+      d.open = true;
+      d.dataset.filtered = "";
+    } else if (!words.length && d.hasAttribute("data-filtered")) {
+      d.open = false;
+      delete d.dataset.filtered;
+    }
+  }
+}
+search?.addEventListener("input", filter);
+search?.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !search.value) return;
+  e.preventDefault();
+  search.value = "";
+  filter();
+});
+
 const events = new EventSource("/events");
 const boot = document.querySelector('meta[name="athena-boot"]')?.content;
 // A restarted dash has a new token and maybe new files: a page from before it reloads, once per start.
@@ -376,9 +420,12 @@ async function refresh() {
   const r = await fetch(location.pathname + "?fragment=1", { headers: { Accept: "text/html" } }).catch(() => null);
   if (r?.ok) render(await r.text());
 }
-events.addEventListener("main", (e) => (fullItem ? refresh() : render(e.data)));
+// The search page's results are its own: a push of the main page's <main> would replace them (and did, at once, since
+// the stream sends the current page as soon as it connects).
+events.addEventListener("main", (e) => (fullItem ? refresh() : searchPage ? null : render(e.data)));
 events.onopen = () => document.body.classList.remove("offline");
 events.onerror = () => document.body.classList.add("offline");
 setInterval(tick, 30000);
 placeHealth();
 tick();
+filter();

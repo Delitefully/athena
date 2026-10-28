@@ -70,7 +70,7 @@ func TestPageRendersTheGroups(t *testing.T) {
 		`<h2 id="h-awaiting">Awaiting review <span class="count">7</span></h2>`,
 		`<h2 id="h-needs">Needs you <span class="count">13</span></h2>`,
 		`<details class="more"><summary>6 more · athena takes the rec at `,
-		`<p class="detail auto">athena takes the rec at `,
+		`<span class="auto">athena takes the rec at `,
 		`<h2 id="h-ready">Ready for you <span class="count">2</span></h2>`,
 		`<h2 id="h-progress">In flight <span class="count">6</span></h2>`,
 		`<details class="group done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">2</span></h2></summary>`,
@@ -83,7 +83,7 @@ func TestPageRendersTheGroups(t *testing.T) {
 		`<time class="when due" data-due="`,
 		`>due tmrw</time>`,
 		`<span class="name">Rate limits for the export API</span>`, // a worker's row leads with its title, the ticket in its meta
-		`<li id="w-abc-102" class="item act">`,
+		`<li id="w-abc-102" class="item act" `,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %s", want)
