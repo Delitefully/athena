@@ -96,7 +96,7 @@ function render(html) {
   shown = html;
   const before = new Set([...main.querySelectorAll("li[id]")].map((n) => n.id));
   const opened = [...main.querySelectorAll("details[data-fold][open]:not([data-filtered])")].map((d) => d.dataset.fold);
-  const open = new Set([...main.querySelectorAll("details[data-fold][open]")].map((d) => d.dataset.fold));
+  const wasOpen = new Set([...main.querySelectorAll("details[data-fold][open]")].map((d) => d.dataset.fold));
   const focus = focusAt();
   const [x, y] = [scrollX, scrollY];
   main.innerHTML = html;
@@ -119,7 +119,7 @@ function render(html) {
   }
   tick();
   filter();
-  for (const d of main.querySelectorAll("details[data-fold][open]")) if (open.has(d.dataset.fold)) d.dataset.kept = "";
+  for (const d of main.querySelectorAll("details[data-fold][open]")) if (wasOpen.has(d.dataset.fold)) d.dataset.kept = "";
   if (focus) main.querySelector(focus.sel)?.querySelectorAll(FOCUSABLE)[focus.i]?.focus({ preventScroll: true });
   if (scrollX !== x || scrollY !== y) scrollTo(x, y);
   if (motion.matches) {

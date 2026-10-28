@@ -630,4 +630,15 @@ func TestAwaitingPillsAreNewestFirst(t *testing.T) {
 	if got := pillKeys(v.Awaiting); got != "acme/web#5 acme/web#3[4 6] acme/web#1" {
 		t.Fatalf("awaiting: %s", got)
 	}
+	// Two pills of one stack.json chain whose middle PR is gone: a chain's place never outranks the newest first, and
+	// pills from chains and from none sort the same every time.
+	s := snapshotOf(awaitingPR(1, "main", awaitingAlex, "awaiting", false), awaitingPR(3, "main", awaitingAlex, "awaiting", false),
+		awaitingPR(9, "main", awaitingAlex, "awaiting", false), awaitingPR(5, "main", awaitingAlex, "awaiting", false),
+		awaitingPR(7, "main", awaitingAlex, "awaiting", false))
+	s.Stacks = []Stack{{Repo: "acme/web", PRs: []int{1, 2, 3}}, {Repo: "acme/web", PRs: []int{4, 9}}, {Repo: "acme/web", PRs: []int{5, 100}}}
+	for range 50 {
+		if got := pillKeys(Build(s, fixtureNow, "acme").Awaiting); got != "acme/web#9 acme/web#7 acme/web#5 acme/web#3 acme/web#1" {
+			t.Fatalf("chained pills: %s", got)
+		}
+	}
 }
