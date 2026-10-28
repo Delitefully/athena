@@ -138,7 +138,7 @@ a.ticket:hover { text-decoration: underline 1px currentColor; }
 .swap > * { grid-area: 1 / 1; min-width: 0; }
 .swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
 .swap.has-acts { min-height: 22px; }
-.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; justify-self: start; clip-path: inset(0 100% 0 0); } /* the strip right of the pills opens the row */
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
 .item:hover > .body > .swap > .acts, .item:focus-within > .body > .swap > .acts, .acts.replying {
   clip-path: inset(-6px -8px -6px -4px); /* room for the focus ring; the tooltip is the body's (.tip) */
 }
