@@ -69,11 +69,11 @@ func TestPageRendersTheGroups(t *testing.T) {
 		`<p class="health ok" title="athena doctor&#39;s last check: `,
 		`<h2 id="h-awaiting">Awaiting review <span class="count">7</span></h2>`,
 		`<h2 id="h-needs">Needs you <span class="count">13</span></h2>`,
-		`<details class="more"><summary>6 more · athena takes the rec at `,
+		`<details class="more" data-fold="needs"><summary>6 more</summary>`, // newest first: the default (a1) shows above the fold
 		`<span class="auto">athena takes the rec at `,
 		`<h2 id="h-ready">Ready for you <span class="count">2</span></h2>`,
 		`<h2 id="h-progress">In flight <span class="count">6</span></h2>`,
-		`<details class="group done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">2</span></h2></summary>`,
+		`<details class="group done" data-fold="done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">2</span></h2></summary>`,
 		`<p class="snoozed">1 snoozed`,
 		`<a class="ticket" href="https://linear.app/acme/issue/ABC-108">ABC-108</a>`,
 		`<a href="https://github.com/acme/web/pull/48">#48</a>`,

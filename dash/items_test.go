@@ -327,14 +327,26 @@ func TestAgesAndDueDates(t *testing.T) {
 
 // Needs you shows at most needsShown rows; the rest fold behind "n more", saying when the first default applies.
 func TestNeedsYouFoldsPastSevenRows(t *testing.T) {
-	_, base := start(t, copyFixture(t))
+	dir := copyFixture(t)
+	// Two calls newer than the fixture's default (a1) push it below the fold, newest first.
+	path := filepath.Join(dir, "needs-you.json")
+	var file map[string]any
+	data, _ := os.ReadFile(path)
+	json.Unmarshal(data, &file)
+	for i, id := range []string{"n1", "n2"} {
+		file["items"] = append(file["items"].([]any), map[string]any{"id": id, "kind": "decision", "next": "you", "name": "New call " + id,
+			"text": "Go ahead?", "created": fixtureNow - 60*(i+1), "updated": fixtureNow - 60*(i+1)})
+	}
+	data, _ = json.Marshal(file)
+	os.WriteFile(path, data, 0o600)
+	_, base := start(t, dir)
 	_, page := get(t, base+"/", "")
 	needs := between(page, `<section class="group needs"`, `</section>`)
-	shown := between(needs, "<ul>", `<details class="more">`)
+	shown := between(needs, "<ul>", `<details class="more"`)
 	if n := strings.Count(shown, `<li id=`); n != needsShown {
 		t.Fatalf("%d rows before the fold", n)
 	}
-	if !strings.Contains(needs, `<details class="more"><summary>6 more · athena takes the rec at `) || !strings.Contains(needs, "unless you object</summary>") {
+	if !strings.Contains(needs, `<details class="more" data-fold="needs"><summary>8 more · athena takes the rec at `) || !strings.Contains(needs, "unless you object</summary>") {
 		t.Fatalf("%s", needs)
 	}
 }

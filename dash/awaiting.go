@@ -112,7 +112,7 @@ func stackAwaiting(v *View, stacks []Stack, dismissed map[string]Dismissal, queu
 		}
 	}
 	for _, kids := range children {
-		sort.Slice(kids, func(i, j int) bool { return pillLess(kids[i], kids[j], rank) })
+		sort.Slice(kids, func(i, j int) bool { return pillLess(kids[i], kids[j], rank, false) })
 	}
 
 	v.pills = map[string]*Pill{}
@@ -133,7 +133,7 @@ func stackAwaiting(v *View, stacks []Stack, dismissed map[string]Dismissal, queu
 			fronts = append(fronts, k)
 		}
 	}
-	sort.Slice(fronts, func(i, j int) bool { return pillLess(fronts[i], fronts[j], rank) })
+	sort.Slice(fronts, func(i, j int) bool { return pillLess(fronts[i], fronts[j], rank, true) })
 	for _, k := range fronts {
 		p := pill(nodes[k], "")
 		var walk func(k string)
@@ -213,8 +213,9 @@ func prNumberOf(key string) int {
 	return i
 }
 
-// pillLess orders pills by repo, then place in a stack.json chain, then number.
-func pillLess(a, b string, rank map[string]int) bool {
+// pillLess orders pills by repo, then place in a stack.json chain, then number: the newest (highest) first when newest
+// is set, as the row's own pills are; the PRs behind a pill go oldest first, in the order they stack.
+func pillLess(a, b string, rank map[string]int, newest bool) bool {
 	if ra, rb := repoOf(a), repoOf(b); ra != rb {
 		return ra < rb
 	}
@@ -222,6 +223,9 @@ func pillLess(a, b string, rank map[string]int) bool {
 	ib, okb := rank[b]
 	if oka && okb && ia != ib {
 		return ia < ib
+	}
+	if newest {
+		return prNumberOf(a) > prNumberOf(b)
 	}
 	return prNumberOf(a) < prNumberOf(b)
 }

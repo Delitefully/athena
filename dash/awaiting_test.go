@@ -177,12 +177,12 @@ func TestDismissHoldsUntilTheHeadOrReviewChanges(t *testing.T) {
 		t.Fatalf("dismissed: %s", got)
 	}
 	s.Watch.PRs["acme/web#1"].Head = "sha1-new" // a new commit
-	if got := pillKeys(Build(s, fixtureNow, "acme").Awaiting); got != "acme/web#1 acme/web#2" {
+	if got := pillKeys(Build(s, fixtureNow, "acme").Awaiting); got != "acme/web#2 acme/web#1" {
 		t.Fatalf("after a push: %s", got)
 	}
 	s.Watch.PRs["acme/web#1"].Head = "sha1"
 	s.Watch.PRs["acme/web#1"].Move.Label = "awaiting review · alex, kim" // another reviewer asked
-	if got := pillKeys(Build(s, fixtureNow, "acme").Awaiting); got != "acme/web#1 acme/web#2" {
+	if got := pillKeys(Build(s, fixtureNow, "acme").Awaiting); got != "acme/web#2 acme/web#1" {
 		t.Fatalf("after a review change: %s", got)
 	}
 

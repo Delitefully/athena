@@ -50,10 +50,10 @@ func find(items []Item, name string) Item {
 
 func TestBuildGroupsTheFixture(t *testing.T) {
 	v := Build(NewStore("testdata/state").Load(), fixtureNow, "acme")
-	if got := ids(v.NeedsYou); got != "a7 a2 abc-102 abc-106 web a6 a5 a1 abc-108 abc-104 api web web" {
+	if got := ids(v.NeedsYou); got != "a7 a2 abc-102 abc-106 web a1 a5 a6 abc-108 abc-104 api web web" {
 		t.Fatalf("needs you: %s", got)
 	}
-	if got := ids(v.InProgress); got != "abc-101 abc-103 abc-107 abc-109 a9 a12" {
+	if got := ids(v.InProgress); got != "abc-109 abc-101 abc-103 abc-107 a9 a12" {
 		t.Fatalf("in progress: %s", got)
 	}
 	if got := ids(v.Done); got != "a10 abc-100" {
@@ -65,7 +65,7 @@ func TestBuildGroupsTheFixture(t *testing.T) {
 
 	// The screenshot case: every PR awaiting a teammate's review is a pill on the Awaiting review row, a live idle
 	// worker's (#907) as much as a followed one's, and the stack.json chain 906 <- 908 <- 909 is one pill with two behind.
-	if got := pillKeys(v.Awaiting); got != "acme/api#71 acme/docs#212 acme/web#906[908 909] acme/web#907 acme/web#6452" {
+	if got := pillKeys(v.Awaiting); got != "acme/api#71 acme/docs#212 acme/web#6452 acme/web#907 acme/web#906[908 909]" {
 		t.Fatalf("awaiting: %s", got)
 	}
 	own := v.Awaiting[3]
@@ -576,5 +576,58 @@ func TestTheFilterMatchesARowByNameTitlePRAndWorker(t *testing.T) {
 	if !strings.Contains(page, `<li id="ask-a1" class="item has-view" data-search="export queue start`) ||
 		!strings.Contains(page, `class="apr" id="`) || strings.Count(page, `data-search="`) < len(all)+len(v.Awaiting) {
 		t.Errorf("rows without data-search: %d of %d+%d", strings.Count(page, `data-search="`), len(all), len(v.Awaiting))
+	}
+}
+
+// Each section lists its rows newest first by their time (When): within each of Needs you's tiers but the first, whose
+// items keep their due-date order, and in Ready for you and In flight. Done already was.
+func TestEachSectionIsNewestFirst(t *testing.T) {
+	ago := func(min float64) float64 { return fixtureNow - min*60 }
+	live := func(name string, ts float64) Worker { return Worker{Name: name, State: "live", Updated: ts} }
+	due := func(a Ask, at float64) Ask { a.Due = at; return a }
+	s := Snapshot{
+		Workers: []Worker{live("blk-old", ago(90)), live("blk-new", ago(5)), live("run-old", ago(80)), live("run-new", ago(3)),
+			live("pr-old", ago(70)), live("pr-new", ago(4))},
+		Hooks: map[string]Hook{"blk-old": {State: "blocked"}, "blk-new": {State: "blocked"}, "run-old": {State: "working"},
+			"run-new": {State: "working"}, "pr-old": {State: "done"}, "pr-new": {State: "done"}},
+		Asks: []Ask{
+			due(item("due-later", "decision", "you", "Due later", "?", ago(1)), fixtureNow+7200),
+			due(item("due-sooner", "decision", "you", "Due sooner", "?", ago(300)), fixtureNow+3600),
+			item("call-old", "decision", "you", "Old call", "?", ago(120)),
+			item("call-new", "decision", "you", "New call", "?", ago(2)),
+			item("call-mid", "decision", "you", "Mid call", "?", ago(30)),
+			item("res-old", "result", "you", "Old result", "r", ago(100)),
+			item("res-new", "result", "you", "New result", "r", ago(10)),
+			item("req-old", "request", "athena", "Old request", "q", ago(85)),
+			item("req-new", "request", "athena", "New request", "q", ago(1)),
+		},
+	}
+	unrequested := func(n int) WatchWorker {
+		return WatchWorker{PR: followed(n, "", "no reviewer requested", "unrequested", true)}
+	}
+	s.Watch = &Watch{TS: fixtureNow, Workers: map[string]WatchWorker{"pr-old": unrequested(1), "pr-new": unrequested(2)}}
+	v := Build(s, fixtureNow, "acme")
+	if got := ids(v.NeedsYou); got != "due-sooner due-later blk-new blk-old call-new call-mid call-old pr-new pr-old" {
+		t.Errorf("needs you: %s", got)
+	}
+	if got := ids(v.Ready); got != "res-new res-old" {
+		t.Errorf("ready for you: %s", got)
+	}
+	if got := ids(v.InProgress); got != "req-new run-new run-old req-old" {
+		t.Errorf("in flight: %s", got)
+	}
+}
+
+// Awaiting review: the newest PR first (the higher number, within a repo), while a stack's PRs behind it keep chain order.
+func TestAwaitingPillsAreNewestFirst(t *testing.T) {
+	v := Build(snapshotOf(
+		awaitingPR(1, "main", awaitingAlex, "awaiting", false),
+		awaitingPR(5, "main", awaitingAlex, "awaiting", false),
+		awaitingPR(3, "main", awaitingAlex, "awaiting", false),
+		awaitingPR(6, "b3", awaitingAlex, "awaiting", false),
+		awaitingPR(4, "b3", awaitingAlex, "awaiting", false),
+	), fixtureNow, "acme")
+	if got := pillKeys(v.Awaiting); got != "acme/web#5 acme/web#3[4 6] acme/web#1" {
+		t.Fatalf("awaiting: %s", got)
 	}
 }
