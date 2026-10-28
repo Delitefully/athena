@@ -73,6 +73,20 @@ function busy() {
   return collapsing > 0 || pressing || selecting() || (document.activeElement?.matches("main .reply input") ?? false);
 }
 
+// Where keyboard focus is in <main>, so a new page can put it back: the row, pill or fold it is in, and its place among
+// that one's focusable elements.
+const FOCUSABLE = "a[href], button, input, summary";
+function focusAt() {
+  const el = document.activeElement;
+  const box = el && main.contains(el) ? el.closest("[id], details[data-fold]") : null;
+  if (!box || !main.contains(box)) return null;
+  const sel = box.id ? "#" + CSS.escape(box.id) : `details[data-fold="${CSS.escape(box.dataset.fold)}"]`;
+  const i = [...box.querySelectorAll(FOCUSABLE)].indexOf(el);
+  return i < 0 ? null : { sel, i };
+}
+
+// A push keeps what the human set on the page: every fold they opened ("n more", Done today: one the filter opened is
+// the filter's), the filter itself, focus and the scroll. A kept fold does not unfold again.
 function render(html) {
   if (busy()) {
     held = html;
@@ -81,7 +95,15 @@ function render(html) {
   held = null;
   shown = html;
   const before = new Set([...main.querySelectorAll("li[id]")].map((n) => n.id));
+  const opened = [...main.querySelectorAll("details[data-fold][open]:not([data-filtered])")].map((d) => d.dataset.fold);
+  const open = new Set([...main.querySelectorAll("details[data-fold][open]")].map((d) => d.dataset.fold));
+  const focus = focusAt();
+  const [x, y] = [scrollX, scrollY];
   main.innerHTML = html;
+  for (const key of opened) {
+    const d = main.querySelector(`details[data-fold="${CSS.escape(key)}"]`);
+    if (d) d.open = true;
+  }
   document.title = main.querySelector("[data-title]")?.dataset.title || document.title;
   for (const item of answered) {
     const all = main.querySelectorAll(`.acts[data-item="${CSS.escape(item)}"]`); // the row's, and its panel's
@@ -97,6 +119,9 @@ function render(html) {
   }
   tick();
   filter();
+  for (const d of main.querySelectorAll("details[data-fold][open]")) if (open.has(d.dataset.fold)) d.dataset.kept = "";
+  if (focus) main.querySelector(focus.sel)?.querySelectorAll(FOCUSABLE)[focus.i]?.focus({ preventScroll: true });
+  if (scrollX !== x || scrollY !== y) scrollTo(x, y);
   if (motion.matches) {
     let i = 0;
     for (const n of main.querySelectorAll("li[id]")) {
@@ -404,6 +429,7 @@ function filter() {
   }
 }
 search?.addEventListener("input", filter);
+main.addEventListener("toggle", (e) => e.target.open || delete e.target.dataset.kept, true); // toggle does not bubble
 search?.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || !search.value) return;
   e.preventDefault();

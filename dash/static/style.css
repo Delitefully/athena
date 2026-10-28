@@ -332,7 +332,7 @@ main.full { display: block; max-width: 920px; }
   .enter { animation: reveal .7s var(--arrive) both; }
   .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
   .apr .acts, .apr > .swap > .apr-meta { transition: opacity .14s ease; }
-  details[open]:is(.more, .done) > ul { animation: unfold .32s var(--arrive) both; }
+  details[open]:is(.more, .done):not([data-kept]) > ul { animation: unfold .32s var(--arrive) both; }
   .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
   .stack:is(:hover, :focus-within) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
   .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }

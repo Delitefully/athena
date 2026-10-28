@@ -351,6 +351,46 @@ func TestNeedsYouFoldsPastSevenRows(t *testing.T) {
 	}
 }
 
+// A push replaces <main> (app.js render), and a fold the human opened stays open: each fold has a key that holds
+// across pages, app.js reopens the folds open under that key before the page shows, and a fold that grew shows every
+// row it now has. The page has no JS test setup, so this checks the page and the code that keeps the folds.
+func TestAPushKeepsAnOpenFoldOpen(t *testing.T) {
+	dir := copyFixture(t)
+	srv, base := start(t, dir)
+	folds := func() (string, string) {
+		_, page := get(t, base+"/", "")
+		return between(page, `<details class="more" data-fold="needs">`, `</details>`), between(page, `<details class="group done" data-fold="done"`, `</details>`)
+	}
+	needs, done := folds()
+	if strings.Count(needs, `<li id=`) != 6 || done == "" {
+		t.Fatalf("before: needs fold %q, done fold %q", needs, done)
+	}
+	path := filepath.Join(dir, "needs-you.json")
+	var file map[string]any
+	data, _ := os.ReadFile(path)
+	json.Unmarshal(data, &file)
+	for _, id := range []string{"g1", "g2"} {
+		file["items"] = append(file["items"].([]any), map[string]any{"id": id, "kind": "decision", "next": "you", "name": "Grown " + id,
+			"text": "Go ahead?", "created": fixtureNow - 7200, "updated": fixtureNow - 7200})
+	}
+	data, _ = json.Marshal(file)
+	os.WriteFile(path, data, 0o600)
+	srv.Refresh(true)
+	if needs, done = folds(); strings.Count(needs, `<li id=`) != 8 || done == "" {
+		t.Fatalf("after the push, the folds keep their keys and the grown one holds all 8 rows: %q, %q", needs, done)
+	}
+
+	js, _ := staticFS.ReadFile("static/app.js")
+	render := between(string(js), "function render(html) {", "\n}\n")
+	save := strings.Index(render, `main.querySelectorAll("details[data-fold][open]:not([data-filtered])")`)
+	swap := strings.Index(render, "main.innerHTML = html;")
+	reopen := strings.Index(render, `main.querySelector(`+"`details[data-fold=\"${CSS.escape(key)}\"]`"+`)`)
+	filter := strings.Index(render, "filter();")
+	if save < 0 || swap < save || reopen < swap || filter < reopen {
+		t.Fatalf("render keeps no open fold across a push (save %d, swap %d, reopen %d, filter %d)", save, swap, reopen, filter)
+	}
+}
+
 // Review round 1: stakes the dash cannot read block a default (fail closed): a string, the wrong case, an unknown
 // value, a wrong type. Only an absent or empty stakes list lets auto through.
 func TestStakesItCannotReadBlockTheDefault(t *testing.T) {
