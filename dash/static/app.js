@@ -82,7 +82,22 @@ function focusAt() {
   if (!box || !main.contains(box)) return null;
   const sel = box.id ? "#" + CSS.escape(box.id) : `details[data-fold="${CSS.escape(box.dataset.fold)}"]`;
   const i = [...box.querySelectorAll(FOCUSABLE)].indexOf(el);
-  return i < 0 ? null : { sel, i };
+  const front = el.closest(".stack")?.querySelector(":scope > .apr")?.id;
+  return i < 0 ? null : { sel, i, front };
+}
+// Focus back where focusAt was. A PR stacked behind a pill is hidden until its stack has focus, so the stack counts as
+// focused (.held) while it takes it. When the place is gone or can't take focus, focus goes to the fold now holding it
+// (its summary) or to the stack's front pill.
+function refocus(at) {
+  const el = main.querySelector(at.sel)?.querySelectorAll(FOCUSABLE)[at.i];
+  const stack = el?.closest(".stack");
+  stack?.classList.add("held");
+  el?.focus({ preventScroll: true });
+  stack?.classList.remove("held");
+  if (el && document.activeElement === el) return;
+  const fold = el?.closest("details:not([open])")?.querySelector(":scope > summary");
+  const front = at.front && main.querySelector("#" + CSS.escape(at.front) + " .apr-link");
+  (fold || front)?.focus({ preventScroll: true });
 }
 
 // A push keeps what the human set on the page: every fold they opened ("n more", Done today: one the filter opened is
@@ -120,7 +135,7 @@ function render(html) {
   tick();
   filter();
   for (const d of main.querySelectorAll("details[data-fold][open]")) if (wasOpen.has(d.dataset.fold)) d.dataset.kept = "";
-  if (focus) main.querySelector(focus.sel)?.querySelectorAll(FOCUSABLE)[focus.i]?.focus({ preventScroll: true });
+  if (focus) refocus(focus);
   if (scrollX !== x || scrollY !== y) scrollTo(x, y);
   if (motion.matches) {
     let i = 0;

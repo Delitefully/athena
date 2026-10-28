@@ -389,6 +389,13 @@ func TestAPushKeepsAnOpenFoldOpen(t *testing.T) {
 	if save < 0 || swap < save || reopen < swap || filter < reopen {
 		t.Fatalf("render keeps no open fold across a push (save %d, swap %d, reopen %d, filter %d)", save, swap, reopen, filter)
 	}
+	// Focus on a PR stacked behind a pill: its stack fans out (.held, as with focus inside) while focus goes back.
+	refocus := between(string(js), "function refocus(at) {", "\n}\n")
+	css, _ := staticFS.ReadFile("static/style.css")
+	if !strings.Contains(render, "refocus(focus)") || !strings.Contains(refocus, `stack?.classList.add("held")`) ||
+		!strings.Contains(string(css), ".stack:is(:hover, :focus-within, .held) > .behind {") {
+		t.Fatal("a push drops focus from a PR stacked behind a pill")
+	}
 }
 
 // Review round 1: stakes the dash cannot read block a default (fail closed): a string, the wrong case, an unknown
