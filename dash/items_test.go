@@ -17,8 +17,9 @@ func TestTheHealthDotIsNeverGreenWithoutAFreshCheck(t *testing.T) {
 		state string
 		text  string
 	}{
-		{nil, "unknown", "health unknown"},
-		{&Health{TS: now - healthStale - 1, OK: true}, "unknown", "health unknown"},
+		{nil, "unknown", "doctor hasn't reported"},
+		{&Health{TS: now - healthStale - 1, OK: true}, "unknown", "doctor not running · last check " + unix(now-healthStale-1).Local().Format("15:04")},
+		{&Health{TS: now - 3*24*3600, OK: true}, "unknown", "doctor not running · last check " + unix(now-3*24*3600).Local().Format("Mon 15:04")},
 		{&Health{TS: now - 30, OK: true}, "ok", "all ok"},
 		{&Health{TS: now - 30, OK: false}, "bad", "something is wrong"},
 		{&Health{TS: now - 30, Problems: []Problem{{Check: "dash", Detail: "down since 09:12"}, {Check: "board"}}}, "bad", "dash: down since 09:12 · +1 more"},
@@ -26,6 +27,12 @@ func TestTheHealthDotIsNeverGreenWithoutAFreshCheck(t *testing.T) {
 		got := healthView(c.h, now)
 		if got.State != c.state || got.Text != c.text {
 			t.Errorf("%+v: %+v", c.h, got)
+		}
+	}
+	// Stale or missing, the tooltip names the fix: the service that runs doctor every minute, or one check now.
+	for _, h := range []*Health{nil, {TS: now - healthStale - 1, OK: true}} {
+		if v := healthView(h, now); !strings.Contains(v.Title, "athena service install") || !strings.Contains(v.Title, "athena doctor --fix") {
+			t.Errorf("%+v: the tooltip names no fix: %q", h, v.Title)
 		}
 	}
 	// health.json as v2's doctor writes it: a problem makes it not ok, whatever its ok says.
@@ -54,8 +61,9 @@ func TestTheHealthDotIsNeverGreenWithoutAFreshCheck(t *testing.T) {
 	}
 	os.Remove(filepath.Join(dir, healthFile))
 	srv.Refresh(false)
-	if main, _, _ := srv.snapshot(); !strings.Contains(string(main), `<p class="health unknown"`) {
-		t.Fatal("no health.json reads as unknown")
+	if main, _, _ := srv.snapshot(); !strings.Contains(string(main), `<p class="health unknown" title="athena doctor has not reported`) ||
+		!strings.Contains(string(main), `</span>doctor hasn&#39;t reported</p>`) {
+		t.Fatal("no health.json reads as unknown, saying so")
 	}
 }
 

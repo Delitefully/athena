@@ -228,12 +228,12 @@ func TestAStuckAnswerBringsItsAskBack(t *testing.T) {
 	}
 	s.Actions[0].TS = fixtureNow - stuckAfter
 	v := Build(s, fixtureNow, "")
-	if len(v.NeedsYou) != 1 || v.NeedsYou[0].Detail != stuckWhy || v.actionable["a1"] == nil {
+	if len(v.NeedsYou) != 1 || v.NeedsYou[0].Sent != stuckWhy || v.actionable["a1"] == nil {
 		t.Fatalf("back after %d s, saying why: %+v", stuckAfter, v.NeedsYou)
 	}
 	for _, st := range []string{"done", "cancelled"} {
 		s.Actions[0].Status = st
-		if v := Build(s, fixtureNow, ""); len(v.NeedsYou) != 1 || v.NeedsYou[0].Detail != "the window closes at 5" {
+		if v := Build(s, fixtureNow, ""); len(v.NeedsYou) != 1 || v.NeedsYou[0].Sent != "" || v.NeedsYou[0].Detail != "" {
 			t.Fatalf("%s: %+v", st, v.NeedsYou)
 		}
 	}
@@ -268,8 +268,8 @@ func TestWhatEachRowOffers(t *testing.T) {
 	if v.actionable["w-abc-100"] != nil || v.actionable["pr-acme-web-906"] != nil || v.actionable["rr-acme-web-6170"] != nil || v.actionable["a10"] != nil {
 		t.Fatal("no actions on a retired worker's Done row, an In flight PR row, a review request or a resolved item")
 	}
-	if it := find(v.NeedsYou, "Export queue start"); it.Detail != "ABC-111 touches the same export queue as ABC-101." {
-		t.Fatalf("an item's why shows in its detail line: %+v", it)
+	if it := find(v.NeedsYou, "Export queue start"); it.Detail != "" {
+		t.Fatalf("an item's why is its full view's, not its row's: %+v", it)
 	}
 }
 
@@ -281,8 +281,10 @@ func TestPillsTakeThePlaceOfTheLabelLine(t *testing.T) {
 		`<button type="button" class="pill rec" data-option="yes" data-tip="Recommended: Close it">`) {
 		t.Error("an item's pills are not in its label line's cell")
 	}
-	if !strings.Contains(between(page, `<li id="ask-a5"`, `</li>`), `<a class="pill" href="/item/a5">`) {
-		t.Error("an item's row has no Open")
+	// The whole row opens its full view (app.js), its name the link: no Open pill.
+	if row := between(page, `<li id="ask-a5"`, `</li>`); !strings.Contains(row, ` class="item has-view" `) ||
+		!strings.Contains(row, `<span class="name"><a href="/item/a5">`) || strings.Contains(row, `>Open</a>`) {
+		t.Errorf("an item's row: %s", row)
 	}
 	// A worker's row: they take the place of its whole state line.
 	if !regexp.MustCompile(`(?s)<li id="w-abc-101" .*?<div class="swap has-acts"><p class="meta">.*?</p><div class="acts" data-item="w-abc-101">`).MatchString(page) {

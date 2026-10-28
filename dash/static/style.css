@@ -57,10 +57,9 @@ header::after { content: ""; position: absolute; left: 40px; right: 40px; bottom
 .lockup svg { display: block; height: 36px; width: auto; }
 .lockup .knot { stroke: var(--thread); }
 .lockup .word { fill: var(--ink); }
-.status { margin: 0 0 4px; font-size: 12.5px; color: var(--muted); }
-.status .stopped { display: none; color: var(--ink); font-weight: 600; }
-body.offline .status .live { display: none; }
-body.offline .status .stopped { display: inline; }
+/* Nothing while the page is live; beside the health dot while its event stream is down and reconnecting. */
+.status { display: none; margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+body.offline .status { display: block; }
 
 /* Two columns: what is yours (Needs you, Ready for you) and what is someone else's move (Awaiting review, In flight,
    Done today). One column on a phone, yours first. */
@@ -78,7 +77,6 @@ main {
   header { flex-wrap: wrap; row-gap: 10px; }
   .search { order: 5; flex-basis: 100%; }
   .search input { width: 100%; }
-  .status { display: none; }
 }
 
 h2 {
@@ -98,8 +96,12 @@ ul { list-style: none; margin: 0; padding: 0; }
 .icon.badge { fill: var(--ink); stroke: var(--bg); color: var(--bg); }
 .body { min-width: 0; }
 .body p { margin: 0; }
-.line { text-wrap: pretty; }
-/* A row leads with its name, then its call or title, in a lighter weight; its age or due date sits at the right. */
+/* A row leads with its name, then its call or title, in a lighter weight, on one line cut with an ellipsis; its age or
+   due date sits at the right. */
+.line { display: flex; align-items: baseline; min-width: 0; }
+.line > .name, .line > .call { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line > .name { flex: 0 1 auto; }
+.line > .call { flex: 1 1 0; margin-left: .3em; }
 .name { font-weight: 650; }
 .name a { text-decoration: none; }
 .name a:hover { text-decoration: underline 1px currentColor; }
@@ -107,9 +109,17 @@ ul { list-style: none; margin: 0; padding: 0; }
 .call a { font-weight: 600; }
 .ticket { font-weight: 600; text-decoration: none; letter-spacing: .01em; }
 a.ticket:hover { text-decoration: underline 1px currentColor; }
-.line time { float: right; margin-left: 12px; font-size: 12.5px; color: var(--muted); }
+.line time { flex: none; margin-left: auto; padding-left: 12px; font-size: 12.5px; color: var(--muted); }
 .line time.due { color: var(--thread); font-weight: 600; }
-.detail.auto { color: var(--thread); }
+.meta .auto { color: var(--thread); font-weight: 600; }
+/* A row with a full view opens it from anywhere on it (app.js); its name is the link Tab reaches. */
+.item.has-view { cursor: pointer; }
+.item.has-view:is(:hover, :focus-within) { background: var(--wash); box-shadow: -10px 0 0 var(--wash), 10px 0 0 var(--wash); }
+.item.has-view:is(:hover, :focus-within) .name a { text-decoration: underline 1px currentColor; }
+.item.has-view:is(:hover, :focus-within) .swap.keep > .acts { background: linear-gradient(var(--wash), var(--wash)), var(--bg); }
+.item.has-view .name a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+/* The header's filter hides the rows and pills that don't match, and Needs you's "n more", whose count it no longer is. */
+.item[hidden], .aprs li[hidden], main.filtering details.more > summary { display: none; }
 .meta { margin-top: 3px !important; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--muted); }
 .act .label { color: var(--ink); font-weight: 600; }
 .checks.failure { color: var(--ink); font-weight: 600; }

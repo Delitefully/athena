@@ -17,8 +17,8 @@
 <header>
 <a class="lockup" href="/" aria-label="athena">{{template "lockup"}}</a>
 <span class="health-slot"></span>
+<p class="status" role="status">reconnecting…</p>
 <form class="search" action="/items" role="search"><input type="search" name="q" placeholder="Search items" aria-label="Search items" autocomplete="off"{{with .Q}} value="{{.}}"{{end}}></form>
-<p class="status"><span class="live">live</span><span class="stopped">stopped, reconnecting</span></p>
 </header>{{end}}
 
 {{define "foot"}}<div class="tip" aria-hidden="true" hidden></div>
@@ -105,15 +105,16 @@
 {{if .Items}}<ul>{{range .Items}}{{template "item" .}}{{end}}</ul>{{else}}<p class="empty">{{.Empty}}</p>{{end}}
 </section>{{end}}
 
-{{/* A row: its name first, then its call or title, its age or due date on the right; the meta line under it says where
-     it stands, with the ticket, repo and PR, and swaps for the row's pills on hover. An item's name opens its full view. */}}
-{{define "item"}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}{{if .Href}} has-view{{end}}">
+{{/* A row: its name first, then its call or title on one line, its age or due date on the right; the meta line under it
+     says where it stands, with the ticket, repo and PR, and swaps for the row's pills on hover. A row with a full view
+     opens it from anywhere on it (app.js): its name is the link, and the row's one stop for Tab. data-search is what
+     the header's filter matches it on. */}}
+{{define "item"}}<li id="{{.ID}}" class="item{{if .Badge}} act{{end}}{{if .Href}} has-view{{end}}" data-search="{{.Search}}">
 <svg class="icon{{if badge .Icon}} badge{{end}}" viewBox="-12 -12 24 24" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg>
 <div class="body">
 <p class="line"><span class="name">{{if .Href}}<a href="{{.Href}}">{{.Lead}}</a>{{else}}{{.Lead}}{{end}}</span>{{with .Second}} <span class="call">{{.}}</span>{{end}}
 {{- if .Due}}<time class="when due" data-due="{{printf "%.0f" .Due}}" datetime="{{iso .Due}}">{{due .Due}}</time>{{else if .When}}<time class="when" data-ts="{{printf "%.0f" .When}}" data-short datetime="{{iso .When}}">{{short .When}}</time>{{end}}</p>
-<div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{if .ForPR}} keep{{end}}{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
-{{if .AutoAt}}<p class="detail auto">athena takes the rec at {{at .AutoAt}} unless you object</p>{{end}}
+<div class="swap{{with .Actions}}{{if .OnRow}} has-acts{{if .ForPR}} keep{{end}}{{end}}{{end}}"><p class="meta"><span class="label">{{.Label}}</span>{{if .AutoAt}}<span class="auto">athena takes the rec at {{at .AutoAt}}</span>{{end}}{{if .Sent}}<span class="sent">{{.Sent}}</span>{{end}}{{if .TicketURL}}<a class="ticket" href="{{.TicketURL}}">{{.Ticket}}</a>{{else if .Ticket}}<span class="ticket">{{.Ticket}}</span>{{end}}{{if .Repo}}<span>{{.Repo}}</span>{{end}}{{with .PR}}<span class="pr"><a href="{{.URL}}">{{.Text}}</a>{{if .Checks}} <span class="checks {{.Checks}}">checks {{checks .Checks}}</span>{{end}}{{if .Review}} <span>{{.Review}}</span>{{end}}{{if .StaleSince}} <span class="stale">as of <time data-ts="{{printf "%.0f" .StaleSince}}" datetime="{{iso .StaleSince}}">{{ago .StaleSince}}</time></span>{{end}}</span>{{end}}</p>{{template "actions" .Actions}}</div>
 {{- if .Detail}}<p class="detail" title="{{.Detail}}">{{.Detail}}</p>{{end}}
 </div>
 </li>{{end}}
@@ -128,7 +129,7 @@
 
 {{/* A pill: the whole of it links to the PR, the title in ink and its #n muted; on hover and focus the #n swaps for Re-check
      and Dismiss, real buttons beside the link (never inside it). */}}
-{{define "apr"}}<div class="apr{{if .Rechecking}} rechecking{{end}}" id="{{.ID}}">
+{{define "apr"}}<div class="apr{{if .Rechecking}} rechecking{{end}}" id="{{.ID}}" data-search="{{.Search}}">
 <a class="apr-link" href="{{.URL}}" title="{{.Title}}&#10;{{.Label}}" aria-label="{{.Title}}, {{.Num}}, {{.Label}}{{if .WaitsOn}}, waits on {{.WaitsOn}}{{end}}{{if .Behind}}, {{len .Behind}} stacked on it{{end}}{{if .Rechecking}}, re-checking{{end}}">{{.Short}}</a>
 <div class="swap has-acts"><span class="apr-meta" aria-hidden="true"><span class="apr-num">{{.Num}}</span>{{if .WaitsOn}}<span class="apr-waits">waits on {{.WaitsOn}}</span>{{end}}{{if .Behind}}<span class="apr-more">+{{len .Behind}}</span>{{end}}</span>
 {{- with .Actions}}<div class="acts" data-item="{{.Item}}">
@@ -216,7 +217,6 @@
 {{- if .Undo}}<button type="button" class="pill" data-option="undo-default" data-tip="Undo {{.Undo}}: athena takes it back"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Undo</button>{{end}}
 {{- if .Done}}<button type="button" class="pill" data-do="done"><svg class="pi" aria-hidden="true"><use href="#i-check"/></svg>Done</button>{{end}}
 {{- if .Snooze}}<button type="button" class="pill" data-do="snooze" data-tip="Until tomorrow 09:00"><svg class="pi" aria-hidden="true"><use href="#i-clock"/></svg>Snooze</button>{{end}}
-{{- with .Open}}<a class="pill" href="{{.}}"><svg class="pi" aria-hidden="true"><use href="#i-external-link"/></svg>Open</a>{{end}}
 {{- if .RequestReview}}<button type="button" class="pill" data-option="request-review" aria-label="Request review"><svg class="pi" aria-hidden="true"><use href="#i-eye"/></svg>Request review</button>{{end}}
 {{- if .Recheck}}<button type="button" class="pill" data-option="recheck" aria-label="Re-check and fix"><svg class="pi" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Re-check</button>{{end}}
 {{- with .OpenPR}}<a class="pill" href="{{.}}" aria-label="Open PR {{$.Num}} on GitHub"><svg class="pi" aria-hidden="true"><use href="#i-git-pull-request"/></svg>Open PR</a>{{end}}

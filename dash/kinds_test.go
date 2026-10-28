@@ -259,7 +259,7 @@ func TestAPRRowKeepsItsStatusLineBesideItsPills(t *testing.T) {
 		t.Fatal(buf.String())
 	}
 	_, page := get(t, func() string { _, base := start(t, copyFixture(t)); return base }()+"/", "")
-	if !strings.Contains(page, `<li id="w-abc-102" class="item act">`) || strings.Contains(between(page, `<li id="w-abc-102"`, "</li>"), "keep") {
+	if !strings.Contains(page, `<li id="w-abc-102" class="item act" `) || strings.Contains(between(page, `<li id="w-abc-102"`, "</li>"), "keep") {
 		t.Fatal("a worker's row swaps its line for its pills, as before")
 	}
 }
