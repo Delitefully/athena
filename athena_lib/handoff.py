@@ -128,7 +128,8 @@ def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
     head = [f"# HQ handoff · {time.strftime('%Y-%m-%d %H:%M', time.localtime(now))}", "",
             "Written by `athena hq rotate` from athena's state. Where this and `athena status --pr` differ, trust status."]
     if previous_session:
-        head.append(f"Previous HQ conversation: `claude --resume {previous_session}` (only if a thread needs it).")
+        head.append(f"Previous HQ conversation: `claude --resume {previous_session}`, only if a thread needs it, and "
+                    "only in a separate terminal, never from HQ's Bash: there it would run as a nested session of HQ.")
     sections = [
         ("Fleet", _fleet(rows)),
         ("PRs", _prs(rows)),

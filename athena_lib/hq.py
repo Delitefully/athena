@@ -114,6 +114,37 @@ def _hq_start() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _vouch(session, source):
+    """Record `session` in hq-start.json as HQ's own conversation, as athena's SessionStart hook does."""
+    target = paths.state_dir() / "hq-start.json"
+    tmp = target.with_name(target.name + ".tmp%d" % os.getpid())
+    tmp.write_text(json.dumps({"source": source, "session_id": session, "ts": time.time()}))
+    os.replace(tmp, target)
+
+
+def _forget_session(old):
+    """A rotation is about to start a fresh HQ: hq.json and hq-start.json stop naming the old conversation."""
+    record = load()
+    record["previous_session"], record["session"] = old, None
+    _file().write_text(json.dumps(record, indent=2))
+    (paths.state_dir() / "hq-start.json").unlink(missing_ok=True)
+
+
+def _restore_session(old):
+    """herdr says the fresh HQ did not start: the old conversation is HQ's again, to resume, unless athena's hook
+    already saw the fresh one start (hq-start.json names another id, which herdr was told to resume): then that one
+    stays HQ's, and hq.json names none, so `own_session` reads it from hq-start.json. Returns the id HQ resumes on."""
+    vouched = _hq_start().get("session_id")
+    if vouched and vouched != old:
+        return vouched
+    record = load()
+    record["session"] = old
+    _file().write_text(json.dumps(record, indent=2))
+    if old:
+        _vouch(old, "resume")
+    return old
+
+
 def own_session(record=None):
     """The conversation to resume HQ on: hq.json's, unless the hook saw HQ's own Claude start another since hq.json
     was last written (a /clear no doctor tick has recorded yet), then that one."""
@@ -127,7 +158,10 @@ def own_session(record=None):
         newer = start.get("session_id") and float(start.get("ts") or 0) > written
     except (TypeError, ValueError):
         newer = False
-    return start["session_id"] if newer else record.get("session")
+    # hq.json naming none (just after a rotation whose new id herdr had not reported yet): the hook's is HQ's, since
+    # the rotation cleared hq-start.json before HQ started.
+    return start["session_id"] if newer or (start.get("session_id") and not record.get("session")) else \
+        record.get("session")
 
 
 def trusted_session(record=None):
@@ -696,11 +730,17 @@ def _rotate():
             raise RestartError(msg)
         _say(f"HQ's Claude exited (conversation {old or 'unknown'}, still resumable with claude --resume)")
     time.sleep(0.2)  # herdr reports the agent gone a moment after the shell is back; this is only a margin
+    # Forget the old conversation as HQ's before the fresh one starts: athena's hook then owns the fresh one's first
+    # SessionStart (hq_owns: none known yet) and vouches for it in hq-start.json, and nothing vouches for the old
+    # one any more, so a `claude -p --resume <old>` later run from HQ's Bash can never become HQ again.
+    _forget_session(old)
     try:
         _start_agent(pane)
     except herdr.HerdrError as exc:
         if not retire.agent_owned(name):
-            msg = f"starting the fresh HQ failed ({exc}); run `athena hq` to start one, then point it at {handoff.handoff_file()}"
+            kept = _restore_session(old)
+            msg = (f"starting the fresh HQ failed ({exc}); `athena hq` brings HQ back on conversation "
+                   f"{kept or 'unknown'}. The handoff for a fresh HQ is at {handoff.handoff_file()}")
             _say("FAILED: " + msg)
             _notify("athena: HQ rotation failed", msg)
             raise RestartError(msg)
@@ -711,6 +751,9 @@ def _rotate():
     record["claude_args"] = _claude_args()
     _file().write_text(json.dumps(record, indent=2))
     _register_resume(pane, new, record["claude_args"])
+    if new:
+        # herdr's id, read right after this rotation's own start: HQ's own, as the hook would have said.
+        _vouch(new, "rotate")
     if not new:
         # Never leave the old id as the session: `athena status` would read its full transcript and keep asking for
         # a rotation, and `athena hq restart` would resume the conversation this one replaced.
