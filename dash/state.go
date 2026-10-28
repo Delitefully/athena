@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -132,8 +133,10 @@ type sig struct {
 
 // Store reads the state dir and remembers the last good parse of every JSON file, so a file caught
 // mid-write or broken by hand shows its previous content instead of blanking the page.
+// It is safe for concurrent use: the poll and the page's handlers all call Load.
 type Store struct {
 	dir  string
+	mu   sync.Mutex // guards sigs and good
 	sigs map[string]sig
 	good map[string]map[string]any
 }
@@ -163,6 +166,8 @@ func (s *Store) watched() map[string]sig {
 
 // Changed reports whether any watched file appeared, went away or changed since the last call.
 func (s *Store) Changed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := s.watched()
 	same := s.sigs != nil && len(now) == len(s.sigs)
 	if same {
@@ -238,6 +243,8 @@ func plural(n int) string {
 
 // Load reads every source. It never fails: what cannot be read is empty, with a quiet notice.
 func (s *Store) Load() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	snap := Snapshot{Hooks: map[string]Hook{}}
 	if fi, err := os.Stat(s.dir); err != nil || !fi.IsDir() {
 		snap.Notices = append(snap.Notices, "no athena state yet at "+s.dir)

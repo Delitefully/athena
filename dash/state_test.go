@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -328,5 +329,54 @@ func TestDashConfigIsReadLiveAndChecked(t *testing.T) {
 	write(t, filepath.Join(dir, "dash.json"), `{"linear_workspace": "evil.test/x?"}`)
 	if s := st.Load(); s.LinearWorkspace != "" || len(s.Notices) != 1 {
 		t.Fatalf("a workspace that is not a slug must be refused: %q %q", s.LinearWorkspace, s.Notices)
+	}
+}
+
+// The poll and the page's handlers (a full view, a search) all call Load, so one Store is read from several
+// goroutines while athena writes, half-writes and removes files under it.
+func TestLoadFromSeveralGoroutinesWhileFilesChange(t *testing.T) {
+	dir := copyFixture(t)
+	st := NewStore(dir)
+	path := filepath.Join(dir, "workers", "abc-101.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	churned := make(chan struct{})
+	go func() {
+		defer close(churned)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			switch i % 3 {
+			case 0:
+				os.WriteFile(path, data[:len(data)/2], 0o644)
+			case 1:
+				os.Remove(path)
+			case 2:
+				os.WriteFile(path, data, 0o644)
+			}
+		}
+	}()
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				st.Load()
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-churned
+	os.WriteFile(path, data, 0o644)
+	if s := st.Load(); s.Hooks["abc-101"].State != "working" || len(s.Notices) != 0 {
+		t.Fatalf("after the churn: %+v %q", s.Hooks["abc-101"], s.Notices)
 	}
 }
