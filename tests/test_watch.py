@@ -1,9 +1,11 @@
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 from tests import helpers
 from tests.test_herdr import write_scenario
-from athena_lib import hookstatus, ledger, pr, status, watch
+from athena_lib import cli, hookstatus, ledger, pr, status, watch
 
 
 class StatusTest(unittest.TestCase):
@@ -18,6 +20,16 @@ class StatusTest(unittest.TestCase):
     def test_urgency_order(self):
         order = sorted(["working", "done", "blocked", "idle", "unknown"], key=status.urgency)
         self.assertEqual(order[:3], ["blocked", "done", "idle"])
+        self.assertLess(status.urgency("idle-unreported"), status.urgency("idle"))  # HQ acts on it, as on a done
+
+    def test_status_shows_a_worker_the_gate_gave_way_on(self):
+        ledger.append("spawn", "abc-1", branch="you/abc-1")
+        for _ in range(hookstatus.MAX_STOP_BLOCKS + 1):
+            hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "pushed"}, "abc-1", gated=True)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cli.main(["status"]), 0)
+        self.assertRegex(out.getvalue(), r"(?m)^abc-1\s+idle-unreported\s+herdr=")
 
     def test_report_beats_herdr_status(self):
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_status": "working"}}}}])

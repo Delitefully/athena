@@ -222,6 +222,9 @@ func TestBuildCases(t *testing.T) {
 		{"herdr fills an unknown hook state", live("h"), Hook{}, &WatchWorker{State: "blocked"}, "needs", "permission prompt"},
 		{"no hook file yet", live("i"), Hook{}, nil, "progress", "starting"},
 		{"exited", live("j"), Hook{State: "exited"}, nil, "progress", "its Claude exited"},
+		{"the report gate gave way", live("u1"), Hook{State: "idle-unreported"}, nil, "progress", "stopped without a report"},
+		{"the gate gave way, its PR open", live("u2"), Hook{State: "idle-unreported"}, &WatchWorker{PR: open(false, "", "success")}, "progress", "stopped without a report"},
+		{"the gate gave way after a DONE report", live("u3"), Hook{State: "idle-unreported", LastReport: &Report{Status: "DONE"}}, &WatchWorker{PR: moved("your go to merge", "mergeable", true)}, "needs", "your go to merge"},
 		{"concerns", live("k"), Hook{State: "done", Report: &Report{Status: "DONE_WITH_CONCERNS"}}, nil, "progress", "done with concerns, athena reviewing"},
 	}
 	for _, c := range cases {

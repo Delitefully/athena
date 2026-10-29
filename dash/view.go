@@ -743,7 +743,8 @@ func placeLive(v *View, it Item, w Worker, hook Hook, state string, pr *PR) {
 	}
 }
 
-// reported: the worker finished its goal. A Claude that went idle or exited after a DONE report still counts.
+// reported: the worker finished its goal. A Claude that went idle (unreported too) or exited after a DONE report
+// still counts.
 func reported(state string, h Hook) bool {
 	if state == "done" {
 		return true
@@ -752,7 +753,7 @@ func reported(state string, h Hook) bool {
 	if r == nil {
 		r = h.LastReport
 	}
-	return (state == "idle" || state == "exited") && r != nil && (r.Status == "DONE" || r.Status == "DONE_WITH_CONCERNS")
+	return (state == "idle" || state == "idle-unreported" || state == "exited") && r != nil && (r.Status == "DONE" || r.Status == "DONE_WITH_CONCERNS")
 }
 
 func stateIcon(state string, pr *PR) string {
@@ -781,6 +782,8 @@ func stateLabel(state string, r *Report) string {
 		return "working"
 	case "idle":
 		return "idle"
+	case "idle-unreported":
+		return "stopped without a report" // the report gate gave way (athena_lib/hookstatus.py)
 	case "exited":
 		return "its Claude exited"
 	case "", "unknown", "starting":

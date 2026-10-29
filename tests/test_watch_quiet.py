@@ -87,6 +87,20 @@ class CommentsRuleTest(Isolated):
         self.assertEqual(watch.diff(snap, snap), [])
 
 
+class IdleUnreportedTest(Isolated):
+    def test_a_worker_the_gate_gave_way_on_wakes_hq_and_is_never_suppressed(self):
+        prev = _snap({"a": {"state": "working", "pr": _pr()}})
+        cur = _snap({"a": {"state": "idle-unreported", "pr": _pr()}})
+        lines = watch.diff(prev, cur)
+        self.assertEqual(lines, ["a state working->idle-unreported"])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            watch.emit(lines, cur, tagged=True, prev=prev)
+        told = [json.loads(line) for line in out.getvalue().splitlines() if '"line"' in line]
+        self.assertEqual(told, [{"line": "a state working->idle-unreported", "wake": True}])
+        self.assertFalse((paths.state_dir() / "logs" / "watch-suppressed.log").exists())
+
+
 class MainMovedTest(Isolated):
     """The old modes, each set in config.json, keep their words."""
     LINE = "platform main moved 1a2b3c4..4d5e6f7"

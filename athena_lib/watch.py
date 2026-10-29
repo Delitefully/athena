@@ -594,10 +594,11 @@ _MERGES = ("approved", "mergeable", "reviewing")
 
 
 def _reported(w) -> bool:
-    """The worker finished its goal: done, or idle or exited after a DONE report (dash/view.go `reported`)."""
+    """The worker finished its goal: done, or idle (unreported too) or exited after a DONE report (dash/view.go
+    `reported`)."""
     state = w.get("state")
     report = w.get("report") or w.get("last_report") or {}
-    return state == "done" or state in ("idle", "exited") and (report.get("status") or "").upper().startswith("DONE")
+    return state == "done" or state in ("idle", "idle-unreported", "exited") and (report.get("status") or "").upper().startswith("DONE")
 
 
 def _prs_awaiting(snap) -> list:

@@ -81,7 +81,7 @@ export function clockText(ms: number, offsetMinutes: number): string {
 // The words a wake may carry. HQ reads a wake as the person's own words (it is submitted asUser), so no text a
 // worker, GitHub or a PR controls may reach it: every line is rebuilt from these, and anything else is held back.
 const NAME = '[a-z][a-z0-9_-]{0,31}' // as paths.NAME_RE
-const STATE = '(?:working|idle|done|blocked|exited|starting|unknown)'
+const STATE = '(?:working|idle-unreported|idle|done|blocked|exited|starting|unknown)' // idle-unreported: the report gate gave way
 const REPORT = '(?:DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)'
 const CHECK = '(?:none|pending|success|failure)'
 const EXIT = '(?:code -?\\d{1,3}|signal SIG[A-Z0-9]{1,10})'
@@ -366,7 +366,7 @@ export type Board = {
   needs: string[]
   /** `#n` per PR waiting on the human */
   prs: string[]
-  /** [state, workers] per active state: working, idle, starting, in review */
+  /** [state, workers] per active state: working, idle, idle-unreported, starting, in review */
   active: [string, string[]][]
   done: string[]
   /** `owner/repo` per PR number the watch knows from the ledger: a live worker's repo, or a stack's. */

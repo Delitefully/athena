@@ -17,6 +17,7 @@ WAKE = [
     "abc-1 state working->blocked",
     "abc-1 state idle->blocked (startup prompt)",
     "abc-1 state working->exited",
+    "abc-1 state working->idle-unreported",
     "abc-1 pr opened https://github.com/o/r/pull/7",
     "abc-1 pr merged",
     "abc-1 pr closed",
@@ -102,6 +103,12 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(b["done"], ["abc-101", "abc-102"])
         self.assertEqual(watch.summary(snap), "abc-6 needs context · abc-9 blocked · abc-5 exited · "
                                               "abc-8, pr47 working · abc-7 idle · abc-101, abc-102 done")
+
+    def test_a_worker_the_gate_gave_way_on_is_its_own_group(self):
+        snap = {"workers": {"abc-7": _w("idle"), "abc-8": _w("idle-unreported"), "abc-9": _w("working")}}
+        self.assertEqual(watch.board(snap)["active"], [["working", ["abc-9"]], ["idle", ["abc-7"]],
+                                                       ["idle-unreported", ["abc-8"]]])
+        self.assertEqual(watch.summary(snap), "abc-9 working · abc-7 idle · abc-8 idle-unreported")
 
     def test_a_blocked_report_is_blocked_whatever_the_hook_state(self):
         b = watch.board({"workers": {"a": _w("idle", report={"status": "BLOCKED"})}})

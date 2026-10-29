@@ -88,7 +88,26 @@ class GateTest(unittest.TestCase):
         blocked = [d for d in decisions if d]
         self.assertEqual(len(blocked), hookstatus.MAX_STOP_BLOCKS)
         self.assertIsNone(decisions[-1])
-        self.assertEqual(self.status()["state"], "idle")  # athena watch says `->idle` without a report
+        self.assertEqual((self.status()["state"], self.status()["report"]), ("idle-unreported", None))
+
+    def give_way(self):
+        for _ in range(hookstatus.MAX_STOP_BLOCKS + 1):
+            hookstatus.apply(self.stop("still thinking"), "abc-1", gated=True)
+        self.assertEqual(self.status()["state"], "idle-unreported")
+
+    def test_a_new_prompt_or_session_moves_a_worker_out_of_idle_unreported(self):
+        self.give_way()
+        hookstatus.apply({"hook_event_name": "UserPromptSubmit"}, "abc-1")
+        self.assertEqual(self.status()["state"], "working")
+        self.give_way()
+        hookstatus.apply({"hook_event_name": "SessionStart", "source": "resume"}, "abc-1")
+        self.assertEqual(self.status()["state"], "idle")
+
+    def test_the_idle_prompt_keeps_idle_unreported(self):
+        """Claude Code's idle_prompt comes about a minute after the turn: it must not hide that no report came."""
+        self.give_way()
+        hookstatus.apply({"hook_event_name": "Notification", "notification_type": "idle_prompt"}, "abc-1")
+        self.assertEqual(self.status()["state"], "idle-unreported")
 
     def test_a_done_the_gate_gave_way_on_is_no_done(self):
         msg = report(status="DONE", head=self.head, verify="make test -> fail")
@@ -96,7 +115,7 @@ class GateTest(unittest.TestCase):
             data = hookstatus.apply(self.stop(msg), "abc-1", gated=True)
         self.assertIsNone(hookstatus.gate(data))
         st = self.status()
-        self.assertEqual((st["state"], st["report"]), ("idle", None))  # athena watch: `->idle` without a report
+        self.assertEqual((st["state"], st["report"]), ("idle-unreported", None))
 
     def test_the_gate_comes_back_after_a_quiet_while(self):
         """Under /goal one prompt can last hours: a block long after the last one counts from one again."""

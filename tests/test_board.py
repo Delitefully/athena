@@ -238,6 +238,14 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(result["mode"], "subset")
         self.assertEqual(result["rows"], [["b"]])
 
+    def test_a_worker_the_gate_gave_way_on_is_shown_before_an_idle_one(self):
+        ledger.append("spawn", "c", pane="w4:p1", terminal="term_c", workspace="w4")
+        hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "pushed"}, "a")
+        for _ in range(hookstatus.MAX_STOP_BLOCKS + 1):
+            hookstatus.apply({"hook_event_name": "Stop", "last_assistant_message": "pushed"}, "b", gated=True)
+        self.scenario(150)
+        self.assertEqual(board.sync()["rows"], [["b"]])
+
 
 if __name__ == "__main__":
     unittest.main()
