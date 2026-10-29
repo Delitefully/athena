@@ -151,7 +151,7 @@ func TestDismissingAStacksFrontPromotesTheNext(t *testing.T) {
 		t.Fatalf("%d %v", code, out)
 	}
 	_, v, _ := srv.snapshot()
-	if got := pillKeys(v.Awaiting); got != "acme/api#71 acme/docs#212 acme/web#907 acme/web#908[909] acme/web#6452" {
+	if got := pillKeys(v.Awaiting); got != "acme/api#71 acme/docs#212 acme/web#6452 acme/web#908[909] acme/web#907" {
 		t.Fatalf("awaiting: %s", got)
 	}
 }

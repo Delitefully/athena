@@ -82,7 +82,7 @@
 <div class="col others">
 {{if .Awaiting}}{{template "awaiting" .}}{{end}}
 {{template "group" (group "progress" "In flight" .InProgress "Nothing in flight.")}}
-{{if .Done}}<details class="group done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">{{len .Done}}</span></h2></summary>
+{{if .Done}}<details class="group done" data-fold="done" aria-labelledby="h-done"><summary><h2 id="h-done">Done today <span class="count">{{len .Done}}</span></h2></summary>
 <ul>{{range .Done}}{{template "item" .}}{{end}}</ul></details>{{end}}
 {{if .Snoozed}}<p class="snoozed">{{.Snoozed}} snoozed: each comes back when its time is up, or sooner if something happens to it.</p>{{end}}
 </div>
@@ -92,11 +92,12 @@
 {{/* athena doctor's one dot: green, red with what is wrong, or grey while it is unknown (never green then). */}}
 {{define "health"}}<p class="health {{.State}}" title="{{.Title}}" role="status"><span class="dot" aria-hidden="true"></span>{{.Text}}</p>{{end}}
 
-{{/* Needs you: at most needsShown rows; the rest fold behind "n more", saying when the first default applies. */}}
+{{/* Needs you: at most needsShown rows; the rest fold behind "n more", saying when the first default applies. A fold's
+     data-fold names it, so a push keeps it open while the human has it open (app.js). */}}
 {{define "needs"}}<section class="group needs" aria-labelledby="h-needs">
 <h2 id="h-needs">Needs you <span class="count">{{len .NeedsYou}}</span></h2>
 {{if .NeedsYou}}<ul>{{range first .NeedsYou}}{{template "item" .}}{{end}}</ul>
-{{with rest .NeedsYou}}<details class="more"><summary>{{len .}} more{{with autoNote .}} · {{.}}{{end}}</summary><ul>{{range .}}{{template "item" .}}{{end}}</ul></details>{{end}}
+{{with rest .NeedsYou}}<details class="more" data-fold="needs"><summary>{{len .}} more{{with autoNote .}} · {{.}}{{end}}</summary><ul>{{range .}}{{template "item" .}}{{end}}</ul></details>{{end}}
 {{else}}<p class="empty">Nothing waits on you.</p>{{end}}
 </section>{{end}}
 

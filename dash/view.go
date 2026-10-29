@@ -320,15 +320,14 @@ func Build(s Snapshot, now float64, linearWorkspace string) View {
 		if a.rank != b.rank {
 			return a.rank < b.rank
 		}
-		switch a.rank {
-		case 0:
+		if a.rank == 0 {
 			return a.Due < b.Due
-		case 2:
-			return a.When < b.When // the oldest call first: it has waited longest
 		}
-		return false
+		return a.When > b.When // the newest first
 	})
-	sort.SliceStable(v.Done, func(i, j int) bool { return v.Done[i].When > v.Done[j].When })
+	for _, group := range [][]Item{v.Ready, v.InProgress, v.Done} {
+		sort.SliceStable(group, func(i, j int) bool { return group[i].When > group[j].When })
+	}
 	if len(v.Done) > doneMax {
 		v.Done = v.Done[:doneMax]
 	}
@@ -366,7 +365,8 @@ func waiting(actions []Action) map[string]float64 {
 }
 
 // needRank: Needs you's order. An item due within a day (or overdue) first, by due date: the meeting sorts to the top
-// the day before. Then a blocked worker or failing checks, then the human's own calls (items), then PR rows.
+// the day before. Then a blocked worker or failing checks, then the human's own calls (items), then PR rows, each tier
+// newest first.
 func needRank(it Item, now float64) int {
 	switch {
 	case it.Due > 0 && it.Due-now < doneToday:

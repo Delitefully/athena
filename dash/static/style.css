@@ -239,9 +239,9 @@ a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other p
   position: absolute; top: 100%; left: 0; width: max-content; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
   padding: 8px 0 0; clip-path: inset(0 0 100% 0); visibility: hidden; /* no antialiased sliver while closed */
 }
-.stack:is(:hover, :focus-within) > .apr::before, .stack:is(:hover, :focus-within) > .apr::after { visibility: hidden; } /* fanned out */
+.stack:is(:hover, :focus-within, .held) > .apr::before, .stack:is(:hover, :focus-within, .held) > .apr::after { visibility: hidden; } /* fanned out */
 .behind > li { max-width: min(560px, calc(100vw - 80px)); }
-.stack:is(:hover, :focus-within) > .behind { clip-path: inset(-48px -320px -48px -320px); visibility: visible; } /* room for a tooltip */
+.stack:is(:hover, :focus-within, .held) > .behind { clip-path: inset(-48px -320px -48px -320px); visibility: visible; } /* room for a tooltip */
 @media (hover: none), (max-width: 760px) {
   .apr > .swap { display: flex; align-items: center; gap: 8px; }
   .apr .acts { margin-top: 0; opacity: 1; pointer-events: auto; }
@@ -332,13 +332,13 @@ main.full { display: block; max-width: 920px; }
   .enter { animation: reveal .7s var(--arrive) both; }
   .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
   .apr .acts, .apr > .swap > .apr-meta { transition: opacity .14s ease; }
-  details[open]:is(.more, .done) > ul { animation: unfold .32s var(--arrive) both; }
+  details[open]:is(.more, .done):not([data-kept]) > ul { animation: unfold .32s var(--arrive) both; }
   .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
-  .stack:is(:hover, :focus-within) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
+  .stack:is(:hover, :focus-within, .held) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
   .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }
   .behind > li:nth-child(2) { transform: translateY(-20px); }
   .behind > li:nth-child(n+3) { transform: translateY(-30px); }
-  .stack:is(:hover, :focus-within) > .behind > li { transform: none; }
+  .stack:is(:hover, :focus-within, .held) > .behind > li { transform: none; }
   .collapsing { transition: height .16s ease-out, width .16s ease-out, padding .16s ease-out, margin .16s ease-out; }
   .toast.show { animation: reveal .3s var(--arrive) both; }
 }
