@@ -520,6 +520,11 @@ describe('allowLine', () => {
     for (const line of same) expect(allowLine(line)).toBe(line)
   })
 
+  test('a worker the report gate gave way on reaches HQ as written', () => {
+    for (const line of ['abc-1 state working->idle-unreported', 'abc-1 state idle-unreported->working'])
+      expect(allowLine(line)).toBe(line)
+  })
+
   test('free text is reduced to its allowlisted part', () => {
     expect(allowLine('abc-1 pr opened https://github.com/o/r/pull/7')).toBe('abc-1 pr opened #7')
     expect(allowLine('stack o/web#42: OPEN base=feature/x MERGEABLE -> MERGED base=feature/x UNKNOWN')).toBe(

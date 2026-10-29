@@ -6,8 +6,9 @@ The report gate: in a session athena started as a worker (ATHENA_WORKER, from it
 without an ATHENA-REPORT line, nor with DONE or DONE_WITH_CONCERNS unless VERIFY passed at the worktree's HEAD. The
 hook prints Claude Code's `{"decision": "block", "reason": ...}` and the worker goes on to write the report. BLOCKED
 and NEEDS_CONTEXT always end the turn. After MAX_STOP_BLOCKS blocks in a row (within BLOCKS_FORGOTTEN_AFTER of each
-other) the gate gives way and the worker goes idle with no report, even one the gate refused, which athena watch tells
-HQ as `->idle` without a report: the gate can never loop.
+other) the gate gives way: the worker goes to `idle-unreported` with no report, even one the gate refused, which athena
+watch tells HQ as `->idle-unreported`: the gate can never loop. A new prompt or session moves it on, as from idle;
+Claude Code's idle_prompt does not.
 """
 import json
 import os
@@ -173,7 +174,7 @@ def _write(name, data):
 
 def _gate(prev, event, report, state, gated):
     """The report gate on one hook event (module docstring): (state, report, its fields for the file, the decision).
-    Only a gated Stop changes the state or report: blocked, it goes on working; given way, it goes idle unreported."""
+    Only a gated Stop changes the state or report: blocked, it goes on working; given way, it goes idle-unreported."""
     kind = event.get("hook_event_name")
     blocks, block_ts = prev.get("stop_blocks") or 0, prev.get("stop_block_ts")
     if time.time() - (block_ts or 0) > BLOCKS_FORGOTTEN_AFTER:
@@ -187,7 +188,7 @@ def _gate(prev, event, report, state, gated):
             decision = {"decision": "block", "reason": why}
             state, report, blocks, block_ts = "working", None, blocks + 1, time.time()
         elif why:
-            state, report = "idle", None
+            state, report = "idle-unreported", None
         elif report is not None:
             blocks = 0
     return state, report, {"stop_blocks": blocks, "stop_block_ts": block_ts}, decision
@@ -217,7 +218,7 @@ def apply(event, name, gated=False):
         if ntype in NEEDS_HUMAN_TYPES or "permission" in message:
             state = "blocked"
             summary = (event.get("message") or "")[:SUMMARY_LIMIT]
-        elif ntype == "idle_prompt" and state not in ("done", "blocked"):
+        elif ntype == "idle_prompt" and state not in ("done", "blocked", "idle-unreported"):
             state = "idle"
     elif kind == "SessionEnd":
         state = "exited"

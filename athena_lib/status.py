@@ -2,7 +2,7 @@
 the worker's ATHENA-REPORT, its hook state, git and PR state, then herdr's screen-read status."""
 from athena_lib import gitops, herdr, hookstatus, pr, sockets
 
-URGENCY = {"blocked": 0, "done": 1, "exited": 1, "idle": 2, "starting": 3, "working": 3, "unknown": 3}
+URGENCY = {"blocked": 0, "done": 1, "exited": 1, "idle-unreported": 1, "idle": 2, "starting": 3, "working": 3, "unknown": 3}
 
 
 def urgency(state: str) -> int:
