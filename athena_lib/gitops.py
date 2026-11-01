@@ -8,8 +8,9 @@ class GitError(Exception):
     pass
 
 
-def git(cwd, *args, check=True) -> str:
-    proc = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+def git(cwd, *args, check=True, timeout=None) -> str:
+    """`timeout` (seconds) raises subprocess.TimeoutExpired when git runs longer; None waits as long as it takes."""
+    proc = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout)
     if check and proc.returncode != 0:
         raise GitError(f"git {' '.join(args)}: {proc.stderr.strip() or proc.stdout.strip()}")
     return proc.stdout.strip()

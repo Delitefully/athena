@@ -1,11 +1,13 @@
 import io
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stdout
 
 from tests import helpers
 from tests.test_herdr import write_scenario
-from athena_lib import cli, hookstatus, ledger, pr, status, watch
+from athena_lib import cli, gitops, hookstatus, ledger, pr, status, watch
 
 
 class StatusTest(unittest.TestCase):
@@ -84,6 +86,28 @@ class WatchTest(unittest.TestCase):
             cur = watch.snapshot(with_pr=False, prev=prev)
             self.assertEqual(cur["workers"]["a"]["pr"]["url"], "u")
             self.assertNotIn("a pr opened u", watch.diff(prev, cur))
+        finally:
+            env.restore()
+            tmp.cleanup()
+
+    def test_a_fetch_that_times_out_does_not_crash_the_tick(self):
+        tmp = tempfile.TemporaryDirectory()
+        env = helpers.isolated_env(tmp.name)
+        calls = []
+
+        def git(repo, *args, check=True, timeout=None):
+            calls.append((args, timeout))
+            if args[0] == "fetch":
+                raise subprocess.TimeoutExpired(["git", *args], timeout)
+            return "abc1234"
+        try:
+            ledger.append("spawn", "a", pane="w2:p1", repo="/r/web")
+            with mock.patch.object(watch.gitops, "git", side_effect=git), \
+                    mock.patch.object(watch.gitops, "default_branch", return_value="main"):
+                cur = watch.snapshot(fetch=True, with_pr=False)
+            self.assertIn((("fetch", "--quiet", "origin"), watch.FETCH_TIMEOUT), calls)
+            self.assertEqual(watch.FETCH_TIMEOUT, 60)
+            self.assertEqual(cur["mains"], {"/r/web": "abc1234"})  # read from what origin/main was before
         finally:
             env.restore()
             tmp.cleanup()

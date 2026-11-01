@@ -57,6 +57,7 @@ class Fixture(unittest.TestCase):
             ("hq_socket", (doctor.sockets, "hq_missing"), {"return_value": None}),
             ("worker_socket", (doctor.sockets, "worker_missing"), {"return_value": None}),
             ("context", (doctor.handoff, "hq_context"), {"return_value": None}),
+            ("waketime", (doctor, "_waketime_text"), {"return_value": ""}),  # unknown: no wake grace
         ]:
             p = mock.patch.object(*target, **kw)
             self.mocks[name] = p.start()
@@ -211,6 +212,53 @@ class RepairTest(Fixture):
         self.assertIn("next idle", health["checks"]["watch"]["detail"])
         self.assertEqual(json.loads((self.state / "doctor.json").read_text()).get("attempts", {}).get("watch"), None)
 
+    def woke(self, ago):
+        sec = int(time.time() - ago)
+        self.mocks["waketime"].return_value = f"{{ sec = {sec}, usec = 143234 }} Sun Nov  1 11:49:22 2026\n"
+
+    def test_watch_stale_after_a_recent_wake_is_within_grace(self):
+        self.tick_watch(ago=530 * 60)  # the Mac slept; the watch's last tick is from before
+        self.woke(ago=40)
+        self.scenario(RUNNING, hq_agent())
+        health = self.run_doctor()
+        self.mocks["restart"].assert_not_called()
+        check = health["checks"]["watch"]
+        self.assertFalse(check["ok"])
+        self.assertIn("within its grace", check["detail"])
+        self.assertRegex(check["detail"], r"woke (39|40)s ago")
+        saved = json.loads((self.state / "doctor.json").read_text())
+        self.assertIsNone(saved.get("attempts", {}).get("watch"))
+        self.assertIsNone(saved.get("down", {}).get("watch"))  # time asleep never counts as down
+
+    def test_watch_stale_long_after_a_wake_still_restarts_hq(self):
+        self.tick_watch(ago=20 * 60)
+        self.woke(ago=2 * 3600)
+        self.scenario(RUNNING, hq_agent())
+        health = self.run_doctor()
+        self.mocks["restart"].assert_called_once_with(update=False, unattended=True)
+        self.assertTrue(health["checks"]["watch"]["fixed"])
+
+    def test_watch_stale_with_an_unreadable_wake_time_restarts_hq_as_before(self):
+        for text in ("", "kern.waketime: unknown oid", "{ sec = 0, usec = 0 } Thu Jan  1 01:00:00 1970",
+                     "{ sec = soon }"):
+            with self.subTest(text=text):
+                (self.state / "doctor.json").unlink(missing_ok=True)
+                self.mocks["restart"].reset_mock()
+                self.tick_watch(ago=20 * 60)
+                self.mocks["waketime"].return_value = text
+                self.scenario(RUNNING, hq_agent())
+                health = self.run_doctor()
+                self.mocks["restart"].assert_called_once_with(update=False, unattended=True)
+                self.assertTrue(health["checks"]["watch"]["fixed"])
+
+    def test_last_wake_parses_sysctl(self):
+        with mock.patch.object(doctor, "_waketime_text",
+                               return_value="{ sec = 1793562562, usec = 143234 } Sun Nov  1 11:49:22 2026\n"):
+            self.assertEqual(doctor.last_wake(), 1793562562.143234)
+        for text in ("", "garbage", "{ sec = 0, usec = 0 }"):
+            with self.subTest(text=text), mock.patch.object(doctor, "_waketime_text", return_value=text):
+                self.assertIsNone(doctor.last_wake())
+
     def test_hqs_dead_socket_restarts_hq_on_its_conversation(self):
         self.mocks["hq_socket"].return_value = "/tmp/cc-socks/1.sock"
         self.scenario(RUNNING, hq_agent())
@@ -255,6 +303,14 @@ class RepairTest(Fixture):
         self.assert_left_alone()
         self.assertEqual({p["check"] for p in health["problems"]}, {"dash", "board", "hq"})
         self.assertEqual([c for c in self.calls() if c[:2] == ["notification", "show"]], [])
+
+
+class WaketimeTest(unittest.TestCase):
+    def test_a_failing_sysctl_reads_as_unknown(self):
+        for effect in (OSError("no sysctl"), doctor.subprocess.TimeoutExpired(["sysctl"], 5)):
+            with self.subTest(effect=effect), mock.patch.object(doctor.subprocess, "run", side_effect=effect):
+                self.assertEqual(doctor._waketime_text(), "")
+                self.assertIsNone(doctor.last_wake())
 
 
 class BackoffTest(Fixture):

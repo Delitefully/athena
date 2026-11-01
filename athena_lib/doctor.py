@@ -10,7 +10,8 @@ What it checks, and what `--fix` does about each:
 - HQ: a Claude gone from HQ's pane is brought back on its saved conversation (`--resume`), never a fresh one, once
   it has been gone for a grace period (herdr resumes its own agents after a restart; doctor does not race it).
 - the watch (run by the athena-watch mod in HQ): watch.json not written for WATCH_STALE seconds while HQ runs means
-  the mod's loop is gone; HQ is restarted on the same conversation, which starts the mod again.
+  the mod's loop is gone; HQ is restarted on the same conversation, which starts the mod again. Time the Mac spent
+  asleep never counts: for WATCH_STALE after a wake (`kern.waketime`) the watch is given its grace.
 - messaging sockets: a live session whose socket file is gone is restarted on the same conversation (HQ through
   `athena hq restart`, a worker in place) once it is idle, so SendMessage reaches it again.
 - a resumed HQ that got no start routine gets it; a worker herdr resumed in the middle of a turn is told to go on.
@@ -25,6 +26,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -273,6 +275,12 @@ class Doctor:
             self.record("watch", True, f"ticked {int(age)}s ago")
             return
         what = f"the watch has not ticked for {int(age // 60)} min" if age is not None else "the watch has never ticked"
+        wake = last_wake()
+        if wake is not None and 0 <= self.now - wake < WATCH_STALE:
+            self.up("watch")  # the stretch it was down in includes the sleep
+            self.record("watch", False, f"{what}; the Mac woke {int(self.now - wake)}s ago, so the watch is within "
+                                        f"its grace for {WATCH_STALE // 60} min after a wake")
+            return
         if self.down_for("watch") < _grace():
             self.record("watch", False, what)
             return
@@ -504,6 +512,22 @@ def on_ac_power() -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return "AC Power" in out
+
+
+def _waketime_text() -> str:
+    try:
+        return subprocess.run(["sysctl", "-n", "kern.waketime"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def last_wake():
+    """When the Mac last woke from sleep, as epoch seconds; None when unknown (not macOS, never slept, unreadable).
+    sysctl prints it as `{ sec = 1793562562, usec = 143234 } Sun Nov  1 11:49:22 2026`."""
+    m = re.search(r"\bsec\s*=\s*(\d+)(?:\s*,\s*usec\s*=\s*(\d+))?", _waketime_text())
+    if not m or not int(m.group(1)):
+        return None
+    return int(m.group(1)) + int(m.group(2) or 0) / 1e6
 
 
 def memory_free_percent():
