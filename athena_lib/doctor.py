@@ -277,8 +277,8 @@ class Doctor:
         what = f"the watch has not ticked for {int(age // 60)} min" if age is not None else "the watch has never ticked"
         wake = last_wake()
         if wake is not None and 0 <= self.now - wake < WATCH_STALE:
-            self.up("watch")  # the stretch it was down in includes the sleep
-            self.record("watch", False, f"{what}; the Mac woke {int(self.now - wake)}s ago, so the watch is within "
+            self.up("watch")  # the stretch it was down in includes the sleep; sleep is not a problem to report
+            self.record("watch", True, f"{what}; the Mac woke {int(self.now - wake)}s ago, so the watch is within "
                                         f"its grace for {WATCH_STALE // 60} min after a wake")
             return
         if self.down_for("watch") < _grace():

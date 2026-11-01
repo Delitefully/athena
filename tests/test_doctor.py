@@ -212,20 +212,24 @@ class RepairTest(Fixture):
         self.assertIn("next idle", health["checks"]["watch"]["detail"])
         self.assertEqual(json.loads((self.state / "doctor.json").read_text()).get("attempts", {}).get("watch"), None)
 
-    def woke(self, ago):
-        sec = int(time.time() - ago)
-        self.mocks["waketime"].return_value = f"{{ sec = {sec}, usec = 143234 }} Sun Nov  1 11:49:22 2026\n"
+    def woke(self, ago, now=None):
+        sec = (time.time() if now is None else now) - ago
+        self.mocks["waketime"].return_value = f"{{ sec = {int(sec)}, usec = 0 }} Sun Nov  1 11:49:22 2026\n"
 
-    def test_watch_stale_after_a_recent_wake_is_within_grace(self):
-        self.tick_watch(ago=530 * 60)  # the Mac slept; the watch's last tick is from before
-        self.woke(ago=40)
+    def test_watch_stale_after_a_recent_wake_is_within_grace_and_not_reported(self):
+        now = 1793562600.0
+        (self.state / "watch.json").write_text(json.dumps({"ts": now - 530 * 60, "workers": {}}))  # from before sleep
+        self.woke(ago=40, now=now)
         self.scenario(RUNNING, hq_agent())
-        health = self.run_doctor()
+        with mock.patch.object(doctor.time, "time", return_value=now):
+            health = self.run_doctor()
         self.mocks["restart"].assert_not_called()
         check = health["checks"]["watch"]
-        self.assertFalse(check["ok"])
+        self.assertTrue(check["ok"])
+        self.assertNotIn("watch", {p["check"] for p in health["problems"]})
+        self.assertEqual([c for c in self.calls() if c[:2] == ["notification", "show"]], [])
+        self.assertIn("woke 40s ago", check["detail"])
         self.assertIn("within its grace", check["detail"])
-        self.assertRegex(check["detail"], r"woke (39|40)s ago")
         saved = json.loads((self.state / "doctor.json").read_text())
         self.assertIsNone(saved.get("attempts", {}).get("watch"))
         self.assertIsNone(saved.get("down", {}).get("watch"))  # time asleep never counts as down
