@@ -1,5 +1,7 @@
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests import helpers
@@ -79,6 +81,19 @@ class GitopsTest(unittest.TestCase):
         self.assertTrue(ref.startswith("refs/athena-backup/abc-9/"))
         self.assertEqual(git(self.repo, "rev-parse", ref), sha)
 
+
+    def test_git_passes_its_timeout_to_the_subprocess(self):
+        done = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
+        with mock.patch.object(gitops.subprocess, "run", return_value=done) as run:
+            self.assertEqual(gitops.git(self.repo, "status", timeout=60), "ok")
+            self.assertEqual(run.call_args.kwargs["timeout"], 60)
+            gitops.git(self.repo, "status")
+            self.assertIsNone(run.call_args.kwargs["timeout"])  # no timeout unless asked: as before
+
+    def test_git_timeout_raises_timeout_expired(self):
+        with mock.patch.object(gitops.subprocess, "run", side_effect=subprocess.TimeoutExpired(["git"], 60)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                gitops.git(self.repo, "fetch", check=False, timeout=60)
 
 if __name__ == "__main__":
     unittest.main()

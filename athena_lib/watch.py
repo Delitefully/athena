@@ -20,6 +20,7 @@ from athena_lib import (asks, config, dash, dashstate, gitops, herdr, hq, ledger
                         sockets, spawn, status)
 from athena_lib.retire import workspace_owned
 
+FETCH_TIMEOUT = 60  # a fetch tick's fetch takes seconds; one that hangs must not stop the watch
 
 def _short(sha):
     return (sha or "")[:7]
@@ -785,7 +786,10 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
             repos[w["name"]] = repo  # for the main-moved rule; never in watch.json
         if repo and repo not in mains:
             if fetch:
-                gitops.git(repo, "fetch", "--quiet", "origin", check=False)
+                try:  # a failed or hung fetch leaves origin/<default> as it was
+                    gitops.git(repo, "fetch", "--quiet", "origin", check=False, timeout=FETCH_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    pass
             default = gitops.default_branch(repo)
             mains[repo] = gitops.git(repo, "rev-parse", f"origin/{default}", check=False)
     return {"workers": workers, "mains": mains, "repos": repos, "sockets": dead}
