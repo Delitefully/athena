@@ -392,15 +392,26 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> d
             _resume_agent(pane, session)
         else:
             _start_agent(pane)
+    # The space first: only a pane of a living HQ space is asked about, so a closed space opens a new one whatever
+    # herdr answers for its pane.
+    in_space = bool(current.get("pane")) and _workspace_is_hq(current)
+    gone = in_space and _pane_gone(current["pane"])
+    if gone and retire.agent_owned(paths.hq_name()):
+        # HQ's Claude runs in a pane hq.json does not name (a move across spaces gives a pane a new id): nothing to replace.
+        _helpers(start_board, start_dash)
+        return {**current, "created": False}
+    # The conversation being resumed goes in with the new pane: writing hq.json would otherwise hide a newer one
+    # `own_session` found by its mtime (a /clear not recorded yet), and the hook would not own the resumed session.
+    known = {**current, "session": session} if session else current
     created = False
-    if current.get("pane") and _pane_gone(current["pane"]):
-        record, created = _reopen(current, start, cwd, focus)
-    elif current.get("pane") and _workspace_is_hq(current):
+    if gone:
+        record, created = _reopen(known, start, cwd, focus)
+    elif in_space:
         # The hq space survived but its Claude did not (exited, or a herdr restart): bring it back there.
         start(current["pane"])
         record = current
     else:
-        record, created = _new_space(current, cwd, focus, start), True
+        record, created = _new_space(known, cwd, focus, start), True
     _remember_session(record)
     keep_label(record, owned=True)
     _routine(RESTART_ROUTINE if session else None)
@@ -701,7 +712,8 @@ def _restart(update, force_update=False, unattended=False):
     if session:
         try:
             if gone:
-                pane = _reopen(load(), lambda new: _start_or_up(new, "--resume", session))[0]["pane"]
+                pane = _reopen({**load(), "session": session},
+                               lambda new: _start_or_up(new, "--resume", session))[0]["pane"]
             else:
                 _start_or_up(pane, "--resume", session)
         except herdr.HerdrError as exc:

@@ -134,6 +134,15 @@ class HqTest(Fixture):
         self.assert_started_in("w5:p1", "--resume", "sess-9")
         self.assertEqual(self.calls(*CLOSES), [])
 
+    def test_a_closed_space_opens_a_new_one_whatever_herdr_says_of_its_pane(self):
+        # The manual repair: `herdr workspace close <space>`, then `athena`. The pane is not asked about at all.
+        self.scenario(fails(["workspace", "get", "w8"], "workspace_not_found"),
+                      fails(["pane", "get", "w8:p1"], "cli_timeout"), CREATED)
+        hq.hq(start_board=False, focus=False)
+        self.assertEqual(self.calls(["pane", "get"])[:1], [["pane", "get", "w5:p1"]])
+        self.assert_started_in("w5:p1", "--resume", "sess-9")
+        self.assertEqual(self.calls(*CLOSES), [])
+
     def test_a_space_that_is_no_longer_hqs_is_never_touched(self):
         self.scenario({"match": ["workspace", "get", "w8"], "stdout": {"result": {"workspace": {"label": "other"}}}},
                       *TILES, CREATED)
@@ -195,6 +204,55 @@ class RotateTest(Fixture):
         with self.assertRaises(hq.RestartError):
             hq.rotate_now()
         self.assertEqual((self.saved()["pane"], self.saved()["session"]), ("w8:p9", "sess-9"))
+
+
+class LivingHqTest(Fixture):
+    def test_an_hq_running_under_its_name_in_another_pane_is_not_replaced(self):
+        # A move across spaces gives a pane a new id, so hq.json's pane can be gone while HQ's Claude runs.
+        before = (paths.state_dir() / "hq.json").read_text()
+        write_scenario(self.tmp.name, [alive("sess-9"), GONE, LOST, HQ_SPACE, *MIXED, SPLIT])
+        result = hq.hq(start_board=False, focus=False)
+        self.assert_nothing_moved(before)
+        self.assertEqual(self.calls(["agent", "prompt"]), [])
+        self.assertFalse(result["created"])
+
+
+class UnrecordedClearTest(Fixture):
+    """The hook saw a /clear no doctor tick has recorded yet: hq.json names the conversation before it. Writing the new
+    pane to hq.json must not turn HQ back to that one, which `own_session` tells apart by hq.json's mtime."""
+
+    def setUp(self):
+        super().setUp()
+        self.record["session"] = "before-clear"
+        self.write_record()
+        os.utime(paths.state_dir() / "hq.json", (1000, 1000))
+        (paths.state_dir() / "hq-start.json").write_text(json.dumps({"source": "clear", "session_id": "after-clear",
+                                                                     "ts": 2000}))
+
+    def resumed(self):
+        return [c[c.index("--") + 2] for c in self.starts()]
+
+    def test_a_retry_in_the_split_pane_stays_on_the_conversation_after_the_clear(self):
+        self.scenario(pane("w8:p9"), *MIXED, SPLIT, START_FAILS, up=None)
+        with self.assertRaises(hq.ResumeError):
+            hq.hq(start_board=False, focus=False)
+        self.assertEqual(self.saved()["session"], "after-clear")  # what the hook checks a resumed session against
+        hq.hq(start_board=False, focus=False)
+        self.assertEqual(self.resumed(), ["after-clear", "after-clear"])
+
+    def test_a_retry_in_a_new_space_stays_on_the_conversation_after_the_clear(self):
+        self.scenario(SPACE_CLOSED, *TILES, CREATED, START_FAILS, up=None)
+        with self.assertRaises(hq.ResumeError):
+            hq.hq(start_board=False, focus=False)
+        hq.hq(start_board=False, focus=False)
+        self.assertEqual(self.resumed(), ["after-clear", "after-clear"])
+
+    def test_a_restart_retry_stays_on_the_conversation_after_the_clear(self):
+        self.scenario(pane("w8:p9"), *MIXED, SPLIT, START_FAILS, up=None)
+        with self.assertRaises(hq.RestartError):
+            hq.restart_now(update=False)
+        hq.restart_now(update=False)
+        self.assertEqual(self.resumed(), ["after-clear", "after-clear"])
 
 
 class OnlyTilesTest(Fixture):
@@ -316,6 +374,15 @@ class HqJsonFirstTest(Fixture):
         hq.restart_now(update=False)
         self.assertEqual(len(self.calls(["pane", "split"])), 1)
         self.assert_started_in("w8:p9", "--resume", "sess-9")
+
+    def test_a_failed_rotate_then_a_retry_makes_one_new_pane(self):
+        self.scenario(pane("w8:p9"), *MIXED, SPLIT, START_FAILS, up=None)
+        with self.assertRaises(hq.RestartError):
+            hq.rotate_now()
+        hq.rotate_now()
+        self.assertEqual(len(self.calls(["pane", "split"])), 1)
+        self.assertEqual(len(self.starts()), 2)
+        self.assertNotIn("--resume", self.assert_started_in("w8:p9"))
 
     def test_a_failed_start_in_a_new_space_leaves_no_space_and_a_retry_opens_one(self):
         self.scenario(SPACE_CLOSED, *TILES, CREATED, START_FAILS, up=None)
