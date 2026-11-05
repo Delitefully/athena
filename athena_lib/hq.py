@@ -627,6 +627,16 @@ def _gone_or_fail(pane, doing):
         raise RestartError(msg)
 
 
+def _latest_pane(pane, doing):
+    """`_gone_or_fail` for the pane hq.json still names once herdr has answered: doctor's `hq()` takes no lock, and a
+    repair made while herdr was asked about `pane` recorded another. Returns that pane and whether it is gone."""
+    gone = _gone_or_fail(pane, doing)
+    latest = load().get("pane")
+    if latest and latest != pane:
+        return latest, _gone_or_fail(latest, doing)
+    return pane, gone
+
+
 def _start_or_up(pane, *extra):
     """Start HQ's Claude in `pane`. herdr giving up on the wait while the Claude came up counts as started."""
     try:
@@ -670,6 +680,9 @@ def _restart(update, force_update=False, unattended=False):
         if not update_claude():
             _stamp_update()
         _say(f"updates took {took(began)}")
+    # Doctor may have repaired HQ while the updates ran (9-17 s): what follows acts on the pane it recorded, not the old one.
+    record = load()
+    pane = record.get("pane") or pane
     session = trusted_session(record)
     if unattended and not session:
         msg = (f"HQ's conversation id is not known ({name} in pane {pane}); an unattended restart never starts a fresh "
@@ -677,7 +690,7 @@ def _restart(update, force_update=False, unattended=False):
         _say("FAILED: " + msg)
         _notify("athena: HQ restart skipped", msg)
         raise RestartError(msg)
-    gone = _gone_or_fail(pane, "restarting")
+    pane, gone = _latest_pane(pane, "restarting")
     if retire.agent_owned(name):
         if not _wait_idle():
             # Typing /exit and Enter into a permission dialog would answer it.
@@ -839,8 +852,8 @@ def _rotate():
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
         raise RestartError("there is no HQ to rotate: start one with `athena hq`")
-    gone = _gone_or_fail(pane, "rotating")
-    old = _session() or record.get("session")
+    pane, gone = _latest_pane(pane, "rotating")
+    old = _session() or load().get("session")
     if retire.agent_owned(name):
         # The same clean exit as a restart: never /exit into a running turn or a permission dialog, never kill.
         if not _wait_idle():

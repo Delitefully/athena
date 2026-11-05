@@ -12,7 +12,7 @@ from unittest import mock
 
 from tests import helpers
 from tests.test_herdr import logged_calls, write_scenario
-from tests.test_hq import GONE, HQ_SPACE, alive
+from tests.test_hq import GONE, HQ_SPACE, ON_EXIT, alive
 from athena_lib import board, cli, herdr, hq, paths
 
 
@@ -204,6 +204,57 @@ class RotateTest(Fixture):
         with self.assertRaises(hq.RestartError):
             hq.rotate_now()
         self.assertEqual((self.saved()["pane"], self.saved()["session"]), ("w8:p9", "sess-9"))
+
+
+class RepairedMeanwhileTest(Fixture):
+    """Doctor's `hq()` takes no lock, so it can repair the lost pane after a restart or rotation has read hq.json. The
+    child then acts on the repaired pane: a stale id would exit the repaired HQ, count its pane as an "other" and split
+    again, leaving that pane open and empty."""
+
+    def setUp(self):
+        super().setUp()
+        self.stray = {"match": ["pane", "split"], "stdout": {"result": {"pane": {"pane_id": "w8:p10", "terminal_id": "t10"}}}}
+
+    def repair(self):
+        """What doctor's `hq()` leaves in hq.json."""
+        (paths.state_dir() / "hq.json").write_text(json.dumps({**hq.load(), "pane": "w8:p9", "terminal": "term_n"}))
+
+    def scenario_after_repair(self, up):
+        """HQ's Claude runs in the repaired pane w8:p9 until /exit, then comes up as `up` after the child's start."""
+        write_scenario(self.tmp.name, [self.stray, alive(up, after=["agent", "start"]),
+                                       {**GONE, "after": ["agent", "send-keys"]}, alive("sess-9"),
+                                       LOST, pane("w8:p9", "athena"), HQ_SPACE, ON_EXIT, listing("w8:p9")])
+
+    def assert_only_the_repaired_pane(self):
+        self.assertEqual(self.calls(*CLOSES, ["pane", "split"], ["workspace", "create"]), [])
+        self.assertEqual(self.saved()["pane"], "w8:p9")
+        self.assertEqual(self.saved()["terminal"], "term_n")
+
+    def test_a_repair_during_the_updates_is_restarted_in_its_own_pane(self):
+        self.scenario_after_repair("sess-9")
+        with mock.patch.object(hq, "update_claude", side_effect=lambda: self.repair() or []) as updates:
+            result = hq.restart_now(update=True, force_update=True)
+        updates.assert_called_once_with()
+        self.assert_started_in("w8:p9", "--resume", "sess-9")
+        self.assert_only_the_repaired_pane()
+        self.assertEqual((result["pane"], result["resumed"]), ("w8:p9", True))
+
+    def test_a_repair_while_herdr_answers_is_rotated_in_its_own_pane(self):
+        # A rotation runs no updates: its window is herdr's answer about the pane it read, up to the call's 10 s timeout.
+        self.scenario_after_repair("fresh-1")
+        real = hq._pane_gone
+
+        def answers(pane_id):
+            gone = real(pane_id)
+            if pane_id == "w8:p1":
+                self.repair()
+            return gone
+        with mock.patch.object(hq, "_pane_gone", side_effect=answers):
+            result = hq.rotate_now()
+        self.assertNotIn("--resume", self.assert_started_in("w8:p9"))
+        self.assert_only_the_repaired_pane()
+        self.assertEqual(result["pane"], "w8:p9")
+        self.assertEqual((self.saved()["previous_session"], self.saved()["session"]), ("sess-9", "fresh-1"))
 
 
 class LivingHqTest(Fixture):
