@@ -181,6 +181,22 @@ class RepairTest(Fixture):
         self.assertEqual(self.prompts("athena"), [hq.RESTART_ROUTINE])
         self.assert_left_alone("agent start")
 
+    def test_hq_whose_pane_is_gone_is_resumed_in_a_new_pane(self):
+        lost = {"match": ["pane", "get", "w8:p1"], "stdout": "", "exit": 1,
+                "stderr": '{"error":{"code":"pane_not_found","message":"x"}}'}
+        old_pane = {"match": ["agent", "start", "athena", "--kind", "claude", "--pane", "w8:p1"], "stdout": "", "exit": 1,
+                    "stderr": '{"error":{"code":"agent_pane_not_found","message":"x"}}'}
+        panes = {"match": ["pane", "list", "--workspace", "w8"],
+                 "stdout": {"result": {"panes": [{"pane_id": "w8:p4"}]}}}
+        split = {"match": ["pane", "split"], "stdout": {"result": {"pane": {"pane_id": "w8:p9", "terminal_id": "t9"}}}}
+        self.scenario(RUNNING, old_pane, lost, panes, split, {**hq_agent(), "after": ["agent", "start"]}, GONE, HQ_SPACE)
+        health = self.run_doctor()
+        (start,) = self.starts()
+        self.assertEqual(start[start.index("--pane") + 1], "w8:p9")
+        self.assertEqual(start[start.index("--") + 1:][:2], ["--resume", "sess-9"])
+        self.assertTrue(health["checks"]["hq"]["fixed"])
+        self.assertEqual(hq.load()["pane"], "w8:p9")
+
     def test_hq_gone_waits_for_herdr_to_resume_it_first(self):
         self.env.set("ATHENA_DOCTOR_GRACE", "90")
         self.scenario(RUNNING, GONE, HQ_SPACE)

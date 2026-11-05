@@ -542,6 +542,24 @@ def _first_run():
     return code or None
 
 
+def _relay_restart(started):
+    """Copy a detached restart's log to this terminal until it ends, and exit as it did. The restart stays detached, so
+    a closed terminal or a ctrl-c only stops the copying."""
+    try:
+        with open(started["log"], errors="replace") as log:
+            log.seek(started["offset"])
+            while True:
+                code = started["proc"].poll()
+                sys.stderr.write(log.read())
+                sys.stderr.flush()
+                if code is not None:
+                    return code
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        print(f"\nthe restart carries on; log at {started['log']}", file=sys.stderr)
+        return 130
+
+
 def cmd_hq(a):
     if a.action == "rotate":
         if a.child:
@@ -558,9 +576,13 @@ def cmd_hq(a):
     if a.action == "restart":
         if a.child:
             _print(hq.restart_now(update=not a.no_update, force_update=a.update, unattended=a.unattended))
-        else:
-            print(hq.restart(update=not a.no_update, force_update=a.update)["message"])
-        return 0
+            return 0
+        started = hq.restart(update=not a.no_update, force_update=a.update)
+        print(started["message"], flush=True)
+        here = os.environ.get("HERDR_PANE_ID")
+        if here and here == hq.load().get("pane"):
+            return 0  # HQ restarting itself: this process goes with it, and HQ reads the log
+        return _relay_restart(started)
     stop = _first_run()
     if stop is not None:
         return stop
