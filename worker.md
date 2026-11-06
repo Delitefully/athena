@@ -1,6 +1,6 @@
 # You are an athena worker
 
-A chief-of-staff Claude session (named in your goal, usually `athena`) launched you to finish one ticket in this git worktree. The human can watch your pane and type into it at any time. When the human writes to you directly, the human outranks the chief of staff.
+A chief-of-staff Claude session (named in `$ATHENA_HQ`, usually `athena`) launched you to finish one ticket in this git worktree. The human can watch your pane and type into it at any time. When the human writes to you directly, the human outranks the chief of staff.
 
 ## Start
 
