@@ -37,6 +37,8 @@ def diff(prev: dict, cur: dict) -> list:
             continue
         if before.get("state") != now.get("state"):
             lines.append(f"{name} state {before.get('state')}->{now.get('state')}{detail}")
+        if now.get("goal_ticks") == 2:
+            lines.append(f"{name} goal unconfirmed (no goal record in its transcript): check its pane, do not resend blindly")
         rep_now, rep_before = now.get("report") or {}, before.get("report") or {}
         if rep_now.get("status") and _told_as(rep_now) != _told_as(rep_before):
             lines.append(f"{name} report {rep_now['status']}")  # a new status, or a new head
@@ -779,9 +781,11 @@ def snapshot(fetch=False, with_pr=True, prev=None) -> dict:
             key = _pr_key(pr_state.get("url"))
             pr_state = {**pr_state, "move": _move(pr_state, True, repo, key.rpartition("#")[0] if key else None,
                                                   review=w.get("review"))}
+        # Ticks in a row: deliver() sets the flag just before its tick's snapshot, so the first says nothing yet.
+        goal_ticks = (before.get(w["name"]) or {}).get("goal_ticks", 0) + 1 if s.get("goal_unconfirmed") else 0
         workers[w["name"]] = {"state": s["state"], "pr": pr_state, "report": s["report"], "detail": s["detail"],
                               "last_report": s.get("last_report"), "slug": repo_slug(repo) if repo else None,
-                              "mergeable": _mergeable(pr_state, before.get(w["name"]))}
+                              "mergeable": _mergeable(pr_state, before.get(w["name"])), "goal_ticks": goal_ticks}
         if repo:
             repos[w["name"]] = repo  # for the main-moved rule; never in watch.json
         if repo and repo not in mains:

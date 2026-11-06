@@ -15,7 +15,7 @@ from athena_lib import (asks, board, brief, config, dash, doctor, gitops, handof
 REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
 REVIEW_FAILS_BEFORE_RESTART = 2  # failed rounds after which a worker restarts fresh rather than being nudged again
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
-GOAL_UNCONFIRMED = "goal unconfirmed (no goal record in its transcript; check its pane, do not resend blindly)"
+GOAL_UNCONFIRMED = "goal unconfirmed (no goal record in its transcript; check its pane before athena resume)"
 
 
 def _print(data):
@@ -91,6 +91,8 @@ def _worker_detail(r):
     verdict = r.get("athena_review") or {}
     if verdict.get("verdict"):
         out.append(f"  athena review: {verdict['verdict']} @ {str(verdict.get('head') or '-')[:7]}")
+    if r.get("goal_unconfirmed"):
+        out.append(f"  {GOAL_UNCONFIRMED}")
     if r.get("socket_missing"):
         out.append(f"  messaging socket missing: {r['socket_missing']}")
     if r.get("summary"):

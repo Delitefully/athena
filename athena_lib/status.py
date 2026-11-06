@@ -2,7 +2,7 @@
 the worker's ATHENA-REPORT, its hook state, git and PR state, then herdr's screen-read status."""
 import json
 
-from athena_lib import gitops, herdr, hookstatus, pr, sockets
+from athena_lib import gitops, herdr, hookstatus, ledger, pr, sockets
 
 URGENCY = {"blocked": 0, "done": 1, "exited": 1, "idle-unreported": 1, "idle": 2, "starting": 3, "working": 3, "unknown": 3}
 
@@ -55,6 +55,17 @@ def goal_took(name, session=None) -> bool:
     return any(_has_goal_record(p) for p in map(handoff.transcript, sessions) if p)
 
 
+def _goal_unconfirmed(worker) -> bool:
+    """Read again each time: enter pressed on a send left in the input box, or a resend, clears it. Once seen it stays
+    seen, in the ledger: a /clear moves the worker on to a transcript with no goal record in it."""
+    if worker.get("goal_state") != "unconfirmed":
+        return False
+    if not goal_took(worker["name"], worker.get("session")):
+        return True
+    ledger.append("update", worker["name"], goal_state="confirmed")
+    return False
+
+
 def collect(worker, with_pr=False, with_herdr=True) -> dict:
     name = worker["name"]
     hook = hookstatus.read(name) or {}
@@ -66,8 +77,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
            "pending": bool(worker.get("goal_pending")), "athena_review": worker.get("review"), "detail": None, "prompt": worker.get("prompt") if worker.get("goal_send") == "deliver" else None,
            "socket_missing": sockets.missing(name, hook.get("session_id")),
-           # Read again each time: enter pressed on a send left in the input box, or a shorter goal, clears it.
-           "goal_unconfirmed": worker.get("goal_state") == "unconfirmed" and not goal_took(name, worker.get("session"))}
+           "goal_unconfirmed": _goal_unconfirmed(worker)}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})

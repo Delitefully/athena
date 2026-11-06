@@ -227,7 +227,7 @@ class SpawnTest(SpawnBase):
         self.scenario([{"match": ["agent", "prompt"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
-        self.assertIn("athena nudge abc-1", str(ctx.exception))
+        self.assertIn("athena resume abc-1", str(ctx.exception))
         w = ledger.workers()["abc-1"]
         self.assertEqual((w["state"], w["prompt"]), ("live", "failed: agent_not_found"))
 
@@ -515,16 +515,17 @@ class BuildGoalTest(unittest.TestCase):
         brief = "/Users/someone/.local/state/athena/briefs/abc-1234.md"
         goal = spawn.build_goal("Open the PR", "abc-1234", brief)
         suffix = goal[len("/goal Open the PR"):]
-        self.assertTrue(suffix.startswith(f" Brief: {brief}; read it first."))
+        self.assertIn(brief, suffix)
         self.assertLessEqual(len(suffix), 210)
         # A BLOCKED report with a question ends the turn: without this clause the worker loops until someone clears it.
-        self.assertIn("A final ATHENA-REPORT line of any status meets this goal", suffix)
-        self.assertIn("Merging, approvals, undrafting and unfixable checks are out of scope", suffix)
+        # These are the words the evaluator has called met on a BLOCKED report; nothing stops a not-met loop.
+        self.assertIn("The goal is met once an ATHENA-REPORT line is written, whatever its status.", suffix)
+        self.assertIn("Out of scope: merging, approvals, undrafting, unfixable checks.", suffix)
 
     def test_a_long_goal_is_built_whole_so_the_length_check_sees_it(self):
         goal = spawn.build_goal("x" * 5000, "abc-1", "/briefs/abc-1.md")
         self.assertIn("x" * 5000, goal)
-        self.assertTrue(goal.endswith("are out of scope."))
+        self.assertTrue(goal.endswith("unfixable checks."))
 
     def test_nothing_still_says_the_goal_names_hq(self):
         # The suffix no longer carries HQ's name: a worker finds it in its environment.
@@ -557,6 +558,12 @@ class GoalTemplateTest(unittest.TestCase):
 
     def test_the_template_passes_the_goal_check(self):
         self.assertEqual(briefs.check_goal(self.condition()), [])
+
+    def test_a_resend_is_not_sent_to_nudge(self):
+        # A nudge drops what spawn adds and has no limit, so a long one pastes again.
+        skill = (paths.PLUGIN_ROOT / "skills" / "athena" / "SKILL.md").read_text()
+        limit = skill[skill.index("The whole `/goal` has to fit"):]
+        self.assertIn("athena resume", limit[:limit.index("\n")])
 
     def test_the_docs_state_the_limit(self):
         for doc in ("skills/athena/SKILL.md", "docs/commands.md"):
@@ -617,6 +624,17 @@ class GoalConfirmTest(SpawnBase):
 
     def spawned(self):
         return ledger.workers()["abc-1"]
+
+    def hook(self, session):
+        (paths.ensure("workers") / "abc-1.json").write_text(json.dumps({"name": "abc-1", "state": "working", "session_id": session}))
+
+    def ready(self):
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
+            "name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}}])
+
+    def pending_worker(self):
+        ledger.append("spawn", "abc-1", pane="w9:p1", goal_pending="/goal x")
+        self.ready()
 
     def test_a_goal_status_record_confirms_the_goal(self):
         self.scenario([self.SESSION])
@@ -700,6 +718,93 @@ class GoalConfirmTest(SpawnBase):
         self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
 
 
+    def test_a_goal_seen_once_stays_confirmed_after_a_clear(self):
+        # A /clear moves the worker to a new transcript, which holds no goal record.
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+        self.assertEqual(self.spawned()["goal_state"], "confirmed")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_pending_path_worker_is_not_flagged_after_a_clear_nobody_looked_before(self):
+        # It reaches the ledger with no session: delivery keeps the one its goal went to.
+        self.pending_worker()
+        self.hook("sess-1")
+        self.transcript(GOAL_STATUS)
+        spawn.deliver("abc-1")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_goal_that_never_ran_stays_flagged_after_a_clear(self):
+        self.pending_worker()
+        self.hook("sess-1")
+        self.transcript(PASTED)
+        spawn.deliver("abc-1")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_resume_resends_the_checked_text_of_an_unconfirmed_goal(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        sent = next(c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"])[3]
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        prompts = [c[3] for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(prompts, [sent, sent])
+        self.assertLessEqual(len(sent), spawn.GOAL_LIMIT)
+
+    def test_resume_resends_a_goal_whose_send_failed(self):
+        self.scenario([self.SESSION, {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+                                      "stderr": json.dumps({"error": {"code": "timeout", "message": "x"}})}])
+        with self.assertRaises(spawn.SpawnError) as caught:
+            self.run_spawn()
+        self.assertIn("athena resume abc-1", str(caught.exception))
+        self.assertNotIn("athena nudge", str(caught.exception))
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_resume_does_not_resend_a_goal_just_sent(self):
+        # It lands a few seconds after the send: a second resume in that time would type it twice.
+        self.pending_worker()
+        ledger.append("update", "abc-1", goal_text="/goal x")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def test_resume_refuses_a_goal_that_took(self):
+        self.scenario([self.SESSION])
+        self.transcript(GOAL_STATUS)
+        self.run_spawn()
+        self.ready()
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def test_resume_does_not_resend_a_goal_that_showed_up_since(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        self.ready()
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def test_the_watch_never_resends_on_its_own(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.ready()
+        self.assertEqual(spawn.deliver_pending(), [])
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "not-pending")
+
+
 class GoalUnconfirmedCliTest(CliBase):
     def test_status_prints_goal_unconfirmed(self):
         ledger.append("spawn", "abc-2", pane="w2:p1", goal_state="unconfirmed")
@@ -710,6 +815,12 @@ class GoalUnconfirmedCliTest(CliBase):
         rows = {r["name"]: r for r in json.loads(self.cli("status", "--json").stdout)}
         self.assertTrue(rows["abc-2"]["goal_unconfirmed"])
         self.assertFalse(rows["abc-3"]["goal_unconfirmed"])
+
+    def test_status_of_one_worker_says_goal_unconfirmed(self):
+        ledger.append("spawn", "abc-2", pane="w2:p1", goal_state="unconfirmed")
+        ledger.append("spawn", "abc-3", pane="w3:p1", goal_state="confirmed")
+        self.assertIn("goal unconfirmed", self.cli("status", "abc-2").stdout)
+        self.assertNotIn("goal unconfirmed", self.cli("status", "abc-3").stdout)
 
     def test_spawn_warns_when_its_goal_is_unconfirmed(self):
         write_scenario(self.tmp.name, [{"match": ["worktree", "create"], "stdout": CREATED}])

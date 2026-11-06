@@ -56,6 +56,40 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(pr.reduce_checks([]), "none")
 
 
+class GoalWakeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = helpers.isolated_env(self.tmp.name)
+
+    def tearDown(self):
+        self.env.restore()
+        self.tmp.cleanup()
+
+    def goal_ticks(self, *flags):
+        """The watch's lines for a worker whose goal_unconfirmed reads these on successive ticks."""
+        ledger.append("spawn", "abc-1", pane="w1:p1", repo=None)
+        prev, told = None, []
+        for flag in flags:
+            row = {"name": "abc-1", "state": "working", "pr": None, "report": None, "detail": None,
+                   "goal_unconfirmed": flag}
+            with mock.patch.object(status, "collect", return_value=row), mock.patch.object(watch.sockets, "hq_missing", return_value=None):
+                cur = watch.snapshot(with_pr=False, prev=prev)
+            told += watch.diff(prev, cur) if prev else []
+            prev = cur
+        return [line for line in told if "goal unconfirmed" in line]
+
+    def test_an_unconfirmed_goal_wakes_hq_on_the_second_tick_only(self):
+        lines = self.goal_ticks(True, True, True, True)
+        self.assertEqual(lines, ["abc-1 goal unconfirmed (no goal record in its transcript): check its pane, do not resend blindly"])
+        self.assertEqual(watch.classify(lines[0]), "wake")
+
+    def test_a_goal_that_shows_up_by_the_second_tick_wakes_nobody(self):
+        self.assertEqual(self.goal_ticks(True, False, False), [])
+
+    def test_a_resent_goal_is_told_again_if_it_does_not_take(self):
+        self.assertEqual(len(self.goal_ticks(True, True, False, True, True)), 2)
+
+
 class WatchTest(unittest.TestCase):
     def test_diff_lines(self):
         prev = {"workers": {"a": {"state": "working", "pr": None, "report": None},
