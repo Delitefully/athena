@@ -192,6 +192,7 @@ def sync_session(session) -> bool:
 
 
 LABEL = "athena"
+SPACE_NOT_FOUND = ("workspace_not_found", "not_found")
 
 
 def keep_label(record=None, owned=False):
@@ -214,11 +215,29 @@ def keep_label(record=None, owned=False):
         pass
 
 
+def _pane_gone(pane) -> bool:
+    """herdr says `pane` does not exist. Nothing else means gone: any other error (a slow herdr's cli_timeout)
+    propagates, because HQ may well be alive, and what follows a True closes tiles and replaces hq.json's pane."""
+    try:
+        herdr.call("pane", "get", pane, timeout=10)
+    except herdr.HerdrError as exc:
+        if exc.code == "pane_not_found":
+            return True
+        raise
+    return False
+
+
 def _workspace_is_hq(record) -> bool:
+    """Whether HQ's space is there and still HQ's. An error other than not-found propagates: a slow herdr's answer
+    must not open a second space."""
+    if not record.get("workspace"):
+        return False
     try:
         ws = herdr.call("workspace", "get", record["workspace"], timeout=10).get("workspace", {})
-    except (herdr.HerdrError, KeyError):
-        return False
+    except herdr.HerdrError as exc:
+        if exc.code in SPACE_NOT_FOUND:
+            return False
+        raise
     return ws.get("label") == LABEL
 
 
@@ -260,10 +279,102 @@ def _resume_agent(pane, session):
                               f"(claude --resume {session}). Start a fresh HQ on purpose with `athena hq rotate`.")
 
 
+@contextlib.contextmanager
+def _claim(cwd):
+    """auto-claude skips a space whose cwd has a claim file: HQ's Claude is athena's to start."""
+    claim = paths.claim_file(cwd)
+    claim.parent.mkdir(parents=True, exist_ok=True)
+    claim.write_text("hq\n")
+    try:
+        yield
+    finally:
+        claim.unlink(missing_ok=True)
+
+
+def _record_pane(record):
+    """Before `agent start`: the hook owns a session only when its HERDR_PANE_ID is hq.json's pane."""
+    _file().write_text(json.dumps(record, indent=2))
+    return record
+
+
+def _new_space(current, cwd, focus, start) -> dict:
+    """Create HQ's space, record it and run `start(pane)` there. A failed start closes the space and puts hq.json back:
+    nothing is left for a retry to duplicate."""
+    cwd = os.path.realpath(os.path.expanduser(cwd or current.get("cwd") or paths.projects_dir()))
+    with _claim(cwd):
+        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", LABEL, "--focus" if focus else "--no-focus")
+        pane = created["root_pane"]["pane_id"]
+        record = _record_pane({**current, "pane": pane, "workspace": created["workspace"]["workspace_id"],
+                               "terminal": created["root_pane"].get("terminal_id"), "cwd": cwd})
+        try:
+            start(pane)
+        except (ResumeError, herdr.HerdrError):
+            try:
+                herdr.call("workspace", "close", created["workspace"]["workspace_id"], timeout=30)
+            except herdr.HerdrError:
+                pass
+            _file().write_text(json.dumps(current, indent=2))
+            raise
+    return record
+
+
+def _space_panes(workspace) -> list:
+    """(pane id, label) of each pane in the space. A pane that went while we looked is not listed."""
+    found = []
+    for listed in herdr.call("pane", "list", "--workspace", workspace, timeout=10).get("panes") or []:
+        try:
+            pane = herdr.call("pane", "get", listed["pane_id"], timeout=10).get("pane", {})
+        except herdr.HerdrError as exc:
+            if exc.code != "pane_not_found":
+                raise
+            continue
+        found.append((listed["pane_id"], pane.get("label")))
+    return found
+
+
+def _replace_pane(record, cwd, start):
+    """HQ's pane is gone from its surviving space. Close HQ's leftover board tiles (a new pane id orphans them), and
+    leave anything else alone. With other panes there, split a new pane in hq.json's cwd, since conversations are filed
+    per project dir, record it and run `start(pane)` in it; a failed start leaves it recorded, for a retry to use.
+    With nothing else there, close the space and return None: the caller opens a new one."""
+    panes = _space_panes(record["workspace"])
+    others = [pane for pane, label in panes if not str(label or "").startswith("board:")]
+    for tile in [pane for pane, _ in panes if pane not in others]:
+        try:
+            herdr.call("pane", "close", tile, timeout=15)
+        except herdr.HerdrError as exc:
+            if exc.code != "pane_not_found":
+                raise
+    if not others:
+        try:
+            herdr.call("workspace", "close", record["workspace"], timeout=30)
+        except herdr.HerdrError as exc:  # closing its last pane may have closed the space
+            if exc.code not in SPACE_NOT_FOUND:
+                raise
+        return None
+    cwd = os.path.realpath(os.path.expanduser(record.get("cwd") or cwd or paths.projects_dir()))
+    with _claim(cwd):
+        split = herdr.call("pane", "split", others[0], "--direction", "right", "--cwd", cwd, "--no-focus")["pane"]
+        new = _record_pane({**record, "pane": split["pane_id"], "terminal": split.get("terminal_id"), "cwd": cwd})
+        start(split["pane_id"])
+    return new
+
+
+def _reopen(record, start, cwd=None, focus=False) -> tuple:
+    """HQ's recorded pane is gone: give it a new one and run `start(pane)` there. Returns the new record, and whether
+    it took a new space."""
+    if _workspace_is_hq(record):
+        replaced = _replace_pane(record, cwd, start)
+        if replaced:
+            return replaced, False
+    return _new_space(record, cwd, focus, start), True
+
+
 def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> dict:
     """Create or focus HQ. An HQ whose Claude is gone is brought back on its saved conversation (`--resume`), in its
-    surviving space or in a new one when the space went too; a fresh conversation starts only for an HQ that never
-    had one, and never when `fresh` is False (doctor), which returns {"missing": True} instead."""
+    surviving pane, in a new pane when only the pane went (`_reopen`), or in a new space when the space went too; a fresh
+    conversation starts only for an HQ that never had one, and never when `fresh` is False (doctor), which returns
+    {"missing": True} instead."""
     start_dash = start_board if start_dash is None else start_dash
     current = load()
     session = own_session(current)
@@ -276,48 +387,41 @@ def hq(cwd=None, focus=True, start_board=True, start_dash=None, fresh=True) -> d
         return {**current, "created": False}
     if not session and not fresh:
         return {**current, "created": False, "missing": True}
-    if current.get("pane") and _workspace_is_hq(current):
-        # The hq space survived but its Claude did not (exited, or a herdr restart): bring it back there.
+    def start(pane):
         if session:
-            _resume_agent(current["pane"], session)
+            _resume_agent(pane, session)
         else:
-            _start_agent(current["pane"])
-        _remember_session(current)
-        keep_label(current, owned=True)
-        _routine(RESTART_ROUTINE if session else None)
-        if focus:
-            herdr.call("workspace", "focus", current["workspace"])
+            _start_agent(pane)
+    # The space first: only a pane of a living HQ space is asked about, so a closed space opens a new one whatever
+    # herdr answers for its pane.
+    in_space = bool(current.get("pane")) and _workspace_is_hq(current)
+    gone = in_space and _pane_gone(current["pane"])
+    if gone and retire.agent_owned(paths.hq_name()):
+        # HQ's Claude runs in a pane hq.json does not name (a move across spaces gives a pane a new id): nothing to replace.
         _helpers(start_board, start_dash)
-        return {**load(), "created": False, "restarted": True, "resumed": bool(session)}
-    cwd = os.path.realpath(os.path.expanduser(cwd or current.get("cwd") or paths.projects_dir()))
-    claim = paths.claim_file(cwd)
-    claim.parent.mkdir(parents=True, exist_ok=True)
-    claim.write_text("hq\n")
-    try:
-        created = herdr.call("workspace", "create", "--cwd", cwd, "--label", LABEL, "--focus" if focus else "--no-focus")
-        pane = created["root_pane"]["pane_id"]
-        try:
-            if session:
-                _resume_agent(pane, session)
-            else:
-                _start_agent(pane)
-        except (ResumeError, herdr.HerdrError):
-            # Never leave the space behind: hq.json does not know it, so every retry would make another.
-            try:
-                herdr.call("workspace", "close", created["workspace"]["workspace_id"], timeout=30)
-            except herdr.HerdrError:
-                pass
-            raise
-    finally:
-        claim.unlink(missing_ok=True)
-    record = {**current, "pane": pane, "workspace": created["workspace"]["workspace_id"],
-              "terminal": created["root_pane"].get("terminal_id"), "cwd": cwd}
-    _file().write_text(json.dumps(record, indent=2))
+        return {**current, "created": False}
+    # The conversation being resumed goes in with the new pane: writing hq.json would otherwise hide a newer one
+    # `own_session` found by its mtime (a /clear not recorded yet), and the hook would not own the resumed session.
+    known = {**current, "session": session} if session else current
+    created = False
+    if gone:
+        record, created = _reopen(known, start, cwd, focus)
+    elif in_space:
+        # The hq space survived but its Claude did not (exited, or a herdr restart): bring it back there.
+        start(current["pane"])
+        record = current
+    else:
+        record, created = _new_space(known, cwd, focus, start), True
     _remember_session(record)
     keep_label(record, owned=True)
     _routine(RESTART_ROUTINE if session else None)
+    if created:
+        _helpers(start_board, start_dash)
+        return {**load(), "created": True, "resumed": bool(session)}
+    if focus:
+        herdr.call("workspace", "focus", record["workspace"])
     _helpers(start_board, start_dash)
-    return {**load(), "created": True, "resumed": bool(session)}
+    return {**load(), "created": False, "restarted": True, "resumed": bool(session)}
 
 
 RESTART_ROUTINE = ("HQ restarted: run your session-start routine (athena status --pr; the athena-watch mod restarts "
@@ -511,6 +615,38 @@ def _wait_idle():
         return False
 
 
+def _gone_or_fail(pane, doing):
+    """`_pane_gone` for a restart or a rotation, before it exits HQ's Claude: herdr not answering stops it there."""
+    try:
+        return _pane_gone(pane)
+    except herdr.HerdrError as exc:
+        msg = (f"herdr did not say whether HQ's pane {pane} still exists ({exc}); not {doing}, and nothing was closed or "
+               "started. Retry once herdr answers")
+        _say("FAILED: " + msg)
+        _notify(f"athena: HQ {doing} skipped", msg)
+        raise RestartError(msg)
+
+
+def _latest_pane(pane, doing):
+    """`_gone_or_fail` for the pane hq.json still names once herdr has answered: doctor's `hq()` takes no lock, and a
+    repair made while herdr was asked about `pane` recorded another. Returns that pane and whether it is gone."""
+    gone = _gone_or_fail(pane, doing)
+    latest = load().get("pane")
+    if latest and latest != pane:
+        return latest, _gone_or_fail(latest, doing)
+    return pane, gone
+
+
+def _start_or_up(pane, *extra):
+    """Start HQ's Claude in `pane`. herdr giving up on the wait while the Claude came up counts as started."""
+    try:
+        _start_agent(pane, *extra)
+    except herdr.HerdrError as exc:
+        if not retire.agent_owned(paths.hq_name()):
+            raise
+        _say(f"herdr gave up waiting ({exc}), but HQ's Claude is up")
+
+
 def restart_now(update=True, force_update=False, unattended=False) -> dict:
     """The restart itself, in the detached child: update, exit HQ's Claude, resume its conversation in the same pane.
 
@@ -544,6 +680,9 @@ def _restart(update, force_update=False, unattended=False):
         if not update_claude():
             _stamp_update()
         _say(f"updates took {took(began)}")
+    # Doctor may have repaired HQ while the updates ran (9-17 s): what follows acts on the pane it recorded, not the old one.
+    record = load()
+    pane = record.get("pane") or pane
     session = trusted_session(record)
     if unattended and not session:
         msg = (f"HQ's conversation id is not known ({name} in pane {pane}); an unattended restart never starts a fresh "
@@ -551,6 +690,7 @@ def _restart(update, force_update=False, unattended=False):
         _say("FAILED: " + msg)
         _notify("athena: HQ restart skipped", msg)
         raise RestartError(msg)
+    pane, gone = _latest_pane(pane, "restarting")
     if retire.agent_owned(name):
         if not _wait_idle():
             # Typing /exit and Enter into a permission dialog would answer it.
@@ -584,16 +724,18 @@ def _restart(update, force_update=False, unattended=False):
     resuming = time.monotonic()
     if session:
         try:
-            _start_agent(pane, "--resume", session)
+            if gone:
+                pane = _reopen({**load(), "session": session},
+                               lambda new: _start_or_up(new, "--resume", session))[0]["pane"]
+            else:
+                _start_or_up(pane, "--resume", session)
         except herdr.HerdrError as exc:
-            if not retire.agent_owned(name):
-                msg = (f"resuming conversation {session} failed ({exc}); nothing was started in its place. It is still "
-                       f"there (claude --resume {session}); `athena doctor` tries again, or start a fresh HQ on purpose "
-                       "with `athena hq rotate`")
-                _say("FAILED: " + msg)
-                _notify("athena: HQ not resumed", msg)
-                raise RestartError(msg)
-            _say(f"herdr gave up waiting ({exc}), but the resumed Claude is up")
+            msg = (f"resuming conversation {session} failed ({exc}); nothing was started in its place. It is still "
+                   f"there (claude --resume {session}); `athena doctor` tries again, or start a fresh HQ on purpose "
+                   "with `athena hq rotate`")
+            _say("FAILED: " + msg)
+            _notify("athena: HQ not resumed", msg)
+            raise RestartError(msg)
     else:
         return _fallback("no conversation id was known for HQ")
     _remember_session(load())
@@ -627,9 +769,10 @@ def restart(update=True, force_update=False, unattended=False) -> dict:
     if unattended:
         argv.append("--unattended")
     with open(log, "a") as out:
+        offset = out.tell()
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True,
                                 cwd=str(paths.PLUGIN_ROOT))
-    return {"pid": proc.pid, "log": str(log), "message": f"restarting HQ; log at {log}"}
+    return {"pid": proc.pid, "proc": proc, "log": str(log), "offset": offset, "message": f"restarting HQ; log at {log}"}
 
 
 ROTATE_ROUTINE = ("Fresh HQ after `athena hq rotate`: load the athena skill, then read {handoff} in full (your fleet, "
@@ -709,7 +852,8 @@ def _rotate():
     name, pane = paths.hq_name(), record.get("pane")
     if not pane:
         raise RestartError("there is no HQ to rotate: start one with `athena hq`")
-    old = _session() or record.get("session")
+    pane, gone = _latest_pane(pane, "rotating")
+    old = _session() or load().get("session")
     if retire.agent_owned(name):
         # The same clean exit as a restart: never /exit into a running turn or a permission dialog, never kill.
         if not _wait_idle():
@@ -730,21 +874,27 @@ def _rotate():
             raise RestartError(msg)
         _say(f"HQ's Claude exited (conversation {old or 'unknown'}, still resumable with claude --resume)")
     time.sleep(0.2)  # herdr reports the agent gone a moment after the shell is back; this is only a margin
-    # Forget the old conversation as HQ's before the fresh one starts: athena's hook then owns the fresh one's first
-    # SessionStart (hq_owns: none known yet) and vouches for it in hq-start.json, and nothing vouches for the old
-    # one any more, so a `claude -p --resume <old>` later run from HQ's Bash can never become HQ again.
-    _forget_session(old)
+    forgotten = []
+
+    def start(target):
+        # Forget the old conversation as HQ's before the fresh one starts: athena's hook then owns the fresh one's first
+        # SessionStart (hq_owns: none known yet) and vouches for it in hq-start.json, and nothing vouches for the old
+        # one any more, so a `claude -p --resume <old>` later run from HQ's Bash can never become HQ again.
+        _forget_session(old)
+        forgotten.append(old)
+        _start_or_up(target)
     try:
-        _start_agent(pane)
+        if gone:
+            pane = _reopen(load(), start)[0]["pane"]
+        else:
+            start(pane)
     except herdr.HerdrError as exc:
-        if not retire.agent_owned(name):
-            kept = _restore_session(old)
-            msg = (f"starting the fresh HQ failed ({exc}); `athena hq` brings HQ back on conversation "
-                   f"{kept or 'unknown'}. The handoff for a fresh HQ is at {handoff.handoff_file()}")
-            _say("FAILED: " + msg)
-            _notify("athena: HQ rotation failed", msg)
-            raise RestartError(msg)
-        _say(f"herdr gave up waiting ({exc}), but the fresh Claude is up")
+        kept = _restore_session(old) if forgotten else old
+        msg = (f"starting the fresh HQ failed ({exc}); `athena hq` brings HQ back on conversation "
+               f"{kept or 'unknown'}. The handoff for a fresh HQ is at {handoff.handoff_file()}")
+        _say("FAILED: " + msg)
+        _notify("athena: HQ rotation failed", msg)
+        raise RestartError(msg)
     new = _new_session(old)
     record = load()
     record["previous_session"], record["session"] = old, new

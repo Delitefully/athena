@@ -92,6 +92,15 @@ class SyncTest(unittest.TestCase):
         ]
         write_scenario(self.tmp.name, rules)
 
+    def test_a_changed_hq_pane_closes_the_columns_saved_for_the_old_one(self):
+        board.save({"hq": "w1:p0", "key": "k", "columns": [{"pane": "w1:p5", "name": "a", "terminal": "t"},
+                                                           {"pane": "w1:p6", "name": "b", "terminal": "t"}]})
+        self.scenario(330, [{"match": ["pane", "get", "w1:p5"], "stdout": {"result": {"pane": {"label": "board:a"}}}},
+                            {"match": ["pane", "get", "w1:p6"], "stdout": {"result": {"pane": {"label": "notes"}}}}])
+        board.sync()
+        closes = [c for c in logged_calls(self.tmp.name) if c[:2] == ["pane", "close"]]
+        self.assertEqual(closes, [["pane", "close", "w1:p5"]])  # the label says w1:p6 is not ours any more
+
     def test_sync_builds_columns(self):
         self.scenario(330)
         result = board.sync()

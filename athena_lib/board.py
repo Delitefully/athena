@@ -214,7 +214,7 @@ def _sync(force) -> dict:
     p = plan(width, paths.min_col(), workers)
     key = _key(p, terminals)
     saved = load()
-    columns = saved.get("columns", []) if saved.get("hq") == hq else []
+    columns = saved.get("columns", [])  # those of an earlier HQ pane too: else a new pane id orphans them
     result = {**p, "width": width, "changed": False, "postponed": False}
     if not force and saved.get("key") == key and saved.get("hq") == hq and all(_exists(c["pane"]) for c in columns):
         return result
