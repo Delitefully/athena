@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import tests  # noqa: E402  its import points this run at a scratch state dir
+
 ATHENA_VARS = (
     "ATHENA_STATE_DIR", "ATHENA_WORKTREE_ROOT", "ATHENA_HERDR", "ATHENA_HQ", "ATHENA_MIN_COL",
     "ATHENA_MAX_WORKERS", "ATHENA_WORKER", "ATHENA_ROLE", "ATHENA_HQ_PANE", "ATHENA_PLUGIN_DIR",
@@ -33,6 +35,7 @@ class EnvPatch:
         self.saved = {k: os.environ.get(k) for k in set(ATHENA_VARS) | set(values)}
         for k in ATHENA_VARS:
             os.environ.pop(k, None)
+        os.environ["ATHENA_STATE_DIR"] = tests.SCRATCH_STATE_DIR  # with none set, the default is the live one
         os.environ.update(values)
 
     def set(self, key, value):
