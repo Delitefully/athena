@@ -55,18 +55,20 @@ def goal_took(name, session=None) -> bool:
     return any(_has_goal_record(p) for p in map(handoff.transcript, sessions) if p)
 
 
-def _goal_unconfirmed(worker) -> bool:
+def _goal_unconfirmed(worker, write=True) -> bool:
     """Read again each time: enter pressed on a send left in the input box, or a resend, clears it. Once seen it stays
     seen, in the ledger: a /clear moves the worker on to a transcript with no goal record in it."""
     if worker.get("goal_state") != "unconfirmed":
         return False
     if not goal_took(worker["name"], worker.get("session")):
         return True
-    ledger.append("update", worker["name"], goal_state="confirmed")
+    if write:
+        ledger.append("update", worker["name"], goal_state="confirmed")
     return False
 
 
-def collect(worker, with_pr=False, with_herdr=True) -> dict:
+def collect(worker, with_pr=False, with_herdr=True, write=True) -> dict:
+    """write=False for a caller that promises to write nothing, such as a dry run."""
     name = worker["name"]
     hook = hookstatus.read(name) or {}
     out = {"name": name, "branch": worker.get("branch"), "linear": worker.get("linear"),
@@ -77,7 +79,7 @@ def collect(worker, with_pr=False, with_herdr=True) -> dict:
            "hook_ts": hook.get("ts"), "herdr": None, "git": None, "pr": None,
            "pending": bool(worker.get("goal_pending")), "athena_review": worker.get("review"), "detail": None, "prompt": worker.get("prompt") if worker.get("goal_send") == "deliver" else None,
            "socket_missing": sockets.missing(name, hook.get("session_id")),
-           "goal_unconfirmed": _goal_unconfirmed(worker)}
+           "goal_unconfirmed": _goal_unconfirmed(worker, write)}
     if with_herdr and worker.get("pane"):
         try:
             agent = herdr.call("agent", "get", worker["pane"], timeout=15).get("agent", {})

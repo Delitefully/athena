@@ -11,7 +11,7 @@ from unittest import mock
 from tests import helpers
 from tests.gitrepo import make_repo
 from tests.test_herdr import logged_calls, write_scenario
-from athena_lib import brief as briefs, config, ledger, paths, spawn, status
+from athena_lib import brief as briefs, config, handoff, ledger, paths, spawn, status
 
 CREATED = {"result": {"type": "worktree_created",
                       "workspace": {"workspace_id": "w9"},
@@ -795,6 +795,61 @@ class GoalConfirmTest(SpawnBase):
         self.ready()
         with self.assertRaises(spawn.SpawnError):
             spawn.resume("abc-1")
+
+    def refused_prompt(self, code):
+        """The worker reads as ready, and herdr answers its next prompt with this error."""
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": {"result": {"agent": {"name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}},
+            {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+             "stderr": json.dumps({"error": {"code": code, "message": "x"}})}])
+
+    def prompts(self):
+        return [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]]
+
+    def test_a_refused_resume_never_leaves_a_goal_for_the_watch_to_send(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("agent_not_ready")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertFalse(self.spawned().get("goal_pending"))
+        before = len(self.prompts())
+        self.assertEqual(spawn.deliver_pending(), [])
+        self.assertEqual(len(self.prompts()), before)
+
+    def test_a_refused_resume_can_be_retried_at_once(self):
+        # herdr refused it before typing anything, so nothing is on its way.
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("agent_not_ready")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_a_resend_herdr_may_have_typed_is_not_sent_again_at_once(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("timeout")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "unconfirmed")
+        before = len(self.prompts())
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertEqual(len(self.prompts()), before)
+
+    def test_a_dry_run_handoff_writes_nothing_when_a_goal_has_shown_up(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        before = list(ledger.events())
+        handoff.build(dry_run=True)
+        self.assertEqual(list(ledger.events()), before)
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
 
     def test_the_watch_never_resends_on_its_own(self):
         self.scenario([self.SESSION])

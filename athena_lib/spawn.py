@@ -418,7 +418,7 @@ def deliver(name, resend=False) -> dict:
     already sent that never took counts as pending too: the same text spawn checked.
 
     Outcomes: sent, waiting (not ready yet), missing (no agent of this worker's in its pane),
-    unconfirmed (herdr may have typed it; never resent), not-pending, busy (another sender holds the lock).
+    unconfirmed (herdr may have typed it; the watch never resends it), not-pending, busy (another sender holds the lock).
     """
     with _goal_lock(name) as locked:
         if not locked:
@@ -433,17 +433,20 @@ def deliver(name, resend=False) -> dict:
         if agent_status not in READY:
             return {"name": name, "outcome": "waiting", "agent_status": agent_status}
         goal = w.get("goal_pending") or w["goal_text"]
-        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver")  # written first: a crash cannot resend
+        # Written first: a crash cannot resend, and neither can a resume while a send that may have been typed lands.
+        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver", goal_sent=time.time())
         try:
             herdr.call("agent", "prompt", pane, goal)
         except herdr.HerdrError as exc:
             if exc.code in NOT_SENT:
-                ledger.append("update", name, goal_pending=goal, prompt=f"not sent: {exc.code}")
+                # As it was: a refused resend stays the human's to retry, and is never left for the watch to send.
+                ledger.append("update", name, goal_pending=w.get("goal_pending"), goal_sent=w.get("goal_sent"),
+                              prompt=f"not sent: {exc.code}")
                 return {"name": name, "outcome": "waiting", "agent_status": exc.code}
             ledger.append("update", name, prompt=f"unconfirmed: {exc.code}", pending_reason=None)
             return {"name": name, "outcome": "unconfirmed", "error": str(exc)}
         # Not looked for here: this runs inside a watch tick. Unconfirmed until `athena status` finds it in the transcript.
-        ledger.append("update", name, prompt="sent", pending_reason=None, goal_state="unconfirmed", goal_sent=time.time(),
+        ledger.append("update", name, prompt="sent", pending_reason=None, goal_state="unconfirmed",
                       **_goal_session(name, w.get("session")))
         return {"name": name, "outcome": "sent"}
 

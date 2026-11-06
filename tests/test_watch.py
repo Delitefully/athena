@@ -86,7 +86,7 @@ class GoalWakeTest(unittest.TestCase):
     def test_a_goal_that_shows_up_by_the_second_tick_wakes_nobody(self):
         self.assertEqual(self.goal_ticks(True, False, False), [])
 
-    def test_a_resent_goal_is_told_again_if_it_does_not_take(self):
+    def test_a_flag_that_clears_and_comes_back_is_told_again(self):
         self.assertEqual(len(self.goal_ticks(True, True, False, True, True)), 2)
 
 

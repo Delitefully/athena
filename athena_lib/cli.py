@@ -825,7 +825,7 @@ def parser():
     s.add_argument("text", nargs="+")
     s.set_defaults(func=cmd_nudge)
 
-    s = sub.add_parser("resume", help="send the goal of a worker that waited at a startup prompt")
+    s = sub.add_parser("resume", help="send the goal of a worker that waited at a startup prompt, or again one that never took")
     s.add_argument("name")
     s.set_defaults(func=cmd_resume)
 
