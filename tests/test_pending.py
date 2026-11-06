@@ -198,6 +198,7 @@ class DeliverTest(PendingBase):
             spawn.resume("abc-1")
         self.assertIn("answer", str(ctx.exception))
         self.set_agent("idle")
+        self.env.set("ATHENA_GOAL_WAIT", "60")  # its goal has this long to show up before it may be sent again
         self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
         with self.assertRaises(spawn.SpawnError) as ctx:
             spawn.resume("abc-1")

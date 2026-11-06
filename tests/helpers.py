@@ -7,12 +7,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import tests  # noqa: E402  its import points this run at a scratch state dir
+
 ATHENA_VARS = (
     "ATHENA_STATE_DIR", "ATHENA_WORKTREE_ROOT", "ATHENA_HERDR", "ATHENA_HQ", "ATHENA_MIN_COL",
     "ATHENA_MAX_WORKERS", "ATHENA_WORKER", "ATHENA_ROLE", "ATHENA_HQ_PANE", "ATHENA_PLUGIN_DIR",
     "FAKE_HERDR_SCENARIO", "FAKE_HERDR_LOG", "ATHENA_EXIT_GRACE", "ATHENA_HQ_CWD", "ATHENA_DASH_PORT",
     "ATHENA_LINEAR_WORKSPACE", "ATHENA_CONFIG", "ATHENA_MODEL", "ATHENA_EFFORT", "ATHENA_HERDR_INSTALL", "ATHENA_PYTHON",
-    "ATHENA_HQ_CONTEXT_WINDOW", "ATHENA_HQ_SESSION_WAIT", "ATHENA_SESSION_WAIT", "ATHENA_PS", "FAKE_PS_CLAUDE",
+    "ATHENA_HQ_CONTEXT_WINDOW", "ATHENA_HQ_SESSION_WAIT", "ATHENA_SESSION_WAIT", "ATHENA_GOAL_WAIT", "ATHENA_PS", "FAKE_PS_CLAUDE",
     "ATHENA_TYPING_WAIT", "ATHENA_DOCTOR_GRACE", "HERDR_PANE_ID",
 )
 
@@ -33,6 +35,7 @@ class EnvPatch:
         self.saved = {k: os.environ.get(k) for k in set(ATHENA_VARS) | set(values)}
         for k in ATHENA_VARS:
             os.environ.pop(k, None)
+        os.environ["ATHENA_STATE_DIR"] = tests.SCRATCH_STATE_DIR  # with none set, the default is the live one
         os.environ.update(values)
 
     def set(self, key, value):
@@ -60,6 +63,7 @@ def isolated_env(tmp):
         "ATHENA_EXIT_GRACE": "0",
         "ATHENA_HQ_SESSION_WAIT": "0",
         "ATHENA_SESSION_WAIT": "0",
+        "ATHENA_GOAL_WAIT": "0",
         "ATHENA_TYPING_WAIT": "0",
         "CLAUDE_CONFIG_DIR": str(tmp / "claude"),
     })

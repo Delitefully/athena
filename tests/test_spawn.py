@@ -1,15 +1,17 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import helpers
 from tests.gitrepo import make_repo
 from tests.test_herdr import logged_calls, write_scenario
-from athena_lib import config, ledger, paths, spawn
+from athena_lib import brief as briefs, config, handoff, ledger, paths, spawn, status
 
 CREATED = {"result": {"type": "worktree_created",
                       "workspace": {"workspace_id": "w9"},
@@ -17,7 +19,7 @@ CREATED = {"result": {"type": "worktree_created",
                       "worktree": {"branch": "you/abc-1-fix"}}}
 
 
-class SpawnTest(unittest.TestCase):
+class SpawnBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
@@ -38,6 +40,8 @@ class SpawnTest(unittest.TestCase):
         args.update(kw)
         return spawn.spawn(**args)
 
+
+class SpawnTest(SpawnBase):
     def test_a_skipped_brief_check_is_recorded_on_the_spawn(self):
         self.scenario()
         self.brief.write_text(helpers.BRIEF.replace("GOAL: The parser", "GOAL: Ship the parser"))
@@ -223,7 +227,7 @@ class SpawnTest(unittest.TestCase):
         self.scenario([{"match": ["agent", "prompt"], "stdout": "", "stderr": json.dumps(err), "exit": 1}])
         with self.assertRaises(spawn.SpawnError) as ctx:
             self.run_spawn()
-        self.assertIn("athena nudge abc-1", str(ctx.exception))
+        self.assertIn("athena resume abc-1", str(ctx.exception))
         w = ledger.workers()["abc-1"]
         self.assertEqual((w["state"], w["prompt"]), ("live", "failed: agent_not_found"))
 
@@ -378,7 +382,7 @@ class SpawnTest(unittest.TestCase):
             self.run_spawn()
 
 
-class UltracodeCliTest(unittest.TestCase):
+class CliBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = helpers.isolated_env(self.tmp.name)
@@ -398,6 +402,8 @@ class UltracodeCliTest(unittest.TestCase):
         return ("spawn", "--repo", str(self.repo), "--branch", "you/abc-1-fix", "--name", "abc-1",
                 "--brief", str(self.brief), "--goal", "ABC-1 is done when x.", *extra)
 
+
+class UltracodeCliTest(CliBase):
     def test_workflow_size_without_ultracode_is_rejected(self):
         out = self.cli(*self.spawn_args("--workflow-size", "large"))
         self.assertEqual(out.returncode, 2)
@@ -504,15 +510,431 @@ class BuildGoalTest(unittest.TestCase):
     def tearDown(self):
         self.env.restore()
 
-    def test_the_report_line_is_the_report_and_sendmessage_is_try_once(self):
-        # A goal that required SendMessage was never met while HQ's messaging socket was gone: the worker looped.
-        goal = spawn.build_goal("Open the PR", "abc-1", "/briefs/abc-1.md")
-        self.assertTrue(goal.startswith("/goal Open the PR Your brief is /briefs/abc-1.md; read it first."))
-        self.assertIn("ATHENA-REPORT line: that line is the report, and the goal is met once it is written", goal)
-        self.assertIn("try SendMessage to athena once; if it fails, don't retry", goal)
-        self.assertNotIn("Report to the session named", goal)
+    def test_the_suffix_is_short_and_any_report_status_meets_the_goal(self):
+        # 70 of 204 workers lost their /goal once this suffix grew: it leaves the condition room under GOAL_LIMIT.
+        brief = "/Users/someone/.local/state/athena/briefs/abc-1234.md"
+        goal = spawn.build_goal("Open the PR", "abc-1234", brief)
+        suffix = goal[len("/goal Open the PR"):]
+        self.assertIn(brief, suffix)
+        self.assertLessEqual(len(suffix), 210)
+        # A BLOCKED report with a question ends the turn: without this clause the worker loops until someone clears it.
+        # These are the words the evaluator has called met on a BLOCKED report; nothing stops a not-met loop.
+        self.assertIn("The goal is met once an ATHENA-REPORT line is written, whatever its status.", suffix)
+        self.assertIn("Out of scope: merging, approvals, undrafting, unfixable checks.", suffix)
 
-    def test_any_report_status_meets_the_goal_and_what_follows_done_is_out_of_scope(self):
-        goal = spawn.build_goal("Open the PR", "abc-1", "/briefs/abc-1.md")
-        self.assertIn("whatever its status (a BLOCKED or NEEDS_CONTEXT report with your question meets it too)", goal)
-        self.assertIn("Merging, approvals, undrafting and checks you cannot fix are out of scope", goal)
+    def test_a_long_goal_is_built_whole_so_the_length_check_sees_it(self):
+        goal = spawn.build_goal("x" * 5000, "abc-1", "/briefs/abc-1.md")
+        self.assertIn("x" * 5000, goal)
+        self.assertTrue(goal.endswith("unfixable checks."))
+
+    def test_nothing_still_says_the_goal_names_hq(self):
+        # The suffix no longer carries HQ's name: a worker finds it in its environment.
+        worker = (paths.PLUGIN_ROOT / "worker.md").read_text()
+        self.assertNotIn("named in your goal", worker)
+        self.assertIn("ATHENA_HQ", worker)
+
+
+class GoalTemplateTest(unittest.TestCase):
+    """The goal HQ is told to write has to arrive as a /goal, whatever worker it is for."""
+
+    def condition(self, name="ABC-1234"):
+        skill = (paths.PLUGIN_ROOT / "skills" / "athena" / "SKILL.md").read_text()
+        template = re.search(r'--goal "(<NAME> is done when[^"]+)"', skill).group(1)
+        return template.replace("<NAME>", name).replace("<TIMEBOX>", "2 hours or 150 turns")
+
+    def test_a_goal_from_the_template_comes_under_the_limit(self):
+        brief = "/Users/someone/.local/state/athena/briefs/abc-1234.md"
+        self.assertLessEqual(len(spawn.build_goal(self.condition(), "abc-1234", brief)), spawn.GOAL_LIMIT)
+
+    def test_it_stays_under_with_the_longest_worker_name(self):
+        name = "a" * 32
+        brief = f"/Users/someone/.local/state/athena/briefs/{name}.md"
+        self.assertLessEqual(len(spawn.build_goal(self.condition(name), name, brief)), spawn.GOAL_LIMIT)
+
+    def test_the_template_leaves_room_for_a_line_of_its_own(self):
+        brief = "/Users/someone/.local/state/athena/briefs/abc-1234.md"
+        room = spawn.GOAL_LIMIT - len(spawn.build_goal(self.condition(), "abc-1234", brief))
+        self.assertGreaterEqual(room, 150)
+
+    def test_the_template_passes_the_goal_check(self):
+        self.assertEqual(briefs.check_goal(self.condition()), [])
+
+    def test_a_resend_is_not_sent_to_nudge(self):
+        # A nudge drops what spawn adds and has no limit, so a long one pastes again.
+        skill = (paths.PLUGIN_ROOT / "skills" / "athena" / "SKILL.md").read_text()
+        limit = skill[skill.index("The whole `/goal` has to fit"):]
+        self.assertIn("athena resume", limit[:limit.index("\n")])
+
+    def test_the_docs_state_the_limit(self):
+        for doc in ("skills/athena/SKILL.md", "docs/commands.md"):
+            self.assertIn(f"{spawn.GOAL_LIMIT} characters", (paths.PLUGIN_ROOT / doc).read_text(), doc)
+
+
+class GoalLimitTest(SpawnBase):
+    """Over the limit Claude Code takes the text as a paste: /goal never runs, and the worker just gets text."""
+
+    def goal_of_length(self, length):
+        overhead = len(spawn.build_goal("", "abc-1", paths.state_dir() / "briefs" / "abc-1.md"))
+        return "x" * (length - overhead)
+
+    def test_a_goal_over_the_limit_is_refused_naming_both_lengths(self):
+        self.scenario()
+        with self.assertRaises(spawn.SpawnError) as caught:
+            self.run_spawn(goal=self.goal_of_length(spawn.GOAL_LIMIT + 1))
+        self.assertIn(str(spawn.GOAL_LIMIT + 1), str(caught.exception))
+        self.assertIn(str(spawn.GOAL_LIMIT), str(caught.exception).replace(str(spawn.GOAL_LIMIT + 1), ""))
+
+    def test_the_refusal_comes_before_anything_is_made(self):
+        self.scenario()
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn(goal=self.goal_of_length(spawn.GOAL_LIMIT + 1))
+        self.assertEqual(logged_calls(self.tmp.name), [])
+        self.assertFalse(paths.worktree_path(self.repo, "you/abc-1-fix").exists())
+        self.assertNotIn("abc-1", ledger.workers())
+
+    def test_skipping_the_brief_check_does_not_skip_the_limit(self):
+        self.scenario()
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn(goal=self.goal_of_length(spawn.GOAL_LIMIT + 1), brief_check=False)
+
+    def test_a_goal_at_the_limit_is_sent_whole(self):
+        self.scenario()
+        self.run_spawn(goal=self.goal_of_length(spawn.GOAL_LIMIT))
+        prompt = next(c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"])
+        self.assertEqual(len(prompt[3]), spawn.GOAL_LIMIT)
+
+
+GOAL_STATUS = {"type": "attachment", "attachment": {"type": "goal_status", "met": False, "condition": "x"}}
+GOAL_SET = {"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Goal set: x</local-command-stdout>"}}
+# How a goal that was typed too long arrives, and a brief read later: both name the markers, neither is a goal.
+PASTED = {"type": "user", "message": {"role": "user", "content": "<pasted_content>/goal x; Goal set: goal_status</pasted_content>"}}
+TOOL_RESULT = {"type": "user", "message": {"role": "user", "content": [
+    {"type": "tool_result", "content": "<local-command-stdout>Goal set: {\"type\": \"goal_status\"}"}]}}
+
+
+class GoalConfirmTest(SpawnBase):
+    """herdr raising no error and Claude starting to work say nothing: a pasted prompt starts Claude working too."""
+
+    SESSION = {"match": ["agent", "get"], "stdout": {"result": {"agent": {"agent_session": {"value": "sess-1"}}}}}
+
+    def transcript(self, *records, session="sess-1"):
+        path = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "-some-worktree" / f"{session}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    def spawned(self):
+        return ledger.workers()["abc-1"]
+
+    def hook(self, session):
+        (paths.ensure("workers") / "abc-1.json").write_text(json.dumps({"name": "abc-1", "state": "working", "session_id": session}))
+
+    def ready(self):
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
+            "name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}}])
+
+    def pending_worker(self, **fields):
+        ledger.append("spawn", "abc-1", pane="w9:p1", goal_pending="/goal x", **fields)
+        self.ready()
+
+    def failed_spawn(self, code, name="abc-1"):
+        """A spawn whose goal send got this error from herdr, so spawn raised after the worker was tracked."""
+        self.scenario([self.SESSION, {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+                                      "stderr": json.dumps({"error": {"code": code, "message": "x"}})}])
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn(name=name)
+
+    def test_a_goal_status_record_confirms_the_goal(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED, GOAL_STATUS)
+        result = self.run_spawn()
+        self.assertEqual(result["goal_state"], "confirmed")
+        self.assertEqual(self.spawned()["goal_state"], "confirmed")
+
+    def test_a_goal_set_record_confirms_the_goal(self):
+        self.scenario([self.SESSION])
+        self.transcript(GOAL_SET)
+        self.assertEqual(self.run_spawn()["goal_state"], "confirmed")
+
+    def test_a_pasted_goal_is_unconfirmed(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED, TOOL_RESULT)
+        self.assertEqual(self.run_spawn()["goal_state"], "unconfirmed")
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+
+    def test_no_transcript_is_unconfirmed(self):
+        self.scenario([self.SESSION])
+        self.assertEqual(self.run_spawn()["goal_state"], "unconfirmed")
+
+    def test_no_session_id_from_herdr_falls_back_to_the_hook(self):
+        self.scenario()
+        self.transcript(GOAL_STATUS, session="sess-hook")
+        hook = paths.ensure("workers") / "abc-1.json"
+        real = spawn._set_aside_status  # a hook event that lands after the new Claude starts
+        def and_the_hook_reports(name):
+            real(name)
+            hook.write_text(json.dumps({"name": "abc-1", "state": "working", "session_id": "sess-hook"}))
+        with mock.patch.object(spawn, "_set_aside_status", and_the_hook_reports):
+            self.assertEqual(self.run_spawn()["goal_state"], "confirmed")
+
+    def test_it_waits_for_the_goal_to_land(self):
+        self.scenario([self.SESSION])
+        self.env.set("ATHENA_GOAL_WAIT", "5")
+        calls = []
+        real = status.goal_took
+        def lands_on_the_third_look(name, session=None):
+            calls.append(name)
+            if len(calls) == 3:
+                self.transcript(GOAL_STATUS)
+            return real(name, session)
+        with mock.patch.object(status, "goal_took", lands_on_the_third_look), mock.patch.object(spawn.time, "sleep"):
+            self.assertEqual(self.run_spawn()["goal_state"], "confirmed")
+        self.assertEqual(len(calls), 3)
+
+    def test_status_says_goal_unconfirmed(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_status_clears_once_the_goal_shows_up(self):
+        # Someone pressed enter on a send left in the input box, or HQ sent a shorter goal.
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_status_says_nothing_of_a_confirmed_goal(self):
+        self.scenario([self.SESSION])
+        self.transcript(GOAL_STATUS)
+        self.run_spawn()
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_worker_from_before_this_check_is_not_flagged(self):
+        ledger.append("spawn", "old-1", pane="w2:p1", session="sess-1")
+        self.transcript(PASTED)
+        self.assertFalse(status.collect(ledger.workers()["old-1"], with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_goal_sent_after_a_startup_prompt_is_checked_too(self):
+        ledger.append("spawn", "abc-1", pane="w9:p1", goal_pending="/goal x", session="sess-1")
+        write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
+            "name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}}])
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "sent")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+        self.transcript(GOAL_STATUS)
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+
+    def test_a_goal_seen_once_stays_confirmed_after_a_clear(self):
+        # A /clear moves the worker to a new transcript, which holds no goal record.
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+        self.assertEqual(self.spawned()["goal_state"], "confirmed")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_pending_path_worker_is_not_flagged_after_a_clear_nobody_looked_before(self):
+        # It reaches the ledger with no session: delivery keeps the one its goal went to.
+        self.pending_worker()
+        self.hook("sess-1")
+        self.transcript(GOAL_STATUS)
+        spawn.deliver("abc-1")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_goal_that_never_ran_stays_flagged_after_a_clear(self):
+        self.pending_worker()
+        self.hook("sess-1")
+        self.transcript(PASTED)
+        spawn.deliver("abc-1")
+        self.hook("sess-after-clear")
+        self.transcript(PASTED, session="sess-after-clear")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_resume_resends_the_checked_text_of_an_unconfirmed_goal(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        sent = next(c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"])[3]
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        prompts = [c[3] for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(prompts, [sent, sent])
+        self.assertLessEqual(len(sent), spawn.GOAL_LIMIT)
+
+    def test_resume_resends_a_goal_whose_send_failed(self):
+        self.scenario([self.SESSION, {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+                                      "stderr": json.dumps({"error": {"code": "timeout", "message": "x"}})}])
+        with self.assertRaises(spawn.SpawnError) as caught:
+            self.run_spawn()
+        self.assertIn("athena resume abc-1", str(caught.exception))
+        self.assertNotIn("athena nudge", str(caught.exception))
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_resume_does_not_resend_a_goal_just_sent(self):
+        # It lands a few seconds after the send: a second resume in that time would type it twice.
+        self.pending_worker()
+        ledger.append("update", "abc-1", goal_text="/goal x")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def test_resume_refuses_a_goal_that_took(self):
+        self.scenario([self.SESSION])
+        self.transcript(GOAL_STATUS)
+        self.run_spawn()
+        self.ready()
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def test_resume_does_not_resend_a_goal_that_showed_up_since(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        self.ready()
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+
+    def refused_prompt(self, code):
+        """The worker reads as ready, and herdr answers its next prompt with this error."""
+        write_scenario(self.tmp.name, [
+            {"match": ["agent", "get"], "stdout": {"result": {"agent": {"name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}},
+            {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+             "stderr": json.dumps({"error": {"code": code, "message": "x"}})}])
+
+    def prompts(self):
+        return [c for c in logged_calls(self.tmp.name) if c[:2] == ["agent", "prompt"]]
+
+    def test_a_refused_resume_never_leaves_a_goal_for_the_watch_to_send(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("agent_not_ready")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertFalse(self.spawned().get("goal_pending"))
+        before = len(self.prompts())
+        self.assertEqual(spawn.deliver_pending(), [])
+        self.assertEqual(len(self.prompts()), before)
+
+    def test_a_refused_resume_can_be_retried_at_once(self):
+        # herdr refused it before typing anything, so nothing is on its way.
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("agent_not_ready")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_a_resend_herdr_may_have_typed_is_not_sent_again_at_once(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.refused_prompt("timeout")
+        self.env.set("ATHENA_GOAL_WAIT", "60")
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "unconfirmed")
+        before = len(self.prompts())
+        with self.assertRaises(spawn.SpawnError):
+            spawn.resume("abc-1")
+        self.assertEqual(len(self.prompts()), before)
+
+    def test_a_pending_send_that_times_out_is_flagged_and_can_be_resent(self):
+        self.pending_worker(goal_text="/goal x")
+        self.refused_prompt("timeout")
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "unconfirmed")
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        self.assertEqual(self.prompts()[-1][3], "/goal x")
+
+    def test_a_send_that_failed_at_spawn_is_flagged(self):
+        self.failed_spawn("timeout")
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def bad_resume_then_a_good_one(self, code):
+        self.failed_spawn("timeout")
+        self.refused_prompt(code)
+        try:
+            spawn.resume("abc-1")
+        except spawn.SpawnError:
+            pass
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_a_resume_that_times_out_does_not_close_resend(self):
+        self.bad_resume_then_a_good_one("timeout")
+
+    def test_a_resume_herdr_refused_does_not_close_resend(self):
+        self.bad_resume_then_a_good_one("agent_not_ready")
+
+    def test_a_first_send_herdr_refused_is_pending_not_unconfirmed(self):
+        # Nothing was typed, so the goal is simply still waiting.
+        self.pending_worker(goal_text="/goal x")
+        self.refused_prompt("agent_not_ready")
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "waiting")
+        self.assertEqual(self.spawned()["goal_pending"], "/goal x")
+        self.assertFalse(self.spawned().get("goal_state"))
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def test_a_dry_run_handoff_writes_nothing_when_a_goal_has_shown_up(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.transcript(PASTED, GOAL_STATUS)
+        before = list(ledger.events())
+        handoff.build(dry_run=True)
+        self.assertEqual(list(ledger.events()), before)
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+
+    def test_the_watch_never_resends_on_its_own(self):
+        self.scenario([self.SESSION])
+        self.transcript(PASTED)
+        self.run_spawn()
+        self.ready()
+        self.assertEqual(spawn.deliver_pending(), [])
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "not-pending")
+
+
+class GoalUnconfirmedCliTest(CliBase):
+    def test_status_prints_goal_unconfirmed(self):
+        ledger.append("spawn", "abc-2", pane="w2:p1", goal_state="unconfirmed")
+        ledger.append("spawn", "abc-3", pane="w3:p1", goal_state="confirmed")
+        lines = {line.split()[0]: line for line in self.cli("status").stdout.splitlines() if line[:1].strip()}
+        self.assertIn("goal unconfirmed", lines["abc-2"])
+        self.assertNotIn("goal unconfirmed", lines["abc-3"])
+        rows = {r["name"]: r for r in json.loads(self.cli("status", "--json").stdout)}
+        self.assertTrue(rows["abc-2"]["goal_unconfirmed"])
+        self.assertFalse(rows["abc-3"]["goal_unconfirmed"])
+
+    def test_status_of_one_worker_says_goal_unconfirmed(self):
+        ledger.append("spawn", "abc-2", pane="w2:p1", goal_state="unconfirmed")
+        ledger.append("spawn", "abc-3", pane="w3:p1", goal_state="confirmed")
+        self.assertIn("goal unconfirmed", self.cli("status", "abc-2").stdout)
+        self.assertNotIn("goal unconfirmed", self.cli("status", "abc-3").stdout)
+
+    def test_spawn_warns_when_its_goal_is_unconfirmed(self):
+        write_scenario(self.tmp.name, [{"match": ["worktree", "create"], "stdout": CREATED}])
+        out = self.cli(*self.spawn_args())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout)["goal_state"], "unconfirmed")
+        self.assertIn("goal unconfirmed", out.stderr)
+
+    def test_spawn_refuses_an_over_long_goal_with_a_nonzero_exit(self):
+        args = list(self.spawn_args())
+        args[args.index("--goal") + 1] = "x" * 2000
+        out = self.cli(*args)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(str(spawn.GOAL_LIMIT), out.stderr)

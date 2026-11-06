@@ -8,13 +8,19 @@ import subprocess
 import time
 from pathlib import Path
 
-from athena_lib import brief as briefs, config, gitops, herdr, ledger, paths, retire
+from athena_lib import brief as briefs, config, gitops, herdr, hookstatus, ledger, paths, retire, status
 
 HARD_CAP = paths.HARD_CAP
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
 NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 READY = {"idle", "done"}  # herdr: both mean ready for input; which one depends on seen state
 SESSION_TRIES = 3  # asks for the session id to register the resume command, a second apart
+# The longest whole `/goal ...` athena sends. Claude Code takes text over about 800 characters typed at once as a paste:
+# /goal never runs as a command and the worker just gets text. Across worker transcripts, sends up to 793 characters ran
+# as commands and the shortest pasted was 814 (a few far longer ones ran too, unexplained). The threshold looks to lie
+# between, so stay on the side that has been seen to work.
+GOAL_LIMIT = 790
+GOAL_WAIT = 20  # seconds spawn looks for the goal in the transcript; it landed about 3 s after Claude started
 
 
 class SpawnError(Exception):
@@ -131,16 +137,41 @@ def build_goal(condition, name, brief):
     text = " ".join(condition.split())
     if text.startswith("/goal "):
         text = text[len("/goal "):]
-    # The ATHENA-REPORT line is the report athena reads. SendMessage is a courtesy: when HQ isn't reachable
-    # (a restarted or re-logged HQ), a goal that required it would never be met and the worker would loop.
     # Any status meets it: a BLOCKED report with a question ends the turn cleanly instead of looping until someone
-    # clears the goal, and what happens after DONE is not the worker's to reach.
-    suffix = (f" Your brief is {brief}; read it first. End your final message with an ATHENA-REPORT line: that line "
-              f"is the report, and the goal is met once it is written, whatever its status (a BLOCKED or "
-              f"NEEDS_CONTEXT report with your question meets it too). Merging, approvals, undrafting and checks you "
-              f"cannot fix are out of scope. Also try SendMessage to {paths.hq_name()} once; if it fails, don't "
-              f"retry.")
-    return ("/goal " + text + suffix)[:3990]
+    # clears the goal, and what happens after DONE is not the worker's to reach. Keep this short: the whole /goal has
+    # to fit GOAL_LIMIT. worker.md has the rest, SendMessage being a courtesy among it. "Whatever its status" is what the
+    # evaluator has called met on BLOCKED reports, and nothing stops a not-met loop, so reword it only with new evidence.
+    suffix = (f" Read {brief} first. The goal is met once an ATHENA-REPORT line is written, whatever its status. "
+              f"Out of scope: merging, approvals, undrafting, unfixable checks.")
+    return "/goal " + text + suffix
+
+
+def check_goal_length(goal_text):
+    """Refuse a built goal too long to arrive as a /goal, before a worktree or a Claude exists for it."""
+    if len(goal_text) > GOAL_LIMIT:
+        raise SpawnError(f"the built goal is {len(goal_text)} characters and the limit is {GOAL_LIMIT}: Claude Code takes "
+                         f"a longer one as pasted text, so /goal never runs. Cut at least {len(goal_text) - GOAL_LIMIT} "
+                         f"characters from --goal; the brief holds the detail.")
+
+
+def _goal_wait() -> float:
+    return float(os.environ.get("ATHENA_GOAL_WAIT") or GOAL_WAIT)
+
+
+def _goal_session(name, known=None) -> dict:
+    """The ledger field for the session a goal went to: the transcript to look in once a /clear has moved the hook on."""
+    session = (hookstatus.read(name) or {}).get("session_id") or known
+    return {"session": session} if session else {}
+
+
+def confirm_goal(name, session=None) -> str:
+    """confirmed once the worker's transcript shows its /goal ran as a command, else unconfirmed after GOAL_WAIT."""
+    deadline = time.monotonic() + _goal_wait()
+    while not status.goal_took(name, session):
+        if time.monotonic() >= deadline:
+            return "unconfirmed"
+        time.sleep(0.5)
+    return "confirmed"
 
 
 def claude_args(name, model, effort, settings):
@@ -187,6 +218,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         check_brief(brief_path, goal)
     else:  # kept on the spawn record: which checks a launch went past
         skipped = [briefs.describe(p) for p in brief_problems(brief_path, goal)]
+    goal_text = build_goal(goal, name, paths.state_dir() / "briefs" / f"{name}.md")
+    check_goal_length(goal_text)
     ledger.touch()
     pre = gitops.preflight(repo)
     if not pre["ok"]:
@@ -231,26 +264,28 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         claim.unlink(missing_ok=True)
         raise SpawnError(_fail(name, record, exc)) from exc
     claim.unlink(missing_ok=True)
-    goal_text = build_goal(goal, name, brief)
     if pending:
-        ledger.append("spawn", name, goal_pending=goal_text, pending_reason=pending, **record)
+        ledger.append("spawn", name, goal_pending=goal_text, goal_text=goal_text, pending_reason=pending, **record)
         _report_metadata(record["workspace"], linear)
         screen = _screen(record["pane"])
         return {"name": name, **record, "pending": True, "label": label, "screen": screen,
                 "message": pending_message(name, label, record, screen)}
-    ledger.append("spawn", name, **record)
+    ledger.append("spawn", name, goal_text=goal_text, **record)
     try:
         herdr.call("agent", "prompt", name, goal_text)
     except herdr.HerdrError as exc:
-        ledger.append("update", name, prompt=f"failed: {exc.code}")
-        raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: athena nudge {name} '<goal>'")
+        ledger.append("update", name, prompt=f"failed: {exc.code}", goal_state="unconfirmed",
+                      **_goal_session(name, record.get("session")))
+        raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: athena resume {name}")
     try:
         herdr.call("agent", "wait", name, "--until", "working", "--until", "blocked", "--timeout", "30000", timeout=60)
         record["prompt"] = "accepted"
     except herdr.HerdrError as exc:
         record["prompt"] = f"unconfirmed: {exc.code}"
     _report_metadata(record["workspace"], linear)
-    ledger.append("update", name, prompt=record["prompt"])
+    record["goal_state"] = confirm_goal(name, record.get("session"))
+    record.update(_goal_session(name, record.get("session")))
+    ledger.append("update", name, prompt=record["prompt"], goal_state=record["goal_state"], session=record.get("session"))
     return {"name": name, **record}
 
 
@@ -371,17 +406,26 @@ def _goal_lock(name):
         f.close()
 
 
-def deliver(name) -> dict:
-    """Send a worker's pending goal once its Claude is ready, at most once, to its own pane only.
+def _resendable(w) -> bool:
+    """A goal sent once that shows no sign of having run, and has had the time to. Only `athena resume` sends one again:
+    a person has read the worker's pane first, which the watch cannot do."""
+    settled = time.time() - (w.get("goal_sent") or 0) >= _goal_wait()
+    return bool(w.get("goal_state") == "unconfirmed" and settled and w.get("goal_text")
+                and not status.goal_took(w["name"], w.get("session")))
+
+
+def deliver(name, resend=False) -> dict:
+    """Send a worker's pending goal once its Claude is ready, at most once, to its own pane only. With resend, a goal
+    already sent that never took counts as pending too: the same text spawn checked.
 
     Outcomes: sent, waiting (not ready yet), missing (no agent of this worker's in its pane),
-    unconfirmed (herdr may have typed it; never resent), not-pending, busy (another sender holds the lock).
+    unconfirmed (herdr may have typed it; the watch never resends it), not-pending, busy (another sender holds the lock).
     """
     with _goal_lock(name) as locked:
         if not locked:
             return {"name": name, "outcome": "busy"}
         w = ledger.workers().get(name)
-        if not w or w.get("state") != "live" or not w.get("goal_pending"):
+        if not w or w.get("state") != "live" or not (w.get("goal_pending") or (resend and _resendable(w))):
             return {"name": name, "outcome": "not-pending"}
         pane = w.get("pane")
         agent_status, problem = _agent(name, pane) if pane else (None, f"{name} has no pane")
@@ -389,16 +433,21 @@ def deliver(name) -> dict:
             return {"name": name, "outcome": "missing", "problem": problem}
         if agent_status not in READY:
             return {"name": name, "outcome": "waiting", "agent_status": agent_status}
-        goal = w["goal_pending"]
-        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver")  # written first: a crash cannot resend
+        goal = w.get("goal_pending") or w["goal_text"]
+        # Written first: a crash cannot resend, and neither can a resume while a send that may have been typed lands.
+        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver", goal_sent=time.time(),
+                      goal_state="unconfirmed", **_goal_session(name, w.get("session")))
         try:
             herdr.call("agent", "prompt", pane, goal)
         except herdr.HerdrError as exc:
             if exc.code in NOT_SENT:
-                ledger.append("update", name, goal_pending=goal, prompt=f"not sent: {exc.code}")
+                # As it was: a refused resend stays the human's to retry, and is never left for the watch to send.
+                ledger.append("update", name, goal_pending=w.get("goal_pending"), goal_sent=w.get("goal_sent"),
+                              goal_state=w.get("goal_state"), prompt=f"not sent: {exc.code}")
                 return {"name": name, "outcome": "waiting", "agent_status": exc.code}
             ledger.append("update", name, prompt=f"unconfirmed: {exc.code}", pending_reason=None)
             return {"name": name, "outcome": "unconfirmed", "error": str(exc)}
+        # Not looked for here: this runs inside a watch tick. Unconfirmed until `athena status` finds it in the transcript.
         ledger.append("update", name, prompt="sent", pending_reason=None)
         return {"name": name, "outcome": "sent"}
 
@@ -408,11 +457,11 @@ def deliver_pending() -> list:
 
 
 def resume(name) -> dict:
-    """Send a pending goal by hand, once the human has answered the startup prompt."""
-    result = deliver(name)
+    """Send a pending goal by hand, once the human has answered the startup prompt, or again one that never took."""
+    result = deliver(name, resend=True)
     outcome = result["outcome"]
     if outcome == "not-pending":
-        raise SpawnError(f"{name} has no pending goal (not a live worker, or its goal was already sent)")
+        raise SpawnError(f"{name} has no pending goal (not a live worker, or its goal took or was only just sent)")
     if outcome == "waiting":
         raise SpawnError(f"{name} is not ready for its goal (herdr: {result.get('agent_status')}); if it shows a "
                          f"startup prompt, the human answers it in its space; then retry")

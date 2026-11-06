@@ -118,7 +118,7 @@ def build(threads=None, previous_session=None, now=None, dry_run=False) -> str:
     gives way instead). `threads`: HQ's text, else threads.md, else none.
     `dry_run` writes nothing, not even the import of a legacy needs-you.md."""
     state = paths.state_dir()
-    rows = [status.collect(w, with_pr=True, with_herdr=False) for w in ledger.live()]
+    rows = [status.collect(w, with_pr=True, with_herdr=False, write=not dry_run) for w in ledger.live()]
     rows.sort(key=lambda r: (r.get("urgency", 3), r["name"]))
     if threads is None:
         threads = _read(threads_file())
