@@ -632,9 +632,16 @@ class GoalConfirmTest(SpawnBase):
         write_scenario(self.tmp.name, [{"match": ["agent", "get"], "stdout": {"result": {"agent": {
             "name": "abc-1", "pane_id": "w9:p1", "agent_status": "idle"}}}}])
 
-    def pending_worker(self):
-        ledger.append("spawn", "abc-1", pane="w9:p1", goal_pending="/goal x")
+    def pending_worker(self, **fields):
+        ledger.append("spawn", "abc-1", pane="w9:p1", goal_pending="/goal x", **fields)
         self.ready()
+
+    def failed_spawn(self, code, name="abc-1"):
+        """A spawn whose goal send got this error from herdr, so spawn raised after the worker was tracked."""
+        self.scenario([self.SESSION, {"match": ["agent", "prompt"], "stdout": "", "exit": 1, "times": 1,
+                                      "stderr": json.dumps({"error": {"code": code, "message": "x"}})}])
+        with self.assertRaises(spawn.SpawnError):
+            self.run_spawn(name=name)
 
     def test_a_goal_status_record_confirms_the_goal(self):
         self.scenario([self.SESSION])
@@ -840,6 +847,47 @@ class GoalConfirmTest(SpawnBase):
         with self.assertRaises(spawn.SpawnError):
             spawn.resume("abc-1")
         self.assertEqual(len(self.prompts()), before)
+
+    def test_a_pending_send_that_times_out_is_flagged_and_can_be_resent(self):
+        self.pending_worker(goal_text="/goal x")
+        self.refused_prompt("timeout")
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "unconfirmed")
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+        self.assertEqual(self.prompts()[-1][3], "/goal x")
+
+    def test_a_send_that_failed_at_spawn_is_flagged(self):
+        self.failed_spawn("timeout")
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.assertTrue(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
+
+    def bad_resume_then_a_good_one(self, code):
+        self.failed_spawn("timeout")
+        self.refused_prompt(code)
+        try:
+            spawn.resume("abc-1")
+        except spawn.SpawnError:
+            pass
+        self.assertEqual(self.spawned()["goal_state"], "unconfirmed")
+        self.ready()
+        self.assertEqual(spawn.resume("abc-1")["outcome"], "sent")
+
+    def test_a_resume_that_times_out_does_not_close_resend(self):
+        self.bad_resume_then_a_good_one("timeout")
+
+    def test_a_resume_herdr_refused_does_not_close_resend(self):
+        self.bad_resume_then_a_good_one("agent_not_ready")
+
+    def test_a_first_send_herdr_refused_is_pending_not_unconfirmed(self):
+        # Nothing was typed, so the goal is simply still waiting.
+        self.pending_worker(goal_text="/goal x")
+        self.refused_prompt("agent_not_ready")
+        self.assertEqual(spawn.deliver("abc-1")["outcome"], "waiting")
+        self.assertEqual(self.spawned()["goal_pending"], "/goal x")
+        self.assertFalse(self.spawned().get("goal_state"))
+        self.assertFalse(status.collect(self.spawned(), with_herdr=False)["goal_unconfirmed"])
 
     def test_a_dry_run_handoff_writes_nothing_when_a_goal_has_shown_up(self):
         self.scenario([self.SESSION])

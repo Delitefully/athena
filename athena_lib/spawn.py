@@ -274,7 +274,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
     try:
         herdr.call("agent", "prompt", name, goal_text)
     except herdr.HerdrError as exc:
-        ledger.append("update", name, prompt=f"failed: {exc.code}")
+        ledger.append("update", name, prompt=f"failed: {exc.code}", goal_state="unconfirmed",
+                      **_goal_session(name, record.get("session")))
         raise SpawnError(f"{name} is running but its goal was not sent ({exc}); resend with: athena resume {name}")
     try:
         herdr.call("agent", "wait", name, "--until", "working", "--until", "blocked", "--timeout", "30000", timeout=60)
@@ -408,9 +409,9 @@ def _goal_lock(name):
 def _resendable(w) -> bool:
     """A goal sent once that shows no sign of having run, and has had the time to. Only `athena resume` sends one again:
     a person has read the worker's pane first, which the watch cannot do."""
-    sent_badly = w.get("goal_state") == "unconfirmed" or (w.get("prompt") or "").startswith("failed")
     settled = time.time() - (w.get("goal_sent") or 0) >= _goal_wait()
-    return bool(sent_badly and settled and w.get("goal_text") and not status.goal_took(w["name"], w.get("session")))
+    return bool(w.get("goal_state") == "unconfirmed" and settled and w.get("goal_text")
+                and not status.goal_took(w["name"], w.get("session")))
 
 
 def deliver(name, resend=False) -> dict:
@@ -434,20 +435,20 @@ def deliver(name, resend=False) -> dict:
             return {"name": name, "outcome": "waiting", "agent_status": agent_status}
         goal = w.get("goal_pending") or w["goal_text"]
         # Written first: a crash cannot resend, and neither can a resume while a send that may have been typed lands.
-        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver", goal_sent=time.time())
+        ledger.append("update", name, goal_pending=None, prompt="sending", goal_send="deliver", goal_sent=time.time(),
+                      goal_state="unconfirmed", **_goal_session(name, w.get("session")))
         try:
             herdr.call("agent", "prompt", pane, goal)
         except herdr.HerdrError as exc:
             if exc.code in NOT_SENT:
                 # As it was: a refused resend stays the human's to retry, and is never left for the watch to send.
                 ledger.append("update", name, goal_pending=w.get("goal_pending"), goal_sent=w.get("goal_sent"),
-                              prompt=f"not sent: {exc.code}")
+                              goal_state=w.get("goal_state"), prompt=f"not sent: {exc.code}")
                 return {"name": name, "outcome": "waiting", "agent_status": exc.code}
             ledger.append("update", name, prompt=f"unconfirmed: {exc.code}", pending_reason=None)
             return {"name": name, "outcome": "unconfirmed", "error": str(exc)}
         # Not looked for here: this runs inside a watch tick. Unconfirmed until `athena status` finds it in the transcript.
-        ledger.append("update", name, prompt="sent", pending_reason=None, goal_state="unconfirmed",
-                      **_goal_session(name, w.get("session")))
+        ledger.append("update", name, prompt="sent", pending_reason=None)
         return {"name": name, "outcome": "sent"}
 
 
