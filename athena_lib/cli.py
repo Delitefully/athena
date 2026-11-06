@@ -15,6 +15,7 @@ from athena_lib import (asks, board, brief, config, dash, doctor, gitops, handof
 REVIEW_ROUNDS = 3  # HQ's review passes before open findings go to the human
 REVIEW_FAILS_BEFORE_RESTART = 2  # failed rounds after which a worker restarts fresh rather than being nudged again
 PENDING = 3  # spawn: the worker is live, but its Claude waits at a startup prompt and its goal is not sent yet
+GOAL_UNCONFIRMED = "goal unconfirmed (no goal record in its transcript; check its pane, do not resend blindly)"
 
 
 def _print(data):
@@ -37,6 +38,8 @@ def cmd_spawn(a):
     if result.get("pending"):
         print(result["message"], file=sys.stderr)
         code = PENDING
+    if result.get("goal_state") == "unconfirmed":
+        print(f"{GOAL_UNCONFIRMED} for {a.name}", file=sys.stderr)
     if board.running_pid():
         return code
     try:
@@ -160,6 +163,8 @@ def cmd_status(a):
             bits.append("goal pending" + (f" ({r['detail']})" if r.get("detail") else ""))
         elif (r.get("prompt") or "").startswith(("sending", "unconfirmed")):
             bits.append(f"goal {r['prompt']} (check its pane; do not resend blindly)")
+        if r.get("goal_unconfirmed"):
+            bits.append(GOAL_UNCONFIRMED)
         if r.get("socket_missing"):
             bits.append(f"messaging socket missing ({r['socket_missing']}): relaunch it")
         print("  ".join(bits))

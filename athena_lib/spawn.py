@@ -8,13 +8,19 @@ import subprocess
 import time
 from pathlib import Path
 
-from athena_lib import brief as briefs, config, gitops, herdr, ledger, paths, retire
+from athena_lib import brief as briefs, config, gitops, herdr, ledger, paths, retire, status
 
 HARD_CAP = paths.HARD_CAP
 STARTUP_BLOCKED = {"agent_not_ready", "agent_blocked"}
 NOT_SENT = {"agent_blocked", "agent_not_ready"}  # herdr rejects these before typing anything
 READY = {"idle", "done"}  # herdr: both mean ready for input; which one depends on seen state
 SESSION_TRIES = 3  # asks for the session id to register the resume command, a second apart
+# The longest whole `/goal ...` athena sends. Claude Code takes text over about 800 characters typed at once as a paste:
+# /goal never runs as a command and the worker just gets text. Across 204 worker transcripts the longest that ran as a
+# command was 791 characters and the shortest pasted was 815; the real threshold is somewhere between, so stay on the
+# side that has been seen to work.
+GOAL_LIMIT = 790
+GOAL_WAIT = 20  # seconds spawn looks for the goal in the transcript; it landed about 3 s after Claude started
 
 
 class SpawnError(Exception):
@@ -131,16 +137,30 @@ def build_goal(condition, name, brief):
     text = " ".join(condition.split())
     if text.startswith("/goal "):
         text = text[len("/goal "):]
-    # The ATHENA-REPORT line is the report athena reads. SendMessage is a courtesy: when HQ isn't reachable
-    # (a restarted or re-logged HQ), a goal that required it would never be met and the worker would loop.
     # Any status meets it: a BLOCKED report with a question ends the turn cleanly instead of looping until someone
-    # clears the goal, and what happens after DONE is not the worker's to reach.
-    suffix = (f" Your brief is {brief}; read it first. End your final message with an ATHENA-REPORT line: that line "
-              f"is the report, and the goal is met once it is written, whatever its status (a BLOCKED or "
-              f"NEEDS_CONTEXT report with your question meets it too). Merging, approvals, undrafting and checks you "
-              f"cannot fix are out of scope. Also try SendMessage to {paths.hq_name()} once; if it fails, don't "
-              f"retry.")
-    return ("/goal " + text + suffix)[:3990]
+    # clears the goal, and what happens after DONE is not the worker's to reach. Keep this short: the whole /goal has
+    # to fit GOAL_LIMIT. worker.md has the rest, SendMessage being a courtesy among it.
+    suffix = (f" Brief: {brief}; read it first. A final ATHENA-REPORT line of any status meets this goal. Merging, "
+              f"approvals, undrafting and unfixable checks are out of scope.")
+    return "/goal " + text + suffix
+
+
+def check_goal_length(goal_text):
+    """Refuse a built goal too long to arrive as a /goal, before a worktree or a Claude exists for it."""
+    if len(goal_text) > GOAL_LIMIT:
+        raise SpawnError(f"the built goal is {len(goal_text)} characters and the limit is {GOAL_LIMIT}: Claude Code takes "
+                         f"a longer one as pasted text, so /goal never runs. Cut at least {len(goal_text) - GOAL_LIMIT} "
+                         f"characters from --goal; the brief holds the detail.")
+
+
+def confirm_goal(name, session=None) -> str:
+    """confirmed once the worker's transcript shows its /goal ran as a command, else unconfirmed after GOAL_WAIT."""
+    deadline = time.monotonic() + float(os.environ.get("ATHENA_GOAL_WAIT") or GOAL_WAIT)
+    while not status.goal_took(name, session):
+        if time.monotonic() >= deadline:
+            return "unconfirmed"
+        time.sleep(0.5)
+    return "confirmed"
 
 
 def claude_args(name, model, effort, settings):
@@ -187,6 +207,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         check_brief(brief_path, goal)
     else:  # kept on the spawn record: which checks a launch went past
         skipped = [briefs.describe(p) for p in brief_problems(brief_path, goal)]
+    goal_text = build_goal(goal, name, paths.state_dir() / "briefs" / f"{name}.md")
+    check_goal_length(goal_text)
     ledger.touch()
     pre = gitops.preflight(repo)
     if not pre["ok"]:
@@ -231,7 +253,6 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
         claim.unlink(missing_ok=True)
         raise SpawnError(_fail(name, record, exc)) from exc
     claim.unlink(missing_ok=True)
-    goal_text = build_goal(goal, name, brief)
     if pending:
         ledger.append("spawn", name, goal_pending=goal_text, pending_reason=pending, **record)
         _report_metadata(record["workspace"], linear)
@@ -250,7 +271,8 @@ def spawn(repo, branch, name, brief_path, goal, linear=None, title=None, model=N
     except herdr.HerdrError as exc:
         record["prompt"] = f"unconfirmed: {exc.code}"
     _report_metadata(record["workspace"], linear)
-    ledger.append("update", name, prompt=record["prompt"])
+    record["goal_state"] = confirm_goal(name, record.get("session"))
+    ledger.append("update", name, prompt=record["prompt"], goal_state=record["goal_state"])
     return {"name": name, **record}
 
 
@@ -399,7 +421,8 @@ def deliver(name) -> dict:
                 return {"name": name, "outcome": "waiting", "agent_status": exc.code}
             ledger.append("update", name, prompt=f"unconfirmed: {exc.code}", pending_reason=None)
             return {"name": name, "outcome": "unconfirmed", "error": str(exc)}
-        ledger.append("update", name, prompt="sent", pending_reason=None)
+        # Not looked for here: this runs inside a watch tick. Unconfirmed until `athena status` finds it in the transcript.
+        ledger.append("update", name, prompt="sent", pending_reason=None, goal_state="unconfirmed")
         return {"name": name, "outcome": "sent"}
 
 
