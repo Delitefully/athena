@@ -2,6 +2,7 @@
 
 Run `python3 assets/src/menubar.py` to rebuild:
   assets/menubar/<direction>-<state>.svg   one macOS template glyph per direction and state
+  assets/menubar/knot-working-frames/NN.svg  Knot's working loop as evenly spaced frames, for the status item
   assets/menubar/board/index.html          the self-contained preview board
 
 Every glyph sits on a 22 x 22 canvas (the menu bar's 22 px at 1x) with an 18-19 px live area and is drawn in one
@@ -9,9 +10,16 @@ colour: the files use black, which is all a template image needs (macOS keeps on
 with round caps and joins, the same family as the logo mark. "Needs you" cuts a ring out of the glyph and puts a dot
 in it at the top right, so the dot reads apart from the glyph without a second colour. The static file for
 "working" is one key frame and carries a mark of its own; the board animates it in CSS.
+
+Knot's working motion is one function of the loop's phase, knot_gap. The frame files and the board's CSS keyframes
+are both sampled from it, so they show the same motion. A status item plays the frames by swapping template images,
+KNOT_CYCLE / KNOT_FRAMES seconds apart; the frame after the last is frame 00.
 """
 import html
+import math
 import pathlib
+import re
+import shutil
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "menubar"
 SW = 1.75
@@ -44,14 +52,58 @@ KNOT = [
 KNOT_SCALE = 0.215
 
 
-def knot(state, uid):
-    if state == "working":     # a gap runs along each strand: the thread being drawn through
-        extra = ' pathLength="100" stroke-dasharray="74 26" stroke-dashoffset="-34" class="kn-flow"'
-    elif state == "stopped":   # the knot lets go: each strand keeps only its middle, nothing interlocks
-        extra = ' pathLength="100" stroke-dasharray="52 100" stroke-dashoffset="-24"'
+KNOT_CYCLE = 2.4           # seconds for one loop of the working motion
+KNOT_FRAMES = 30           # frames in the loop: 80 ms each; a multiple of 3, so the stagger lands on whole frames
+KNOT_STOPS = 60            # CSS keyframe stops, a multiple of KNOT_FRAMES: every frame is also a stop
+KNOT_GAP = 5.5             # px: the gap at its widest; the round caps cover 1.75 px of it
+KNOT_RUN = (0.24, 0.76)    # the gap's centre travels this share of the strand, so it never reaches an end
+
+
+def path_length(d, steps=64):
+    """The length of an M...C... path, by flattening its cubics."""
+    n = [float(v) for v in re.findall(r"-?\d*\.?\d+", d)]
+    pts = list(zip(n[::2], n[1::2]))
+    cur, total = pts[0], 0.0
+    for k in range(1, len(pts), 3):
+        a, b, c = pts[k:k + 3]
+        prev = cur
+        for i in range(1, steps + 1):
+            t = i / steps
+            q = tuple((1 - t) ** 3 * cur[j] + 3 * (1 - t) ** 2 * t * a[j] + 3 * (1 - t) * t * t * b[j] + t ** 3 * c[j]
+                      for j in (0, 1))
+            total += math.dist(prev, q)
+            prev = q
+        cur = c
+    return total
+
+
+KNOT_LEN = [path_length(d) for d in KNOT]
+
+
+def knot_gap(i, t):
+    """Strand i's dash pattern at phase t of the loop (0 to 1), in the strand's own units.
+
+    A gap opens in the strand, runs along it and closes again: the thread being drawn through. Its width follows
+    sin^2 and its centre a smooth ease, so both start and stop at rest, and the gap is closed when its position
+    resets. The strands run a third of a loop apart, so their widths always add up to the same total: the glyph
+    keeps its weight and never blinks. The gap never reaches an end of the strand, so no dash comes or goes there.
+    """
+    u = (t - i / 3) % 1
+    length = KNOT_LEN[i]
+    width = KNOT_GAP / KNOT_SCALE * math.sin(math.pi * u) ** 2
+    lo, hi = KNOT_RUN
+    centre = length * (lo + (hi - lo) * (u - math.sin(2 * math.pi * u) / (2 * math.pi)))
+    return f"{f(centre - width / 2)} {f(width)} {f(2 * length)}"
+
+
+def knot(state, uid, t=0.0):
+    if state == "working":
+        paths = "".join(f'<path d="{d}" stroke-dasharray="{knot_gap(i, t)}" class="kn-flow"/>'
+                        for i, d in enumerate(KNOT))
     else:
-        extra = ""
-    paths = "".join(f'<path d="{d}"{extra}/>' for d in KNOT)
+        # stopped: the knot lets go: each strand keeps only its middle, nothing interlocks
+        extra = ' pathLength="100" stroke-dasharray="52 100" stroke-dashoffset="-24"' if state == "stopped" else ""
+        paths = "".join(f'<path d="{d}"{extra}/>' for d in KNOT)
     sw = SW / KNOT_SCALE
     g = (f'<g transform="translate(11 11.1) scale({KNOT_SCALE}) translate(-50 -50)" fill="none" stroke="currentColor"'
          f' stroke-width="{f(sw)}" stroke-linecap="round">{paths}</g>')
@@ -142,7 +194,7 @@ def helm(state, uid):
 DIRECTIONS = [
     ("knot", "Knot", knot,
      "The logo itself: one calm mind holding three threads.",
-     "A gap runs along each thread while workers work; the knot comes undone when athena stops."),
+     "A gap opens and runs along each thread in turn while workers work; the knot comes undone when athena stops."),
     ("owl", "Owl", owl,
      "Athena's owl keeps watch over the workers.",
      "Its eyes glance across the work, open wide when it needs you, and close when athena sleeps."),
@@ -165,9 +217,28 @@ def svg(inner, size=22, cls="", label="", ns=False, extra=""):
 
 def file_svg(key, state, fn, ns=True):
     """A template glyph: black on transparent, no CSS. Without ns it is the board's hidden copy for the rasteriser."""
-    body = fn(state, f"{key}-{state}").replace("currentColor", "#000")
+    body = fn(state, f"{key}-{state}").replace("currentColor", "#000").replace(' class="kn-flow"', "")
     extra = "" if ns else f' data-key="{key}-{state}"'
     return svg(body, label=f"athena menu bar: {key}, {STATE_NAMES[state]}", ns=ns, extra=extra)
+
+
+def knot_frame(k, ns=True):
+    """Frame k of Knot's working loop, as a template glyph."""
+    body = knot("working", "knot-working", k / KNOT_FRAMES).replace("currentColor", "#000")
+    body = body.replace(' class="kn-flow"', "")
+    extra = "" if ns else f' data-key="knot-working-{k:02d}"'
+    label = f"athena menu bar: knot, workers working, frame {k:02d} of {KNOT_FRAMES}"
+    return svg(body, label=label, ns=ns, extra=extra)
+
+
+def knot_css():
+    """The same loop as CSS: one keyframe stop per sample, linear between them, each strand on its own phase."""
+    # one set of stops serves all three strands: they are the same length (the mark is one strand, turned twice)
+    stops = "".join(f"{f(100 * k / KNOT_STOPS)}%{{stroke-dasharray:{knot_gap(0, k / KNOT_STOPS)}}}"
+                    for k in range(KNOT_STOPS + 1))
+    delays = "".join(f".kn-flow:nth-child({i + 1}){{animation-delay:{f((i / 3 - 1) * KNOT_CYCLE)}s}}" for i in (1, 2))
+    return (f"@keyframes kn-flow{{{stops}}}\n"
+            f".kn-flow{{animation:kn-flow {f(KNOT_CYCLE)}s linear infinite}}{delays}")
 
 
 # --- the board ---------------------------------------------------------------------------------------------------
@@ -241,8 +312,7 @@ section.dir{padding:34px 0 30px;border-bottom:1px solid var(--rule)}
 footer{padding-top:22px;color:var(--mut);font-size:13px;display:grid;gap:4px}
 footer code{font:12px ui-monospace,"SF Mono",Menlo,monospace;color:var(--ink)}
 /* motion: working only */
-@keyframes kn-flow{to{stroke-dashoffset:-134}}
-.kn-flow{animation:kn-flow 2.6s linear infinite}
+%KNOT%
 @keyframes ow-look{0%,18%{transform:translate(0,0)}26%,52%{transform:translate(-2.3px,0)}60%,100%{transform:translate(0,0)}}
 .ow-look{animation:ow-look 3.2s ease-in-out infinite}
 @keyframes wv-weave{0%{stroke-dasharray:0 100}62%,86%{stroke-dasharray:100 100}100%{stroke-dasharray:100 100;opacity:0}}
@@ -260,33 +330,65 @@ JS = r"""
   var h = (location.hash || "").slice(1).split(",");          // #dark, #light, #dark,still
   if (h[0] === "dark" || h[0] === "light") document.documentElement.setAttribute("data-theme", h[0]);
   if (h.indexOf("still") >= 0) document.documentElement.classList.add("still");   // key frames only
-  function raster(c){
-    var px = +c.dataset.px, col = getComputedStyle(c).color;
-    var t = document.querySelector('#templates svg[data-key="' + c.dataset.svg + '"]').cloneNode(true);
+  var still = h.indexOf("still") >= 0;
+  try { still = still || matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+  var cache = {};
+  function load(key, px, done){   // a template glyph as an image, px wide
+    var id = key + "@" + px, e = cache[id];
+    if (e) { if (e.ok) done(e.img); else e.wait.push(done); return; }
+    e = cache[id] = {img: new Image(), ok: false, wait: [done]};
+    var t = document.querySelector('#templates svg[data-key="' + key + '"]').cloneNode(true);
     t.setAttribute("width", px); t.setAttribute("height", px);
     var src = new XMLSerializer().serializeToString(t);   // the serialiser adds the SVG namespace
-    var img = new Image();
-    img.onload = function(){
-      c.width = px; c.height = px;
-      var x = c.getContext("2d");
-      x.clearRect(0, 0, px, px);
-      x.drawImage(img, 0, 0, px, px);
-      x.globalCompositeOperation = "source-in";   // a template image: keep the alpha, take the bar's colour
-      x.fillStyle = col; x.fillRect(0, 0, px, px);
-      x.globalCompositeOperation = "source-over";
-    };
-    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(src);
+    e.img.onload = function(){ e.ok = true; e.wait.forEach(function(d){ d(e.img); }); };
+    e.img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(src);
   }
+  function paint(c, img){
+    var px = +c.dataset.px;
+    if (c.width !== px) { c.width = px; c.height = px; }
+    var x = c.getContext("2d");
+    x.clearRect(0, 0, px, px);
+    x.drawImage(img, 0, 0, px, px);
+    x.globalCompositeOperation = "source-in";   // a template image: keep the alpha, take the bar's colour
+    x.fillStyle = getComputedStyle(c).color; x.fillRect(0, 0, px, px);
+    x.globalCompositeOperation = "source-over";
+  }
+  function raster(c){ load(c.dataset.svg, +c.dataset.px, function(img){ paint(c, img); }); }
   function all(){ document.querySelectorAll("canvas[data-svg]").forEach(raster); }
   all();
   try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", all); } catch (e) {}
+  // the 1x glyphs with a frame sequence play it as the status item will: one template image swapped for the next
+  var seq = still ? [] : [].slice.call(document.querySelectorAll("canvas[data-frames]"));
+  function two(k){ return (k < 10 ? "0" : "") + k; }
+  function tick(){
+    var now = (document.timeline && document.timeline.currentTime || performance.now()) / 1000;
+    seq.forEach(function(c){
+      var n = +c.dataset.frames, k = Math.floor(now / +c.dataset.cycle % 1 * n);
+      if (c._k === k) return;
+      c._k = k;
+      load(c.dataset.svg + "-" + two(k), +c.dataset.px, function(img){ if (c._k === k) paint(c, img); });
+    });
+    requestAnimationFrame(tick);
+  }
+  if (seq.length) {
+    for (var k = 0; k < +seq[0].dataset.frames; k++) load(seq[0].dataset.svg + "-" + two(k), +seq[0].dataset.px, function(){});
+    requestAnimationFrame(tick);
+  }
 })();
 """
 
 
+def frames_attr(key, state):
+    """Marks a 1x canvas whose glyph has a frame sequence, so the board plays it."""
+    if (key, state) != ("knot", "working"):
+        return ""
+    return f' data-frames="{KNOT_FRAMES}" data-cycle="{f(KNOT_CYCLE)}"'
+
+
 def bar(theme, key, state, fn, scale, uid):
     if scale == 1:   # rasterised at 22 px, as a non-Retina display draws it
-        icon = f'<canvas width="22" height="22" data-svg="{key}-{state}" data-px="22" aria-label="{key} {state}"></canvas>'
+        icon = (f'<canvas width="22" height="22" data-svg="{key}-{state}" data-px="22"{frames_attr(key, state)}'
+                f' aria-label="{key} {state}"></canvas>')
     else:            # vector at 22 pt: 44 device px on a Retina display
         icon = svg(fn(state, uid), label=f"{key} {state}")
     return (f'<div class="desk {theme}"><div class="mb"><span class="it ours">{icon}</span>'
@@ -300,7 +402,7 @@ def board(files):
         specs = "".join(
             f'<div class="spec">{svg(fn(s, f"{key}-{s}-big"), 66, "big", f"{name}, {STATE_NAMES[s]}")}'
             f'<canvas class="loupe" width="22" height="22" data-svg="{key}-{s}" data-px="22"'
-            f' aria-label="{name} {STATE_NAMES[s]} at 1x, magnified"></canvas>'
+            f'{frames_attr(key, s)} aria-label="{name} {STATE_NAMES[s]} at 1x, magnified"></canvas>'
             f'<div class="lbl"><b>{STATE_NAMES[s]}</b>{"animated" if s == "working" else "&nbsp;"}</div></div>'
             for s in STATES)
         rows = []
@@ -314,14 +416,14 @@ def board(files):
             f'<h2 class="serif">{name}</h2><p class="idea">{html.escape(idea)}</p><p class="how">{html.escape(how)}</p></div>'
             f'<div class="body"><div><div class="specs">{specs}</div></div>'
             f'<div class="bars"><div class="colhead"><span></span>{heads}</div>{"".join(rows)}</div></div></section>')
-    templates = "".join(files.values())
+    templates = "".join(files.values()) + "".join(knot_frame(k, ns=False) for k in range(KNOT_FRAMES))
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Menu bar icons</title>
-<style>{CSS}</style>
+<style>{CSS.replace("%KNOT%", knot_css())}</style>
 </head>
 <body>
 <div class="wrap">
@@ -337,6 +439,7 @@ def board(files):
 {"".join(out)}
 <footer>
   <span>Glyphs: <code>assets/menubar/&lt;direction&gt;-&lt;state&gt;.svg</code>, black on transparent, ready to load as template images.</span>
+  <span>Knot's working loop: <code>assets/menubar/knot-working-frames/NN.svg</code>, {KNOT_FRAMES} frames over {f(KNOT_CYCLE)}&nbsp;s. The 1x glyphs play the frames; the vector ones run the same motion in CSS.</span>
   <span>Rebuild with <code>python3 assets/src/menubar.py</code>. Add <code>#dark</code> or <code>#light</code> to the URL to force a theme, and <code>,still</code> to stop the motion.</span>
 </footer>
 </div>
@@ -355,8 +458,13 @@ def main():
         for s in STATES:
             (OUT / f"{key}-{s}.svg").write_text(file_svg(key, s, fn) + "\n")
             files[f"{key}-{s}"] = file_svg(key, s, fn, ns=False)
+    frames = OUT / "knot-working-frames"
+    shutil.rmtree(frames, ignore_errors=True)   # so a shorter loop leaves no stale frames behind
+    frames.mkdir()
+    for k in range(KNOT_FRAMES):
+        (frames / f"{k:02d}.svg").write_text(knot_frame(k) + "\n")
     (OUT / "board" / "index.html").write_text(board(files))
-    print(f"wrote {len(files)} glyphs and board/index.html to {OUT}")
+    print(f"wrote {len(files)} glyphs, {KNOT_FRAMES} knot-working frames and board/index.html to {OUT}")
 
 
 if __name__ == "__main__":
