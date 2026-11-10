@@ -1,0 +1,5 @@
+{
+  "name": "athena-rex",
+  "description": "Chief of staff's procedures for athena-rex's HQ: the athena skill, on Rex. Loaded only by HQ's own session, with --plugin-dir.",
+  "version": "0.1.0"
+}

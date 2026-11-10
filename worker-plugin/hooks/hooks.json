@@ -1,0 +1,4 @@
+{
+  "description": "The progress band, in athena-rex workers only. The task-list hook that feeds it is in each worker's --settings (athena_rex/caps/progress.py).",
+  "modules": ["./progress-mod/register.tsx"]
+}

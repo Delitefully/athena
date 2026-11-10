@@ -1,0 +1,25 @@
+#!/bin/sh
+# The guard runs here too, before Python: a worker of this rewrite must never touch live state.
+case "${ATHENA_WORKER:-}" in
+rex-*)
+	account=$(eval echo "~$(id -un)") # the new default path counts only in the account's home: in an isolated HOME it is that HOME's own
+	real=$(cd "${ATHENA_STATE_DIR:-$HOME/Library/Application Support/athena}" 2>/dev/null && pwd -P)
+	for live in "$HOME/.local/state/athena" "$account/.local/state/athena" "$account/Library/Application Support/athena"; do
+		root=$(cd "$live" 2>/dev/null && pwd -P) || continue
+		at=$real
+		while [ -n "$at" ]; do
+			if [ "$at" -ef "$root" ]; then
+				[ "${1:-}" = hook ] && exit 0
+				echo "athena-rex: refusing $real: ATHENA_WORKER=$ATHENA_WORKER may only use a sanitized scratch copy" >&2
+				exit 2
+			fi
+			at=${at%/*}
+		done
+	done
+	;;
+esac
+here=$(cd "$(dirname "$0")/.." && pwd -L) # through an installed `current` link, so what it names outlives this release
+# Xcode's python keeps no bytecode by default, which recompiled everything on every command. -S: nothing here needs site.
+exec "${ATHENA_PYTHON:-/usr/bin/python3}" -I -S -c 'import sys; sys.dont_write_bytecode = False; sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[1:]
+from athena_rex.cli import main
+sys.exit(main())' "$here" "$@"
