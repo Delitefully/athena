@@ -1,0 +1,351 @@
+/* athena dash: the Loom palette, Instrument Serif and Sans, and the motion rules of docs/brand.md. */
+@font-face { font-family: "Instrument Sans"; src: url(/static/InstrumentSans.woff2) format("woff2"); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
+@font-face { font-family: "Instrument Serif"; src: url(/static/InstrumentSerif-Regular.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+
+:root {
+  --bg: #F3EEE4; --ink: #1E2350; --muted: #5B5E78; --thread: #B8321F;
+  --rule: rgb(30 35 80 / .14); --wash: rgb(30 35 80 / .05);
+  --arrive: cubic-bezier(.16, 1, .3, 1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme=light]) {
+    --bg: #14172E; --ink: #ECE5D6; --muted: #A3A3B8; --thread: #E0573D;
+    --rule: rgb(236 229 214 / .14); --wash: rgb(236 229 214 / .06);
+    color-scheme: dark;
+  }
+}
+:root[data-scheme=dark] {
+  --bg: #14172E; --ink: #ECE5D6; --muted: #A3A3B8; --thread: #E0573D;
+  --rule: rgb(236 229 214 / .14); --wash: rgb(236 229 214 / .06);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0; color: var(--ink); background: var(--bg);
+  font: 500 14px/1.45 "Instrument Sans", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+.sprite { position: absolute; }
+a { color: inherit; text-decoration: underline 1px var(--rule); text-underline-offset: 3px; }
+a:hover { text-decoration-color: currentColor; }
+
+header, main { max-width: 1480px; margin: 0 auto; padding-inline: 40px; }
+header { display: flex; align-items: flex-end; gap: 18px; padding-top: 28px; padding-bottom: 18px; position: relative; }
+header .lockup { margin-right: auto; }
+header:has(.pages) .lockup { margin-right: 0; }
+.pages { display: flex; gap: 16px; margin: 0 auto 4px 6px; font-size: 14px; }
+.pages a { color: var(--muted); text-decoration: none; }
+.pages a:hover, .pages a[aria-current] { color: var(--ink); }
+/* athena doctor's one dot (plan §2), moved here from <main> by app.js on each push: green, red with what is wrong, or
+   grey while unknown. */
+.health-slot:empty { display: none; }
+.health { margin: 0 0 4px; display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: default; }
+.health .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.health.ok .dot { background: #2F8A5B; }
+.health.bad { color: var(--ink); font-weight: 600; }
+.health.bad .dot { background: var(--thread); }
+main > .health { grid-column: 1 / -1; justify-self: end; }
+.search { margin: 0 0 1px; }
+.search input {
+  width: 180px; height: 26px; padding: 0 11px; border: 1px solid var(--rule); border-radius: 13px; background: transparent;
+  color: var(--ink); font: 500 13px "Instrument Sans", system-ui, sans-serif;
+}
+.search input::placeholder { color: var(--muted); }
+.search input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* athena's thread runs under the header, the one red line on the page. */
+header::after { content: ""; position: absolute; left: 40px; right: 40px; bottom: 0; height: 2px; border-radius: 1px; background: var(--thread); transform-origin: left; }
+.lockup { display: block; text-decoration: none; }
+.lockup svg { display: block; height: 36px; width: auto; }
+.lockup .knot { stroke: var(--thread); }
+.lockup .word { fill: var(--ink); }
+/* Nothing while the page is live; beside the health dot while its event stream is down and reconnecting. */
+.status { display: none; margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+body.offline .status { display: block; }
+
+/* Two columns: what is yours (Needs you, Ready for you) and what is someone else's move (Awaiting review, In flight,
+   Done today). One column on a phone, yours first. */
+main {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 0 64px; align-items: start;
+  padding-top: 30px; padding-bottom: 56px;
+}
+.col { min-width: 0; }
+@media (max-width: 980px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  header, main { padding-inline: 16px; }
+  header::after { left: 16px; right: 16px; }
+  header { flex-wrap: wrap; row-gap: 10px; }
+  .search { order: 5; flex-basis: 100%; }
+  .search input { width: 100%; }
+}
+
+h2 {
+  font: 400 34px/1 "Instrument Serif", Georgia, serif; letter-spacing: -.005em;
+  margin: 0; padding-bottom: 12px; border-bottom: 1px solid var(--rule);
+  display: flex; align-items: baseline; gap: 10px;
+}
+h2 .count { font-size: 22px; color: var(--muted); }
+.group { min-width: 0; margin-bottom: 36px; }
+ul { list-style: none; margin: 0; padding: 0; }
+.empty { margin: 0; padding: 16px 0; color: var(--muted); }
+
+.item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 13px 0 14px; border-bottom: 1px solid var(--rule); }
+/* margin-top: -2px is the one offset for every row glyph: it puts the 16 px square's centre on the first line's
+   cap-height centre (dash/testdata/glyph_audit.py measures it). */
+.icon { width: 24px; height: 24px; margin-top: -2px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.icon.badge { fill: var(--ink); stroke: var(--bg); color: var(--bg); }
+.body { min-width: 0; }
+.body p { margin: 0; }
+/* A row leads with its name, then its call or title, in a lighter weight, on one line cut with an ellipsis; its age or
+   due date sits at the right. */
+.line { display: flex; align-items: baseline; min-width: 0; }
+.line > .name, .line > .call { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line > .name { flex: 0 1 auto; }
+.line > .call { flex: 1 1 0; margin-left: .3em; }
+.name { font-weight: 650; }
+.name a { text-decoration: none; }
+.name a:hover { text-decoration: underline 1px currentColor; }
+.call { color: var(--ink); }
+.call a { font-weight: 600; }
+.ticket { font-weight: 600; text-decoration: none; letter-spacing: .01em; }
+a.ticket:hover { text-decoration: underline 1px currentColor; }
+.line time { flex: none; margin-left: auto; padding-left: 12px; font-size: 12.5px; color: var(--muted); }
+.line time.due { color: var(--thread); font-weight: 600; }
+.meta .auto { color: var(--thread); font-weight: 600; }
+/* A row with a full view opens it from anywhere on it (app.js); its name is the link Tab reaches. */
+.item.has-view { cursor: pointer; }
+.item.has-view:is(:hover, :focus-within) { background: var(--wash); box-shadow: -10px 0 0 var(--wash), 10px 0 0 var(--wash); }
+.item.has-view:is(:hover, :focus-within) .name a { text-decoration: underline 1px currentColor; }
+.item.has-view:is(:hover, :focus-within) .swap.keep > .acts { background: linear-gradient(var(--wash), var(--wash)), var(--bg); }
+.item.has-view .name a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+/* The header's filter hides the rows and pills that don't match, and Needs you's "n more", whose count it no longer is. */
+.item[hidden], .aprs li[hidden], main.filtering details.more > summary { display: none; }
+.meta { margin-top: 3px !important; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--muted); }
+.act .label { color: var(--ink); font-weight: 600; }
+.checks.failure { color: var(--ink); font-weight: 600; }
+.detail { margin-top: 5px !important; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* An item is athena speaking: a decision's mark is the thread. */
+.item:has(use[href="#i-ask"]) .icon { stroke: var(--thread); color: var(--thread); }
+.needs .label { color: var(--thread); font-weight: 600; }
+.code { background: var(--wash); border-radius: 3px; padding: 0 4px; }
+
+/* Quick actions: real buttons in the same grid cell as the row's label line, so no space is reserved for them. On hover
+   or focus a moving edge swaps the line for the pills, fading nothing (a clipped button still takes focus, so Tab
+   reaches them); the line is as tall as a pill on rows that have pills, so nothing moves. Touch and narrow screens
+   show the pills below the line, always. */
+.swap { display: grid; margin-top: 3px; }
+.swap > * { grid-area: 1 / 1; min-width: 0; }
+.swap > .meta { margin-top: 0 !important; align-self: center; clip-path: inset(0 0 0 0); }
+.swap.has-acts { min-height: 22px; }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; clip-path: inset(0 100% 0 0); }
+.item:hover > .body > .swap > .acts, .item:focus-within > .body > .swap > .acts, .acts.replying {
+  clip-path: inset(-6px -8px -6px -4px); /* room for the focus ring; the tooltip is the body's (.tip) */
+}
+.item:hover > .body > .swap:has(.acts):not(.keep) > :not(.acts), .item:focus-within > .body > .swap:has(.acts):not(.keep) > :not(.acts),
+.swap:has(.replying) > :not(.acts) {
+  clip-path: inset(0 0 0 100%);
+}
+/* A row in Needs you by its PR's state keeps its status line, which says why: its pills overlay the line's right end,
+   on the page's ground, coming in from the right edge on hover and focus. Nothing is reserved and nothing moves. */
+.swap.keep > .acts { justify-self: end; padding-left: 12px; background: var(--bg); clip-path: inset(0 0 0 100%); }
+@media (hover: none), (max-width: 760px) {
+  .swap { display: block; }
+  .acts { clip-path: none !important; margin-top: 6px; }
+  .acts.bar { margin-top: 14px; }
+  .swap.keep > .acts { padding-left: 0; }
+  .swap > :not(.acts) { clip-path: none !important; }
+}
+.pill {
+  position: relative; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; margin: 0;
+  border: 1px solid var(--rule); border-radius: 11px; background: transparent; color: var(--ink);
+  font: 500 13px/1 "Instrument Sans", system-ui, sans-serif; white-space: nowrap; cursor: pointer;
+}
+a.pill { text-decoration: none; } /* Open PR: a link, drawn as its row's other pills */
+.pill:hover { background: var(--wash); border-color: var(--muted); }
+.pill:focus-visible, .reply input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.pill.dismiss { width: 22px; padding: 0; justify-content: center; }
+.pill.rec { border-color: var(--thread); color: var(--thread); font-weight: 600; }
+.pill .tag { font-size: 11px; font-weight: 700; color: var(--thread); text-transform: uppercase; letter-spacing: .04em; }
+/* Beside athena's two options, Discuss and Reply are their icons alone, so four fit one line. An icon-only pill says
+   what it does in a tooltip, on hover and on keyboard focus alike (.tip). */
+.acts.options [data-discuss], .acts.options [data-reply] { width: 22px; padding: 0; justify-content: center; }
+.acts.options .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* The one tooltip: an element of the body, outside every clipped .swap, .acts and .panel, which app.js places by the pill
+   it names: above it, below when there is no room, shifted to stay in the window, and wrapped past its max-width. */
+.tip {
+  position: fixed; z-index: 3; top: 0; left: 0; max-width: min(260px, calc(100vw - 16px)); padding: 4px 8px; border-radius: 5px;
+  background: var(--ink); color: var(--bg); pointer-events: none; text-wrap: balance; overflow-wrap: anywhere;
+  font: 500 12px/1.3 "Instrument Sans", system-ui, sans-serif;
+}
+.tip[hidden] { display: none; }
+.pi { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.reply { flex: 1; margin: 0; }
+.reply input {
+  width: 100%; height: 22px; padding: 0 10px; border: 1px solid var(--muted); border-radius: 11px;
+  background: var(--bg); color: var(--ink); font: 500 13px "Instrument Sans", system-ui, sans-serif;
+}
+.reply input::placeholder { color: var(--muted); }
+/* An answered ask leaves by its height alone, never a fade. */
+.collapsing { overflow: hidden; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; border-bottom-width: 0 !important; }
+.apr.collapsing { padding-inline: 0 !important; border-width: 0 !important; } /* a pill leaves by its width */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1; max-width: calc(100vw - 32px);
+  display: flex; align-items: center; gap: 16px; padding: 10px 12px 10px 16px; border-radius: 8px;
+  background: var(--ink); color: var(--bg); font-size: 13px; box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+}
+.toast[hidden], .undo[hidden] { display: none; }
+.undo { margin: 0; padding: 2px 4px; border: 0; background: none; color: inherit; font: 600 13px "Instrument Sans", system-ui, sans-serif; text-decoration: underline 1px; text-underline-offset: 3px; cursor: pointer; }
+.undo:disabled { opacity: .5; cursor: default; }
+.undo:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; }
+
+/* Awaiting review: the PRs that wait on a teammate, a row of compact pills above the columns, only when there are any.
+   A pill is one link to its PR; its #n swaps for Re-check and Dismiss on hover and focus, as a row's label line swaps
+   for its pills. A PR stacked on another sits behind it: a quiet edge and a "+n", fanning out below on hover and focus. */
+.awaiting { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 22px; margin-bottom: 34px; }
+.awaiting h2 { font-size: 24px; padding: 0; border: 0; white-space: nowrap; gap: 8px; }
+.awaiting h2 .count { font-size: 16px; }
+.aprs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 8px; }
+.aprs > li { position: relative; z-index: 0; min-width: 0; max-width: 100%; }
+.aprs > li:is(:hover, :focus-within) { z-index: 2; }
+.apr {
+  position: relative; display: flex; align-items: center; gap: 8px; height: 28px; max-width: 100%; padding: 0 9px 0 12px;
+  border: 1px solid var(--rule); border-radius: 14px; background: var(--bg); font-size: 13px; line-height: 1; white-space: nowrap;
+}
+.apr:is(:hover, :focus-within) { border-color: var(--muted); background-image: linear-gradient(var(--wash), var(--wash)); }
+.apr-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); text-decoration: none; }
+.apr-link::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; } /* the whole pill is the link */
+.apr-link:focus-visible { outline: none; }
+.apr:has(.apr-link:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
+.apr > .swap { margin: 0; position: relative; z-index: 1; pointer-events: none; }
+.apr > .swap.has-acts { min-height: 0; }
+.apr-meta { display: flex; align-items: center; gap: 6px; align-self: center; color: var(--muted); }
+.apr-waits, .apr-posted { font-size: 12px; }
+.apr.rechecking .apr-meta::after { content: "re-checking…"; font-size: 12px; }
+.apr.rechecking .recheck { display: none; }
+/* The pill's swap is a short crossfade, not a moving edge (the human's choice for this row). */
+.apr .acts { gap: 3px; justify-content: flex-end; clip-path: none; opacity: 0; pointer-events: none; }
+.apr .pill { width: 20px; height: 20px; padding: 0; justify-content: center; }
+.apr:hover > .swap > .acts, .apr:focus-within > .swap > .acts { opacity: 1; pointer-events: auto; }
+.apr:hover > .swap > .apr-meta, .apr:focus-within > .swap > .apr-meta { opacity: 0; }
+/* The stacked edge: one outline peeking out under the pill, two for a deeper stack, narrower each time. */
+.stack > .apr::before, .stack.deep > .apr::after {
+  content: ""; position: absolute; z-index: -1; top: 4px; bottom: -5px; left: 7px; right: 7px;
+  border: 1px solid var(--rule); border-radius: inherit; background: var(--bg);
+}
+.stack.deep > .apr::after { top: 8px; bottom: -9px; left: 14px; right: 14px; z-index: -2; }
+.apr-more { font-size: 12px; }
+.behind {
+  position: absolute; top: 100%; left: 0; width: max-content; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 8px 0 0; clip-path: inset(0 0 100% 0); visibility: hidden; /* no antialiased sliver while closed */
+}
+.stack:is(:hover, :focus-within, .held) > .apr::before, .stack:is(:hover, :focus-within, .held) > .apr::after { visibility: hidden; } /* fanned out */
+.behind > li { max-width: min(560px, calc(100vw - 80px)); }
+.stack:is(:hover, :focus-within, .held) > .behind { clip-path: inset(-48px -320px -48px -320px); visibility: visible; } /* room for a tooltip */
+@media (hover: none), (max-width: 760px) {
+  .apr > .swap { display: flex; align-items: center; gap: 8px; }
+  .apr .acts { margin-top: 0; opacity: 1; pointer-events: auto; }
+  .apr > .swap > .apr-meta { opacity: 1; }
+  .behind { position: static; width: auto; clip-path: none; visibility: visible; }
+  .stack > .apr::before, .stack.deep > .apr::after { visibility: hidden; }
+}
+
+/* Needs you past its seventh row, and Done today: folded, a quiet line that opens them. */
+details.more > summary, details.done > summary { cursor: pointer; list-style: none; }
+details.more > summary::-webkit-details-marker, details.done > summary::-webkit-details-marker { display: none; }
+details.more > summary { padding: 12px 0; font-size: 13px; font-weight: 600; color: var(--thread); border-bottom: 1px solid var(--rule); }
+details.more > summary:hover, details.done > summary:hover h2 { text-decoration: underline 1px; text-underline-offset: 3px; }
+details.more[open] > summary { border-bottom: 0; }
+details.done:not([open]) h2 { border-bottom-style: dashed; }
+details > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.snoozed { margin: -20px 0 36px; font-size: 12.5px; color: var(--muted); }
+
+.md { overflow-wrap: anywhere; }
+.md + .md { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md table, .md pre, .md blockquote { margin: 0 0 10px; }
+.md ul { list-style: disc; padding-left: 20px; }
+.md ol { list-style: decimal; padding-left: 22px; }
+.md li + li { margin-top: 2px; }
+.md h1, .md h2, .md h3, .md h4 { all: unset; display: block; margin: 12px 0 6px; font-weight: 700; font-size: 13.5px; }
+.md a { font-weight: 600; }
+.md strong { font-weight: 700; }
+.md code { background: var(--rule); border-radius: 3px; padding: 0 4px; font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.md pre { overflow-x: auto; padding: 8px 10px; border-radius: 5px; background: var(--rule); }
+.md pre code { padding: 0; background: none; }
+.md blockquote { padding-left: 10px; border-left: 2px solid var(--rule); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--rule); margin: 12px 0; }
+/* A table scrolls sideways within the panel rather than widening the column. Its cells break between words only (not
+   .md's anywhere, which lets a column shrink to a character a line). */
+.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
+.md th, .md td { padding: 5px 14px 5px 0; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; overflow-wrap: normal; }
+.md th[align=right], .md td[align=right] { text-align: right; }
+.md th[align=center], .md td[align=center] { text-align: center; }
+.md th { font-weight: 600; color: var(--muted); }
+.md tr:last-child td { border-bottom: 0; }
+/* The full view's answers: always shown, full size, every option with its label, Discuss and Reply named. */
+.acts.bar { clip-path: none; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.rule { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.rule input { accent-color: var(--thread); margin: 0; }
+
+/* An item's full view: one column, near full width, its own link. */
+main.full { display: block; max-width: 920px; }
+.back { margin: 0 0 18px; font-size: 13px; color: var(--muted); }
+.back a { text-decoration: none; }
+.view h1 { margin: 0; font: 400 46px/1.05 "Instrument Serif", Georgia, serif; letter-spacing: -.01em; }
+.view .facts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 26px; font-size: 13px; color: var(--muted); }
+.facts .state, .facts .due { color: var(--ink); font-weight: 600; }
+.facts .due, .facts .stakes { color: var(--thread); font-weight: 600; }
+.view section { margin: 0 0 26px; }
+.view section h2 { font-size: 24px; padding-bottom: 8px; margin-bottom: 12px; }
+.view p { margin: 0 0 8px; }
+.view .call { font-size: 16px; font-weight: 600; }
+.words { margin: 0; padding: 4px 0 4px 16px; border-left: 2px solid var(--thread); font: 400 22px/1.35 "Instrument Serif", Georgia, serif; }
+.view .md { font-size: 14.5px; line-height: 1.55; }
+.brief .auto { color: var(--thread); font-weight: 600; font-size: 13px; margin-top: 12px; }
+.preview { margin: 0 0 14px; }
+.preview iframe { display: block; width: 100%; height: 420px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; }
+.preview figcaption { margin-top: 6px; }
+.links li { padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.links .label { color: var(--muted); font-size: 13px; }
+.timeline { margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+.timeline li { padding: 5px 0; border-bottom: 1px solid var(--rule); }
+.timeline time { display: inline-block; min-width: 92px; color: var(--muted); font-size: 12.5px; }
+.item-acts { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 16px; border-top: 2px solid var(--ink); }
+.item-acts .pill { height: 30px; padding: 0 14px; border-radius: 15px; font-size: 13.5px; }
+@media (max-width: 760px) {
+  .view h1 { font-size: 36px; }
+  .preview iframe { height: 300px; }
+}
+.bar .pill { height: 28px; padding: 0 12px; border-radius: 14px; gap: 6px; font-size: 13.5px; background: var(--bg); }
+.bar .pill:hover { background: var(--bg); border-color: var(--ink); }
+.bar .pi { width: 14px; height: 14px; }
+.bar .reply input { height: 28px; border-radius: 14px; font-size: 13.5px; }
+
+.notices { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; color: var(--muted); }
+.notices p { margin: 0 0 2px; }
+
+/* Motion: arrivals by a moving edge, never a fade; nothing at all when the reader asks for less. */
+@media (prefers-reduced-motion: no-preference) {
+  header::after { animation: draw 1.1s var(--arrive) both; }
+  .enter { animation: reveal .7s var(--arrive) both; }
+  .acts, .swap > :not(.acts) { transition: clip-path .28s var(--arrive); }
+  .apr .acts, .apr > .swap > .apr-meta { transition: opacity .14s ease; }
+  details[open]:is(.more, .done):not([data-kept]) > ul { animation: unfold .32s var(--arrive) both; }
+  .behind { transition: clip-path .32s var(--arrive), visibility 0s .32s; }
+  .stack:is(:hover, :focus-within, .held) > .behind { transition: clip-path .32s var(--arrive), visibility 0s; }
+  .behind > li { transition: transform .32s var(--arrive); transform: translateY(-10px); }
+  .behind > li:nth-child(2) { transform: translateY(-20px); }
+  .behind > li:nth-child(n+3) { transform: translateY(-30px); }
+  .stack:is(:hover, :focus-within, .held) > .behind > li { transform: none; }
+  .collapsing { transition: height .16s ease-out, width .16s ease-out, padding .16s ease-out, margin .16s ease-out; }
+  .toast.show { animation: reveal .3s var(--arrive) both; }
+}
+@keyframes draw { from { transform: scaleX(0); } }
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes unfold { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 -4px 0); } } /* a moving edge, top down */

@@ -1,80 +1,34 @@
 # Commands
 
-The everyday ones are in the [README](../README.md#using-it-day-to-day). This is the full reference.
+`athena --help` lists every command, and each has `--help`. This page covers the ones whose behaviour is more than their help line.
 
-## Starting and attaching
+## `athena report`
 
-From any terminal, `athena` (or `athena hq`) starts a herdr server if none runs, creates or focuses the `athena` space with the chief of staff's Claude in it, runs `athena doctor --fix` (its findings on stderr), then attaches your terminal to herdr with that space in front (it execs into `herdr`). An HQ whose Claude is gone comes back on its saved conversation (`--resume`), in its space or in a new one; only an HQ that never had a conversation starts fresh. Detach with `ctrl+b q`; HQ and the workers keep running, and `athena` brings you back. Inside herdr, `athena hq` opens or focuses the space as before. The first `athena` with no config runs `athena init` first.
+A worker files its report with this, in its own session, instead of typing it into the chat:
 
-## Always on
+```
+athena report --status DONE|DONE_WITH_CONCERNS|IN_PROGRESS|BLOCKED|NEEDS_CONTEXT --verify "<command> -> pass|fail" \
+  [--decision "<one short line>"]... [--concern "<one short line>"]... [--summary "<a sentence or two>"]
+```
 
-`athena service install` makes herdr's server, the dashboard and the board watcher login services, and runs `athena doctor --fix --quiet` every minute: launchd agents in `~/Library/LaunchAgents` on macOS (`athena.herdr`, `athena.dash`, `athena.board`, `athena.doctor`), systemd user units in `~/.config/systemd/user` on Linux (`athena-herdr.service` and so on, the doctor as a `.timer`). Run `--dry-run` first: it prints each file in full and each `launchctl` or `systemctl` command, and runs nothing.
+- **Who:** the worker named by `ATHENA_WORKER`, which spawn sets in the worker's environment. Anywhere else it refuses.
+- **What it fills in:** `head` is the worktree's `git rev-parse HEAD` (the worktree on record in the ledger, else the current folder), and `pr` is the open PR for the worktree's branch, asked of `gh` only when `origin` is on GitHub. No open PR, or a repo off GitHub, leaves it empty. If `gh` cannot say, the PR is left empty and the command prints why.
+- **What it writes:** the report, with the same fields a typed line had (`status`, `pr`, `head`, `verify`, `decisions`, `concerns`), goes into the worker's status file `workers/<name>.json` as `filed`, under the hook's own lock. `--summary` stands in for the worker's last words. Without it, the final chat message is the summary.
+- **When it counts:** at the turn's Stop. The report gate takes in the report filed this turn and moves it to `report`, the field status, watch, review and the dash read. A turn with none filed is sent back, as before. A DONE or DONE_WITH_CONCERNS still needs `--verify "... -> pass"` at the worktree's HEAD, and a PR when the repo is on GitHub. Every Stop uses up what was filed, accepted or sent back, and so does a new prompt. A turn that is sent back, or that goes on after another Stop hook, needs a new filing.
+- **Refusals:** a DONE the gate would refuse is not filed. The command prints the gate's reason and exits 1, so the worker can fix it and file again.
+- **Output:** one line, `report filed: <STATUS> @ <head>, pr <url|none>, verify <...>`, which is what a goal evaluator reading the transcript sees.
 
-- herdr's job runs `herdr server` (with the session `ATHENA_HERDR` names), restarts it only after a crash, never after `herdr server stop`, and at most every 30 s. The dashboard and the board restart the same way, every 10 s at most. So quitting or crashing the terminal only detaches, and a reboot brings everything back. On Linux, `loginctl enable-linger` keeps user units running while you are logged out.
-- Each job carries the athena environment of the shell you install from (`ATHENA_STATE_DIR`, `ATHENA_HERDR`, `ATHENA_DASH_PORT`, ...), and a PATH of the folders where it found herdr, claude, gh, git, go and python. herdr's job gets none of athena's variables: its panes inherit its environment. To run a second athena beside the first (a test session, say), install from a shell with another state dir and herdr session, with `--instance <name>` (jobs `athena.<name>.<job>`).
-- Install is idempotent: it rewrites only the files that changed, loads only the jobs that are not loaded, and reloads a loaded job whose file changed, except herdr's: reloading it stops every agent in it, so a changed herdr job takes effect when its server next starts. `service.json` in the state dir records what was installed, for doctor.
-- `athena service uninstall` unloads every job and removes its files; it is idempotent too. Unloading herdr's job stops its server and every agent in it (herdr resumes them on its next start). `athena service status` lists each job, installed and loaded.
-- Under launchd, macOS may treat herdr, not your terminal, as the program asking for privacy permissions (Screen Recording, Automation, Files and Folders) for what runs in its panes, and herdr's signature changes with each upgrade, so expect to grant them again after one. Try a screenshot, an `osascript` call and a read of `~/Documents` from a pane after installing. Upgrade herdr with your package manager, then `launchctl kickstart -k gui/$(id -u)/athena.herdr`; `herdr update --handoff` would move the server out of the job.
+**Typed lines still work.** A worker started before this command can still end its message with `ATHENA-REPORT {...}`. When nothing was filed this turn, the gate parses that line as it always has and writes it to the same `report` field. When both are there, the filed report wins. A worker whose settings, written at its spawn, have no permission rule for `athena report` would stop at a prompt running it, so when the gate sends its turn back it also shows that worker the typed line.
 
-`athena doctor` checks, and with `--fix` repairs:
+## `athena brief check <brief> [--goal "<condition>"]`
 
-| Part | Down when | `--fix` |
-|---|---|---|
-| herdr | `herdr status server` says not running | starts the herdr service, else `herdr server` detached |
-| dashboard | `dash.pid` dead or `/healthz` silent | starts the dashboard service, else `athena dash on` bound to no HQ |
-| board | no board watcher | starts the board service, else `athena board on`'s watcher |
-| HQ | HQ's pane runs no `athena` agent (while it runs, doctor records the conversation herdr says it has open in `hq.json`, so a crash after a `/clear` resumes the right one) | after 90 s (herdr resumes its own agents first), resumes HQ's conversation in its space or a new one; never a fresh one. No known conversation: flagged |
-| watch | `watch.json` not written for 5 min while HQ runs | `athena hq restart --no-update` at HQ's next idle: the resumed HQ starts the watch mod again |
-| messaging sockets | a live session's socket file is gone | HQ: `athena hq restart --no-update`, unattended; a worker: exits it and resumes its conversation in its pane. Only when idle with an empty input box, never with background work running (the dialog is cancelled), and never a fresh HQ: with no known conversation, it is flagged |
-| resumed sessions | herdr resumed HQ, or a worker mid-turn | HQ gets its start routine; the worker is told to carry on, once. A blocked or done worker is left alone |
-| HQ's context | at least 60% full | HQ is asked (`athena doctor: your context is ...`) to write its in-flight threads and run `athena hq rotate`, at most every two hours |
-| disk, memory | under 10 GB free, under 10% free memory | flagged only |
-| sleep (macOS) | a worker mid-turn, on AC power | `caffeinate -i -t 180`, renewed each run, so nothing holds the Mac awake once doctor stops |
+Flags wording a goal evaluator could never call met. `--goal` also flags a goal that needs a SendMessage to succeed, and one that asks for a typed `ATHENA-REPORT` line, since a worker files its report with `athena report`. Exit 1 on any problem. `athena spawn` runs it, and `--skip-brief-check` overrides it.
 
-Nothing is typed into a pane that is busy or whose input box holds text not yet sent. A repair that fails backs off (2, then 4 minutes), and any part gets at most 3 repairs in an hour, healthy or not in between, then it is flagged; a new problem raises one herdr notification. Every run writes `health.json` in the state dir (`ts`, `ok`, `problems` with `check`, `detail` and `since`, `checks`, `actions`), which the dashboard's health dot reads. Exit 1 when something is wrong.
+## `athena flame index [--full] [--projects DIR] [--quiet]`, `athena flame status [--json]`
 
-## Key bindings and everyday use
-
-- `prefix+shift+c` (or `athena hq`): open or focus the hq space. The chief of staff starts with its brief (`hq.md`) and the `athena` skill.
-- Tell it what to start: "start abc-101 and abc-102". It reads Linear, writes a brief, shows a launch card, and runs `athena spawn`.
-- `prefix+shift+h` (or `athena hq restart`): update Claude Code and its plugins (skipped when they last ran without a warning within config `hq_update_interval_hours`, 6 h by default; `--update` forces them), then restart HQ's Claude in the same pane on the same conversation; it runs its start routine by itself. HQ can run it about itself. Workers and the dashboard keep running.
-- `athena hq rotate`: HQ's answer to a long conversation, instead of compacting it again. It writes `handoff.md` in the state dir (fleet, PRs, every open item by name, in-flight threads, notes tail, standing-orders path), then starts a fresh HQ conversation in the same pane that reads it and runs its start routine. HQ runs it daily or when `athena status` shows its context at 60% or more.
-- `prefix+shift+b` (or `athena board toggle`): show or hide the worker columns beside hq. Each column runs a nested `herdr terminal attach --takeover`, which takes the mouse: hold Shift while you drag to select and copy text (herdr 0.9.3 has no attach flag to leave the mouse alone).
-- `athena dash open`: the dashboard in your browser: Needs you, Ready for you, In flight, Done today, and a full view per item.
-- `athena item`: the open items, name first ([Items](items.md)).
-
-## Reference
-
-| Command | What it does |
-|---|---|
-| `athena preflight <repo>` | Main checkout clean, on main, fast-forwarded |
-| `athena spawn --repo --branch --name --brief --goal ... [--skip-brief-check]` | Worktree space, worker Claude (`--name`, `worker.md`, per-worker settings), then its `/goal`. First it runs `athena brief check` on the brief and goal and refuses on any problem, naming each rule and the brief's line (`--skip-brief-check` overrides, and the spawn's ledger record keeps what it went past as `brief_check_skipped`). The worker's copy of the brief gets `preferences.md` as its `PREFERENCES` ([Configuration](configuration.md#preferences)) |
-| `athena brief check <file> [--goal <condition>] [--json]` | Wording the goal evaluator could never call met, one line per problem (the brief's line, the field, the rule) with its fix, exit 1; else `brief ok`. GOAL or ACCEPTANCE asking for what follows DONE (ship, merged, approved, ready for review, a non-draft PR); an ACCEPTANCE step only the human can do (a sign-in, "ask athena"), which goes under `HUMAN-CHECKS`; a short, loose ACCEPTANCE item ("Docs updated."); a VERIFY that waits on CI or `gh pr checks`, or is a placeholder or a manual step; a goal that needs SendMessage to succeed; a missing GOAL, SCOPE, ACCEPTANCE, VERIFY or FORBIDDEN. CONTEXT, FORBIDDEN, NOTES and HUMAN-CHECKS are never checked |
-| `athena status [<worker>...] [--json] [--pr]` | Merged status: ATHENA-REPORT, hook state, git, PR, herdr. Flags HQ or a worker whose messaging socket is missing (a live session SendMessage can't reach; see [Troubleshooting](troubleshooting.md)). With a worker's name, everything known about it: its last words (the prose before its report), and its whole report one field a line (status, PR, head, verify, each decision and concern) |
-| `athena item [add\|edit\|body\|done\|snooze\|show\|queue\|migrate] ...` (alias `athena ask`) | The items on the dashboard, in `needs-you.json` ([Items](items.md)): `add "<title>" --name "<2-4 words>" [--kind ...] [--next ...] [--due ...] [--words ...] [--request rN] [--worker w] [--link title\|url] [--rec <option> [--auto]] [--stakes ...] ...` files one; `edit <id> ...` changes it in place, keeping its id; `done <id> [--resolution "..."] [--keep]` marks its dashboard answers done and resolves it; `snooze <id> --until <when>\|--wake`; `show [<id>]`; `queue` lists the dashboard's settled answers (with `auto` for a default applied on its own, `rule` for "Don't ask me this again"); `migrate [--dry-run]` brings asks from before items up to date (it runs on its own) |
-| `athena item requests\|check\|ignore [--days N]` | The request log: what the human typed into HQ (`requests.jsonl`), each with its id and the item that holds it; `check` lists the requests with no item (the weekly check); `ignore <id>...` marks one chat |
-| `athena board on\|off\|toggle\|sync\|show` | Attach columns beside hq; a watcher keeps them in step with width and workers |
-| `athena dash on\|off\|show\|open\|run` | The dashboard on 127.0.0.1; `show` prints its URL and pid. `run` builds it and becomes it in the foreground, bound to no HQ, for a service manager (exits 0 when one already runs) |
-| `athena doctor [--fix] [--quiet] [--json]` | Check herdr, the dashboard, the board, the watch, HQ, the messaging sockets, disk and memory; `--fix` repairs what it safely can (see [Always on](#always-on)); writes `health.json` |
-| `athena service install\|uninstall\|status [--dry-run] [--instance <name>] [--platform launchd\|systemd]` | herdr, the dashboard, the board and doctor as login services (see [Always on](#always-on)) |
-| `athena watch [--tagged]` | One line per change; also saves its snapshot to `watch.json` for the dashboard. The watch mod runs it `--tagged` (JSON lines: each change marked wake or not, and the status band's board); plain output is for the Monitor fallback |
-| `athena stack [set <owner/repo> <pr>... \| clear <owner/repo>]` | The stacked-PR chains `athena watch` follows (`stack.json`) |
-| `athena pr <name>` | PR summary |
-| `athena review <name> start\|pass\|fail [--head <sha>]` | Record HQ's review of a live worker's PR in the ledger, at `--head`. Without it, `start` records the PR's current head, and `pass` or `fail` the head that `start` recorded (refused with no `start` before it), so a push during the review is never passed. Until a `pass` at the PR's current head, the PR is `in review · athena` (or `review findings · worker fixing` after a `fail`), never the human's to merge nor in Needs you as `no reviewer requested`; `athena status` shows it as `review=<verdict>@<sha>`, `(stale)` once the head moved |
-| `athena review <name> start [--force]` | Also numbers the round and, from round 2, records `since`: the head the last verdict was for, so the next review reads only the diff since. After two failed rounds `start` refuses (restart the worker fresh from the updated brief instead; `--force` reviews again); past round 3 it warns |
-| `athena threads <name\|owner/repo#n\|PR URL>` | The PR's unresolved review threads as JSON: id, author, whether a bot, path and line, outdated, the first comment (cut to 300 characters), its URL. Exit 2 when GitHub cannot say |
-| `athena open-prs [show\|add\|check] [<owner/repo#n\|PR URL>...]` | The PRs posted for review in config `open_prs_channel` (`open-prs-posted.json`). `add` records a post HQ just made (refused without the config key). `check` exits 0 when its post still counts (no teammate review since), 1 when a post is wanted, 2 when GitHub cannot say |
-| `athena nudge <name> <text>` | Type a slash command into a worker |
-| `athena resume <name>` | Send the goal of a worker that stopped at a startup prompt, once the human has answered it (`athena watch` does this on its own) |
-| `athena whoami` | The worker this session is: `ATHENA_WORKER`, else the live worker whose worktree holds the cwd; exit 1 when none (the watch mod asks it) |
-| `athena retire <name> [--force] [--keep-worktree]` | Back up, refuse to lose work, stop, remove the worktree space. Refused while someone is typing in the worker's input box, unless `--force` |
-| `athena` | Outside herdr, from a terminal: start herdr if needed, open HQ (resuming its conversation), run `athena doctor --fix`, attach. Inside herdr: same as `athena hq` |
-| `athena init [--yes ...]` | Check herdr, claude and the plugin, gh, git; ask for folders, merge rules, model; write `config.json` |
-| `athena config [show\|path]` | The effective config and where each value comes from |
-| `athena hq [--no-attach] [--no-doctor]` | Create or focus hq, resuming its conversation if its Claude is gone; run `athena doctor --fix`; from a terminal outside herdr, also start herdr and attach |
-| `athena hq rotate [--threads <file\|->] [--dry-run] [--if-context-over <pct>]` | Writes `handoff.md` from athena's state (`athena status --pr` fields with no herdr call, every open item by name, one line each and never cut, the last 12 entries of `notes.md`, the standing-orders path) plus HQ's in-flight threads (`--threads`, saved to `threads.md` first so a skipped rotation keeps them; else `threads.md`; moved to `threads.prev.md` after), at most 150 lines besides the open items, each at most 300 characters (the notes tail gives way first). Then, detached and only once HQ is idle and its input box is empty (it waits up to `ATHENA_TYPING_WAIT` seconds, 120, for the human to send or clear what they are typing, then skips), `/exit`s HQ's Claude (its conversation stays resumable; `hq.json` keeps it as `previous_session`) and starts a new conversation in the same pane, the way `athena hq` does, prompted to read the handoff and run session start. A busy HQ is left alone. No updates. `--dry-run` prints the handoff, the herdr launch command and the first prompt, and runs nothing. `--if-context-over` rotates only when HQ's context, read from its transcript, is at least that full. Log in `logs/hq-restart.log` |
-| `athena hq restart [--update\|--no-update]` | Detached: `claude update`, the marketplaces (side by side, alongside `claude update`) and the user-scope plugin updates (one at a time), skipped when they last ran without a warning within config `hq_update_interval_hours` (default 6, `0`: always; `--update` forces them, `--no-update` skips them; the log says which and why), then, once HQ's input box is empty, `/exit` HQ's Claude (confirming the background-work dialog), `--resume` its conversation in the same pane, prompt its start routine. If that pane is gone, it closes HQ's leftover `board:*` tiles and uses a new pane in the space, or a new space when nothing else is in it (`athena`, `athena hq rotate` and doctor do the same). A failed resume starts nothing in its place and says so (a fresh HQ only when no conversation was known); log in `logs/hq-restart.log`. Run from outside HQ's pane it waits and copies the log to the terminal, and exits non-zero if the restart failed; from HQ's own pane it returns at once |
-
-## `athena init` in scripts
-
-`athena init --yes --projects ~/code [--worktrees DIR] [--human-merge a,b] [--reapproval a] [--model M] [--effort E] [--install-herdr]` asks nothing (a flag, else the current config, else the default) and installs herdr only with `--install-herdr`. Run it again any time to change a value. What each value means is in [Configuration](configuration.md).
+Reads Claude Code's transcripts into the index behind the dash's Flame page (`<state dir>/flame/index.sqlite`). Only the
+bytes added since the last run are read. A line of a shape it doesn't know is skipped and counted, and a file that fails is
+tried again next run. `--full` reads everything again in one transaction, so the page shows the old index until the new one
+is whole. One index runs at a time: a second one prints `an index is already running` and exits 0. You rarely need to run
+it: opening the Flame page updates an index more than 5 minutes old in the background. `status` prints the index's size, what
+it covers and its last run. [flame.md](flame.md) has the design.

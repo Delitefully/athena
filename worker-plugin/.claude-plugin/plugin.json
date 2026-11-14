@@ -1,0 +1,5 @@
+{
+  "name": "athena-worker",
+  "version": "0.1.0",
+  "description": "athena's worker band: a small progress bar of the worker's task list and the step it is on now. Loaded by athena workers alone, through --plugin-dir."
+}

@@ -1,8 +1,5 @@
+.DS_Store
 __pycache__/
 *.pyc
-.lab/
-.claude-plugin/types/
-*.log
-assets/candidates/
-dash/dash
-.DS_Store
+.venv/
+menubar/build/

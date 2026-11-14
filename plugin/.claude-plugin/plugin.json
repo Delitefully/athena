@@ -1,0 +1,5 @@
+{
+  "name": "athena-hq",
+  "description": "athena's HQ procedures: the athena skill. Loaded only by HQ's own session, with --plugin-dir; named apart from the herdr athena's plugin (athena@athena), which HQ's settings turn off.",
+  "version": "0.1.0"
+}

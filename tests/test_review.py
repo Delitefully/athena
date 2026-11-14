@@ -1,205 +1,324 @@
-"""athena review: HQ's own review verdict per live worker, and the in-review stage it gives the worker's PR."""
-import io
+"""The release review's holes, one test each: docs/release-review.md names the finding each one holds."""
 import json
-import tempfile
-import unittest
-from contextlib import redirect_stderr, redirect_stdout
+import os
+import re
+import time
 from unittest import mock
 
-from tests import helpers
-from athena_lib import cli, config, ledger, watch
+from harness import Case, store
 
-HEAD = "4f2c1ab9d0e3"
-
-
-def _pr(**kw):
-    """A reduced PR as pr.summary gives it: green, on a branch with no review rule."""
-    return {"number": 7, "url": "https://github.com/o/web/pull/7", "title": "change", "state": "OPEN", "draft": False,
-            "review": "", "checks": "success", "base": "main", "mergeable": "MERGEABLE", "head": HEAD,
-            "requested": [], "reviews": {}, "auto_merge": False, "queued": False, **kw}
+from athena.caps.dash import markdown
 
 
-class ReviewCommandTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.env = helpers.isolated_env(self.tmp.name)
-        config.write(dict(config.DEFAULTS))
-        ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
+class DashMarkdown(Case):
+    """An item body is anyone's text: no link in it may add an attribute, a handler or a script to the page."""
 
-    def tearDown(self):
-        self.env.restore()
-        self.tmp.cleanup()
+    def links(self, page):
+        return re.findall(r"<a\s[^>]*>", page)
 
-    def athena(self, *argv):
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = cli.main(list(argv))
-        return code, out.getvalue(), err.getvalue()
+    def assert_inert(self, page):
+        for tag in self.links(page):
+            attrs = re.findall(r'\s([a-z-]+)=', tag)
+            self.assertTrue(set(attrs) <= {"href", "rel", "title"}, tag)
+            self.assertNotRegex(tag, r"(?i)href=\"\s*javascript:", tag)
+        self.assertNotRegex(page, r"(?i)<a\s[^>]*\son[a-z]+=", page)
 
-    def test_start_records_the_prs_current_head(self):
-        with mock.patch.object(cli.pr, "summary", return_value=_pr()) as summary, \
-                mock.patch.object(ledger.time, "time", return_value=1000.0):
-            code, out, err = self.athena("review", "abc-7", "start")
-        self.assertEqual(code, 0, err)
-        summary.assert_called_once_with("/src/web", "you/abc-7")
-        record = {"verdict": "start", "head": HEAD, "at": 1000.0, "round": 1}
-        self.assertEqual(ledger.workers()["abc-7"]["review"], record)
-        self.assertEqual(json.loads(out)["review"], record)
+    def test_a_quote_in_a_bare_link_cannot_leave_its_attribute(self):
+        self.assert_inert(markdown.render('see https://x.test/"onmouseover="alert(1)"style="position:fixed'))
 
-    def test_pass_and_fail_default_to_the_head_recorded_at_start(self):
-        with mock.patch.object(cli.pr, "summary", return_value=_pr()):
-            self.assertEqual(self.athena("review", "abc-7", "start")[0], 0)
-        # The worker pushed while the review ran: the verdict is still for the head the reviewer read.
-        with mock.patch.object(cli.pr, "summary", return_value=_pr(head="9a8b7c6d5e4f")) as summary:
-            self.assertEqual(self.athena("review", "abc-7", "pass")[0], 0)
-        self.assertEqual(summary.call_count, 0)
-        self.assertEqual(ledger.workers()["abc-7"]["review"]["head"], HEAD)
-        # A verdict is no start: the next pass or fail needs a start again, or --head.
-        code, _, err = self.athena("review", "abc-7", "fail")
-        self.assertEqual(code, 2)
-        self.assertIn("start", err)
-        self.assertEqual(ledger.workers()["abc-7"]["review"]["verdict"], "pass")
+    def test_a_quote_in_a_named_link_stays_in_its_href(self):
+        self.assert_inert(markdown.render('[x](https://x.test/"onfocus="y)'))
 
-    def test_pass_or_fail_with_no_start_and_no_head_is_refused(self):
-        with mock.patch.object(cli.pr, "summary", return_value=_pr()) as summary:
-            for verdict in ("pass", "fail"):
-                code, _, err = self.athena("review", "abc-7", verdict)
-                self.assertEqual(code, 2)
-                self.assertIn("--head", err)
-        self.assertEqual(summary.call_count, 0)  # never the PR's current head: a push during the review is unreviewed
-        self.assertNotIn("review", ledger.workers()["abc-7"])
+    def test_a_bare_url_inside_a_named_link_is_not_linked_again(self):
+        """HQ's case: an autolink rendered inside the <a> a named link already wrote put a handler outside its quotes."""
+        page = markdown.render("[t](https://a/https://x/onmouseover=location=/javascript:alert%281%29/.source+)")
+        self.assert_inert(page)
+        self.assertEqual(len(self.links(page)), 1, page)
 
-    def test_pass_and_fail_take_the_head_they_reviewed(self):
-        with mock.patch.object(cli.pr, "summary") as summary:
-            self.assertEqual(self.athena("review", "abc-7", "pass", "--head", "4F2C1AB")[0], 0)
-            self.assertEqual(ledger.workers()["abc-7"]["review"]["verdict"], "pass")
-            self.assertEqual(ledger.workers()["abc-7"]["review"]["head"], "4f2c1ab")
-            self.assertEqual(self.athena("review", "abc-7", "fail", "--head", "9" * 40)[0], 0)
-        self.assertEqual(summary.call_count, 0)  # a head given is the one reviewed: no need to ask gh
-        self.assertEqual((ledger.workers()["abc-7"]["review"]["verdict"], ledger.workers()["abc-7"]["review"]["head"]),
-                         ("fail", "9" * 40))
+    def test_links_still_link(self):
+        page = markdown.render("[docs](https://x.test/a?b=1&c=2) and https://y.test/p?q=1&r=2")
+        self.assertIn('href="https://x.test/a?b=1&amp;c=2"', page)
+        self.assertIn('href="https://y.test/p?q=1&amp;r=2"', page)
+        self.assertEqual(len(self.links(page)), 2, page)
 
-    def test_refusals_record_nothing(self):
-        with mock.patch.object(cli.pr, "summary", return_value=None):
-            code, _, err = self.athena("review", "abc-7", "start")
-        self.assertEqual(code, 2)
-        self.assertIn("--head", err)  # gh could not say the PR's head
-        self.assertEqual(self.athena("review", "abc-7", "pass", "--head", "main")[0], 2)  # not a sha
-        self.assertEqual(self.athena("review", "abc-7", "pass", "--head", "4f2c1")[0], 2)  # too short to name one
-        self.assertEqual(self.athena("review", "abc-9", "pass", "--head", HEAD)[0], 2)  # no such live worker
-        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
-            cli.main(["review", "abc-7", "approve"])
-        self.assertNotIn("review", ledger.workers()["abc-7"])
-
-    def test_status_shows_the_verdict_and_whether_its_head_is_stale(self):
-        self.athena("review", "abc-7", "pass", "--head", HEAD)
-        self.assertIn("review=pass@4f2c1ab", self.athena("status")[1])
-        with mock.patch.object(cli.status.pr, "summary", return_value=_pr()):
-            self.assertNotIn("(stale)", self.athena("status", "--pr")[1])
-        with mock.patch.object(cli.status.pr, "summary", return_value=_pr(head="9a8b7c6d5e4f")):
-            self.assertIn("review=pass@4f2c1ab (stale)", self.athena("status", "--pr")[1])
-
-    def test_a_respawn_starts_with_no_verdict(self):
-        self.athena("review", "abc-7", "pass", "--head", HEAD)
-        ledger.append("retire", "abc-7")
-        ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
-        self.assertNotIn("review", ledger.workers()["abc-7"])
+class PsThatFails(Case):
+    def test_a_ps_that_fails_is_nobody_can_say_never_none_running(self):
+        from athena.kernel import agents
+        agents.pid_file("w").parent.mkdir(parents=True, exist_ok=True)
+        agents.pid_file("w").write_text("4242")
+        for script, unknown in (("echo 'ps: fork: Resource temporarily unavailable' >&2; exit 1", True), ("exit 2", True),
+                                ("exit 1", False)):
+            ps = self.tmp / "ps"
+            ps.write_text(f"#!/bin/sh\n{script}\n")
+            ps.chmod(0o755)
+            os.environ["ATHENA_PS"] = str(ps)
+            if unknown:
+                with self.assertRaises(agents.Unknown, msg=script):
+                    agents.stat_of("w")
+            else:
+                self.assertIsNone(agents.stat_of("w"), "ps -p of a pid that isn't running exits 1 and says nothing")
 
 
-class ReviewRoundsTest(unittest.TestCase):
-    """Reviews converge: each round after the first diffs only what changed since the last verdict, and after two
-    failed rounds the worker restarts fresh from the updated brief instead of a third nudge."""
-    setUp, tearDown, athena = ReviewCommandTest.setUp, ReviewCommandTest.tearDown, ReviewCommandTest.athena
+class RexAnswers(Case):
+    def _backend(self, answer):
+        from athena.backends.rex import Backend
+        from athena.kernel.backend import BackendError
 
-    def round(self, head, verdict, *extra):
-        with mock.patch.object(cli.pr, "summary", return_value=_pr(head=head)):
-            code, out, err = self.athena("review", "abc-7", "start", *extra)
-        if code:
-            return code, out, err
-        started = json.loads(out)["review"]
-        self.assertEqual(self.athena("review", "abc-7", verdict)[0], 0)
-        return code, started, err
+        def run(backend, *args, **kw):
+            if isinstance(answer, BackendError):
+                raise answer
+            return answer
+        patch = mock.patch.object(Backend, "_run", run)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return Backend()
 
-    def test_the_first_round_reviews_the_whole_diff(self):
-        _, started, _ = self.round("aaaaaaa1", "pass")
-        self.assertEqual(started["round"], 1)
-        self.assertNotIn("since", started)
+    def test_an_answer_that_is_not_json_or_lacks_its_block_is_a_backend_failure(self):
+        from athena.kernel.backend import BackendError, Place
+        for answer in ("not json", "[]", '{"session_id": "s"}', '{"initial_windows": []}'):
+            with self.assertRaises(BackendError, msg=answer) as caught:
+                self._backend(answer).create("w", str(self.tmp), ["true"])
+            self.assertEqual(caught.exception.code, "bad_reply")
+        with self.assertRaises(BackendError):
+            self._backend("{}").new_window("s", str(self.tmp), ["true"], "w")
+        with self.assertRaises(BackendError):
+            self._backend("{}").split(Place("s", "b"), str(self.tmp), ["true"], "w")
 
-    def test_a_later_round_reviews_the_delta_since_the_last_verdict(self):
-        self.round("aaaaaaa1", "fail")
-        _, started, _ = self.round("bbbbbbb2", "pass")
-        self.assertEqual((started["round"], started["since"]), (2, "aaaaaaa1"))
+    def test_strict_has_block_is_false_only_when_rex_says_not_found(self):
+        from athena.kernel.backend import BackendError, Place
+        self.assertFalse(self._backend(BackendError("not_found", "no session")).has_block(Place("s", "b"), strict=True))
+        for code in ("timeout", "exit_1", "server_down"):
+            with self.assertRaises(BackendError, msg=code):
+                self._backend(BackendError(code, "x")).has_block(Place("s", "b"), strict=True)
+        with self.assertRaises(BackendError):
+            self._backend("garbled").has_block(Place("s", "b"), strict=True)
 
-    def test_after_two_failed_rounds_restart_fresh_rather_than_a_third(self):
-        self.round("aaaaaaa1", "fail")
-        self.round("bbbbbbb2", "fail")
-        code, _, err = self.round("ccccccc3", "pass")
-        self.assertEqual(code, 2)
-        self.assertIn("Restart it fresh", err)
-        self.assertIn("--force", err)
-        self.assertEqual(ledger.workers()["abc-7"]["review"]["verdict"], "fail")  # nothing recorded
-        code, started, _ = self.round("ccccccc3", "pass", "--force")
-        self.assertEqual((code, started["round"]), (0, 3))
-
-    def test_a_round_past_three_warns_but_goes_on(self):
-        """A rebase after a pass needs a review at the new head too, so a fourth round is allowed, with a word."""
-        for head in ("aaaaaaa1", "bbbbbbb2", "ccccccc3"):
-            self.round(head, "pass")
-        code, started, err = self.round("ddddddd4", "pass")
-        self.assertEqual((code, started["round"]), (0, 4))
-        self.assertIn("round 4", err)
-
-    def test_a_respawn_counts_from_one_again(self):
-        self.round("aaaaaaa1", "fail")
-        self.round("bbbbbbb2", "fail")
-        ledger.append("retire", "abc-7")
-        ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
-        _, started, _ = self.round("ccccccc3", "pass")
-        self.assertEqual(started["round"], 1)
+    def test_retire_asks_strictly_so_a_slow_rex_never_skips_its_close(self):
+        import inspect
+        from athena.caps import retire
+        self.assertIn("has_block(agents.place_of(record), strict=True)", inspect.getsource(retire._stop))
 
 
-class WatchReviewTest(unittest.TestCase):
-    """athena watch gives each live worker's PR its move with the worker's verdict; the status line says in review."""
+class GitThatFails(Case):
+    def test_an_ahead_count_git_cannot_give_is_unknown_never_nothing_unpushed(self):
+        from athena.kernel import gitops
+        repo = self.repo()
+        real = gitops.git
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.env = helpers.isolated_env(self.tmp.name)
-        config.write(dict(config.DEFAULTS))
-        ledger.append("spawn", "abc-7", repo="/src/web", branch="you/abc-7")
+        def failing(cwd, *args, **kw):
+            if args[:2] == ("rev-list", "--count"):  # as git() does with a failing git: raise when checked, else ""
+                if kw.get("check", True):
+                    raise gitops.GitError("git rev-list: fatal: bad object")
+                return ""
+            return real(cwd, *args, **kw)
+        with mock.patch.object(gitops, "git", failing):
+            info = gitops.unsaved(repo)
+        self.assertTrue(info["unknown"])
+        self.assertTrue(gitops.holds_work(info), "a worktree git can't vouch for is kept")
 
-    def tearDown(self):
-        self.env.restore()
-        self.tmp.cleanup()
+    def test_a_git_that_hangs_is_no_answer_not_a_no(self):
+        from athena.kernel import gitops
+        hang = self.stubs / "git"
+        hang.write_text("#!/bin/sh\nsleep 30\n")
+        hang.chmod(0o755)
+        with self.assertRaises(gitops.GitError):
+            gitops.ok(self.tmp, "rev-parse", "--verify", "HEAD", timeout=1)
+        with self.assertRaises(gitops.GitError):
+            gitops.git(self.tmp, "status", timeout=1)
 
-    def snap(self, state="done", report=None):
-        collected = {"state": state, "pr": _pr(), "report": report, "detail": None}
-        with mock.patch.object(watch.status, "collect", return_value=collected), \
-                mock.patch.object(watch, "repo_slug", return_value="o/web"), \
-                mock.patch.object(watch.gitops, "default_branch", return_value="main"), \
-                mock.patch.object(watch.gitops, "git", return_value=""):
-            return watch.snapshot()
-
-    def test_a_done_worker_is_in_review_until_its_review_passes_at_the_head(self):
-        cur = self.snap(report={"status": "DONE"})
-        self.assertEqual(cur["workers"]["abc-7"]["pr"]["move"]["label"], "in review · athena")
-        board = watch.board(cur)
-        self.assertEqual((board["active"], board["done"], board["prs"]), ([["in review", ["abc-7"]]], [], []))
-        self.assertEqual(watch.summary(cur), "abc-7 in review")
-        ledger.append("review", "abc-7", review={"verdict": "pass", "head": HEAD, "at": 1.0})
-        cur = self.snap(report={"status": "DONE"})
-        self.assertEqual(cur["workers"]["abc-7"]["pr"]["move"]["label"], "your go to merge")
-        board = watch.board(cur)
-        self.assertEqual((board["active"], board["done"], board["prs"]), ([], ["abc-7"], ["#7"]))
-
-    def test_a_failed_review_is_the_workers_move(self):
-        ledger.append("review", "abc-7", review={"verdict": "fail", "head": HEAD, "at": 1.0})
-        cur = self.snap(state="working")
-        self.assertEqual(cur["workers"]["abc-7"]["pr"]["move"]["label"], "review findings · worker fixing")
-        self.assertEqual(watch.board(cur)["active"], [["working", ["abc-7"]]])
-
-    def test_a_worker_still_working_stays_working(self):
-        self.assertEqual(watch.board(self.snap(state="working"))["active"], [["working", ["abc-7"]]])
+    def test_git_is_never_left_to_prompt_for_credentials(self):
+        from athena.kernel import gitops
+        self.assertEqual(gitops._ENV["GIT_TERMINAL_PROMPT"], "0")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class SignalThroughRex(Case):
+    def test_a_signal_rex_cannot_send_is_an_oserror_every_caller_handles(self):
+        import errno
+        from athena.kernel import sandbox
+        from athena.kernel.backend import BackendError
+        refused = PermissionError(errno.EPERM, "Operation not permitted")
+        with mock.patch.object(sandbox, "inside", return_value=True), mock.patch("os.kill", side_effect=refused), \
+                mock.patch.object(sandbox, "_through_rex", side_effect=BackendError("server_down", "no server")):
+            with self.assertRaises(OSError) as caught:
+                sandbox.kill(4242, 15)
+        self.assertIn("Rex could not send it", str(caught.exception))
+
+
+class SpawnInterrupted(Case):
+    def test_ctrl_c_mid_launch_leaves_no_live_worker_and_no_worktree(self):
+        from athena.caps import spawn
+        from athena.kernel import agents, caps, ledger
+        from harness import git
+        self.write_config(worktree_root=str(self.tmp / "wt"))
+        repo = self.repo()
+        with mock.patch.object(agents, "start", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                spawn.spawn(caps.CTX, repo, "t/a", "a", prompt="hi", fetch=False)
+        self.assertEqual(ledger.get("a")["state"], "failed", "it no longer counts as live against the cap")
+        self.assertTrue(ledger.get("a")["cleaned"])
+        self.assertEqual(len(git(repo, "worktree", "list").splitlines()), 1)
+
+    def test_a_brief_that_will_not_decode_fails_the_launch_cleanly(self):
+        from athena.caps import spawn
+        from athena.cli import UserError
+        from athena.kernel import caps, ledger
+        self.write_config(worktree_root=str(self.tmp / "wt"))
+        repo = self.repo()
+        brief = self.tmp / "brief.md"
+        brief.write_bytes(b"\xff\xfe not utf-8 \x80")
+        with self.assertRaises(UserError) as caught:
+            spawn.spawn(caps.CTX, repo, "t/b", "b", prompt="hi", fetch=False, brief_path=str(brief))
+        self.assertIn("can't be read as text", str(caught.exception))
+        self.assertIsNone(ledger.get("b"), "refused before anything was made")
+
+
+class HqRecordRace(Case):
+    def test_doctor_never_writes_an_old_place_back_over_a_new_launch(self):
+        from athena.caps import hq
+        old = {"space": "s", "block": "b-old", "window": "w", "session": None}
+        hq._save({**old, "space": "s", "block": "b-new"})  # a launch recorded its new place after doctor read the old one
+        hq._amend(old, session="conv")
+        self.assertEqual(hq.load()["block"], "b-new")
+        self.assertIsNone(hq.load().get("session"), "nothing written for a place no longer on record")
+        hq._amend({"space": "s", "block": "b-new"}, session="conv")
+        self.assertEqual((hq.load()["block"], hq.load()["session"]), ("b-new", "conv"))
+
+
+class HqDoctorPass(Case):
+    def test_athena_hq_runs_no_doctor_pass_beside_another(self):
+        from athena.caps import doctor, hq
+        from harness import store
+        args = mock.Mock(no_doctor=False, no_dash=True, no_board=True)
+        with store.locked("doctor.lock"), mock.patch.object(doctor, "run") as ran:
+            hq._around_hq(args)
+        ran.assert_not_called()
+
+
+class DefaultsTwice(Case):
+    def test_a_default_another_process_applied_first_skips_and_the_rest_still_apply(self):
+        from athena.caps import items
+        from athena.cli import UserError
+        first = items.add("One?", options=["a"], rec="a", auto=True)
+        items.add("Two?", options=["a"], rec="a", auto=True)
+        real = items.answer
+
+        def raced(item_id, **kw):
+            if item_id == first["id"]:
+                raise UserError(f"{item_id} is already answered")
+            return real(item_id, **kw)
+        with mock.patch.object(items, "answer", raced):
+            done = items.apply_defaults(now=time.time() + 13 * 3600)
+        self.assertEqual(len(done), 1)
+
+
+class SmallHoles(Case):
+    def test_a_stale_lock_that_will_not_go_waits_out_the_deadline_never_spins(self):
+        from athena.caps import trust
+        lock = self.tmp / "claude.json.lock"
+        lock.write_text("a file, so rmdir fails with something other than gone")
+        os.utime(lock, (1, 1))
+        started = time.monotonic()
+        with self.assertRaises(trust.TrustError):
+            trust._acquire(str(lock), wait=0.5)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_a_damaged_posted_ts_is_written_over_not_the_end_of_the_poll(self):
+        from athena.caps import slack
+        from harness import store
+        store.write_json(store.path("open-prs-posted.json"), {"o/r#1": "not a number"})
+        slack._record_posts({"text": "https://github.com/o/r/pull/1", "ts": "1700000000.1"})
+        self.assertEqual(store.read_dict(store.path("open-prs-posted.json"))["o/r#1"], "1700000000.1")
+
+    def test_the_dash_refuses_a_body_length_it_would_hang_or_desync_on(self):
+        import socket
+        from athena.caps.dash import server
+        dash, httpd = server.start(store.state_dir(), 0)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(dash.stop)
+        self.addCleanup(httpd.shutdown)
+        import threading
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        port = dash.port
+        for length in ("-5", str(server.BODY_MAX + 1), "x"):
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
+                conn.sendall((f"POST /api/action HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n"
+                              f"Content-Type: application/json\r\nX-Athena-Token: {dash.token}\r\nContent-Length: {length}\r\n\r\n{{}}").encode())
+                self.assertIn(b" 400 ", conn.recv(200), length)
+
+    def test_a_launch_script_is_never_readable_by_others(self):
+        from athena.kernel import agents
+        with mock.patch("os.umask", return_value=0o022):
+            path = agents.launcher("w", self.tmp, ["--name", "w"], {"TOKEN": "x"})
+        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(path.name, "w.sh", "the revive module reads run/<name>.sh")
+
+
+class SecondHq(Case):
+    def test_a_second_hq_says_how_to_end_it_for_good(self):
+        from athena.caps import hq
+        from athena.kernel import caps
+        script = self.tmp / "ps"
+        script.write_text("#!/bin/sh\necho '4242 /x/claude --resume c --name athena --append-system-prompt-file /x/hq.md'\n")
+        script.chmod(0o755)
+        os.environ["ATHENA_PS"] = str(script)
+        hq._save({"session": "conv", "workspace": "w7", "pane": "p3"})
+        found = next(c for c in hq.checks(caps.CTX) if c.name == "hq-second")
+        self.assertFalse(found.ok)
+        self.assertIn("the workspace labelled athena", found.detail)
+        self.assertNotIn("w7", found.detail, "herdr reuses ids after a restart: an id on record may name another workspace now")
+        self.assertIn("session restore resumes it", found.detail)
+        self.assertNotIn("`athena hq` starts these", found.detail, "the old advice pointed at the wrong command")
+
+
+class SpawnBase(Case):
+    """A worker builds on local main when it is a fast-forward ahead of origin's, as work merged here and not pushed yet is the
+    base (the release prep once forked from origin/main, 52 commits behind local main)."""
+
+    def test_local_main_strictly_ahead_is_the_base(self):
+        from athena.kernel import gitops
+        from harness import git
+        repo = self.repo()
+        git(repo, "commit", "-q", "--allow-empty", "-m", "merged here, not pushed")
+        self.assertEqual(gitops.new_branch_base(repo), "main")
+        path = self.tmp / "wt-ahead"
+        gitops.add_worktree(repo, "t/ahead", path)
+        self.assertEqual(git(path, "log", "-1", "--format=%s"), "merged here, not pushed")
+
+    def test_a_worker_cut_from_local_main_holds_only_its_own_commits(self):
+        """Local main's unpushed commits are on local main: a worker that made none holds no work, so retire and REX-CLOSE go on."""
+        from athena.kernel import gitops
+        from harness import git
+        repo = self.repo()
+        for n in range(3):
+            git(repo, "commit", "-q", "--allow-empty", "-m", f"merged here {n}")
+        path = self.tmp / "wt-own"
+        gitops.add_worktree(repo, "t/own", path)
+        info = gitops.unsaved(path)
+        self.assertEqual(info["ahead"], 0)
+        self.assertFalse(gitops.holds_work(info))
+        git(path, "commit", "-q", "--allow-empty", "-m", "the worker's own")
+        self.assertEqual(gitops.unsaved(path)["ahead"], 1)
+
+    def test_origin_is_the_base_when_local_main_is_level_behind_or_diverged(self):
+        from athena.kernel import gitops
+        from harness import git
+        repo = self.repo()
+        self.assertEqual(gitops.new_branch_base(repo), "origin/main", "level")
+        other = self.tmp / "other"
+        git(self.tmp, "clone", "-q", str(repo.parent / "origin.git"), str(other))
+        git(other, "commit", "-q", "--allow-empty", "-m", "on origin")
+        git(other, "push", "-q", "origin", "main")
+        git(repo, "fetch", "-q", "origin")
+        self.assertEqual(gitops.new_branch_base(repo), "origin/main", "behind")
+        git(repo, "commit", "-q", "--allow-empty", "-m", "local only")
+        self.assertEqual(gitops.new_branch_base(repo), "origin/main", "diverged")
+
+    def test_a_preflight_git_cannot_answer_is_a_clean_refusal(self):
+        from athena.caps import spawn
+        from athena.cli import UserError
+        from athena.kernel import caps, gitops
+        repo = self.repo()
+        with mock.patch.object(gitops, "preflight", side_effect=gitops.GitError("git rev-parse: no answer (TimeoutExpired)")):
+            with self.assertRaises(UserError) as caught:
+                spawn.spawn(caps.CTX, repo, "t/x", "x", prompt="hi", fetch=False)
+        self.assertIn("preflight failed", str(caught.exception))
