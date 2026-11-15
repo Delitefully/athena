@@ -34,7 +34,7 @@ REX_DEFAULTS = {
     "server": None,
     "size": "160x48",
     "caps": None,
-    "modules": [],
+    "modules": ["revive"],
     "modules_dir": "~/.config/athena/modules",
     "dash_port": 2843,
     "max_workers": 16,

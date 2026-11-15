@@ -3,7 +3,7 @@ human's own, outside it.
 
 A module is a folder `<name>/` with `manifest.json` (`{"name", "title"}`) and `__init__.py`. Public modules live in
 athena/modules/, private ones in `rex.modules_dir` (default ~/.config/athena/modules/, read only: nothing here
-creates it). Config's `rex.modules` lists which load, default none, so with an empty list no module's code is imported.
+creates it). Config's `rex.modules` lists which load, default revive; with an empty list no module's code is imported.
 
 A loaded module is a capability like any in athena/caps/ (commands, checks, tick, on_event, services), reached the same
 way through kernel/caps.py, plus the optional start, stop, status, actions and action that `athena modules` and the

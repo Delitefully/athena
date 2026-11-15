@@ -93,6 +93,9 @@ class InstallFromACleanCheckout(_Checkout):
         self.assertEqual((version.returncode, version.stdout.strip()), (0, f"athena {(ROOT / 'VERSION').read_text().strip()}"))
         doctor = self.athena("doctor", "--json")
         self.assertIn("update", json.loads(doctor.stdout)["checks"], doctor.stderr)
+        listed = self.athena("modules", "--json")
+        self.assertIn({"name": "revive", "loaded": True, "public": True, "state": "on"},
+                      [{k: m[k] for k in ("name", "loaded", "public", "state")} for m in json.loads(listed.stdout)], "shipped, on by default")
         before = self.snapshot()
         again = self.install("--services")
         self.assertIn("= release", again)

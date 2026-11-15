@@ -99,21 +99,24 @@ class _Modules(Case):
 class NoModules(_Modules):
     def test_an_empty_list_runs_the_core_with_no_module_code_loaded(self):
         self.private_module()
-        for listed in ([], None):
+        for listed in ([], None):  # no list at all is the default, revive alone
             if listed is None:
                 (self.state / "config.json").unlink()
                 config.reset()
             else:
                 self.configure([])
+            revive = f"{modules.PACKAGE}.revive"
             for argv in (["--help"], ["status"], ["doctor", "--json"], ["modules", "--json"], ["watch", "--once"]):
                 names = self.loaded_after(*argv)
                 strays = {n for n in names if n.startswith(modules.PACKAGE) or "clamshell" in n or "lights" in n or "toy" in n}
+                if listed is None:
+                    strays -= {n for n in strays if n in (modules.PACKAGE, revive) or n.startswith(revive + ".")}
                 self.assertEqual(strays, set(), argv)
             self.assertEqual(self.cli("clamshell").returncode, 2)
             self.assertEqual(self.cli("toy").returncode, 2)
-            self.assertEqual(json.loads(self.cli("modules", "--json").stdout), [])
-        self.assertEqual(modules.active(), [])
-        self.assertFalse(any(m.__name__.startswith(modules.PACKAGE) for m in caps.loaded()))
+            self.assertEqual([m["name"] for m in json.loads(self.cli("modules", "--json").stdout)], [] if listed == [] else ["revive"])
+        self.assertEqual([name for name, _ in modules.active()], ["revive"])
+        self.assertEqual([m.__name__ for m in caps.loaded() if m.__name__.startswith(modules.PACKAGE)], [f"{modules.PACKAGE}.revive"])
 
     def test_the_default_private_folder_is_never_made(self):
         self.write_config(rex={"modules": ["toy"]})
@@ -274,11 +277,12 @@ class Contract(_Modules):
         self.assertEqual((out["name"], out["loaded"], out["state"]), ("toy", True, "on"))
         self.assertEqual(self.toy_calls(), ["start"])
         saved = json.loads((self.state / "config.json").read_text())
-        self.assertEqual((saved["model"], saved["rex"]["dash_port"], saved["rex"]["modules"]), ("sonnet", 2999, ["toy"]))
+        self.assertEqual((saved["model"], saved["rex"]["dash_port"], saved["rex"]["modules"]), ("sonnet", 2999, ["revive", "toy"]),
+                         "added to the default list, which keeps revive")
         self.assertEqual(self.run_json("load", "clamshell")[1]["public"], True)
-        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["toy", "clamshell"])
+        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["revive", "toy", "clamshell"])
         self.run_json("load", "toy")
-        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["toy", "clamshell"])
+        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["revive", "toy", "clamshell"])
 
     def test_load_refuses_what_it_cannot_find_or_import(self):
         self.private_module("bad", code="raise RuntimeError('nope')\n")
