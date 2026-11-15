@@ -37,6 +37,8 @@ MENUBAR = "menubar"
 STOPPED = "services-stopped.json"
 CARRIED = ("ATHENA_STATE_DIR", "ATHENA_CONFIG", "ATHENA_HQ", "ATHENA_DASH_PORT", "ATHENA_SERVER", "ATHENA_BINARY")
 AWAIT = 60  # how long stop and start wait for the supervisor to act
+MOVE_LOCK = "locks/services-move.lock"  # held by `services install` for as long as it moves the earlier layout
+MOVE_FAILED = "services-move-failed.json"  # what the last move that left old jobs behind said
 
 
 def agents_dir() -> Path:
@@ -268,6 +270,22 @@ def _loaded(domain) -> bool:
 
 
 def install(ctx, dry_run=False) -> list:
+    """`_install`, and while it moves the earlier layout it holds MOVE_LOCK, so doctor reads a move under way (the menu bar
+    app may build first, for minutes) as under way, not as a problem; and it records a move that left old jobs behind, so
+    doctor reads the next try as a failure to tell once, not as more routine upkeep."""
+    if dry_run or not old_plists():
+        return _install(ctx, dry_run)
+    with store.locked(MOVE_LOCK):
+        actions = _install(ctx, dry_run)
+        if old_plists():
+            failed = [a for a in actions if a.startswith("failed ")]
+            store.write_json(store.path(MOVE_FAILED), {"ts": time.time(), "said": (failed or ["old jobs are left"])[0]})
+        else:
+            store.path(MOVE_FAILED).unlink(missing_ok=True)
+    return actions
+
+
+def _install(ctx, dry_run=False) -> list:
     """The one job, and none of the earlier layout's: those go first, but the old doctor's goes last, and only once
     launchd says the one job is loaded, so a move cut short or a bootstrap that failed is finished by that doctor's next
     run. A plist written before but not loaded (a bootstrap that failed) is loaded now. Its services changed (a module
@@ -577,7 +595,12 @@ def checks(ctx):
     this check's repair, `athena services install` of the release `current` names, in a session of its own as it boots out
     the old doctor job running it. An update to this release runs the old release's updater, which only restarts the old
     jobs (onto this code) and asks this doctor for its verdict; so this waits while an update holds the install lock or has
-    a switch on record, and moves nothing until the update's health check has passed and been saved."""
+    a switch on record, and moves nothing until the update's health check has passed and been saved.
+
+    The move is upkeep the human asked for fewer notices about: its first try is `quiet` (no notification when it goes
+    through), and while its install runs, building the menu bar app first for minutes perhaps, the row says it is under
+    way and is ok. A move that left the old jobs behind is an ordinary problem from then on: told once and hourly after,
+    tried again at doctor's usual pace, until one goes through."""
     old = old_plists()
     if not old:
         return []
@@ -591,6 +614,13 @@ def checks(ctx):
     with releases.locked() as got:
         if not got:
             return [caps.Check("services", True, "an update is under way: the move to the one job waits for its health check")]
+    with store.locked(MOVE_LOCK, blocking=False) as free:
+        if not free:
+            return [caps.Check("services", True, "the move to the one job is under way", short="moving")]
+    failed = store.read_dict(store.path(MOVE_FAILED))
+    if failed:  # an ordinary problem from here: told once and hourly after, its repair tried at doctor's usual pace
+        return [caps.Check("services", False, f"the move to the one job left the old jobs: {failed.get('said')}; the repair tries again",
+                           repair=lambda: _move(releases), grace=0, short="move failed")]
     return [caps.Check("services", False, f"{len(old)} job(s) of the earlier layout, one per service: the repair moves them to the one job",
                        repair=lambda: _move(releases), grace=0, short="earlier layout", quiet=True)]
 

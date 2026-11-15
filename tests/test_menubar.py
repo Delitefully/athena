@@ -450,6 +450,60 @@ class QuitAndStart(FakeLaunchd):
             self.assertEqual(set(row), {"name", "ok", "detail", "short"})
         self.assertEqual(json.loads(store.path("health.json").read_text()), written, "--last reads it and runs nothing")
 
+    def old_layout_here(self, names=("doctor", "watch", "dash", "menubar")):
+        agents = self.tmp / "agents"
+        agents.mkdir(exist_ok=True)
+        for name in names:
+            (agents / f"local.athena.{name}.plist").write_bytes(plistlib.dumps(old_plist(name, {})))
+        Path(f"{self.calls}.launchd").write_text("".join(f"local.athena.{n}\n" for n in names))
+
+    def told(self) -> list:
+        """What doctor's notifications said, through the osascript stub."""
+        return [c for c in self.world_calls() if c.startswith("osascript ")]
+
+    def test_a_second_pass_while_the_move_still_runs_is_no_problem_and_tells_nothing(self):
+        self.old_layout_here()
+        started = []
+        with mock.patch.object(services, "_move", side_effect=lambda releases: started.append(1)):
+            health = doctor.run(caps.CTX, fix=True, now=1000)
+            self.assertEqual(started, [1])
+            self.assertNotIn("services", [p["check"] for p in health["problems"]])
+            with store.locked(services.MOVE_LOCK):  # its install still runs: building the menu bar app, say
+                for now in (1060, 1120, 1180):
+                    health = doctor.run(caps.CTX, fix=True, now=now)
+                    self.assertTrue(health["checks"]["services"]["ok"], health["checks"]["services"])
+                    self.assertNotIn("services", [p["check"] for p in health["problems"]])
+        self.assertEqual(started, [1], "one move, not one per pass")
+        self.assertFalse(any("layout" in c or "services" in c for c in self.told()), self.told())
+
+    def test_a_move_that_fails_every_time_keeps_the_old_doctor_is_tried_at_doctors_pace_and_told_once(self):
+        self.old_layout_here()
+        Path(f"{self.calls}.broken").write_text("local.athena\n")  # the one job's bootstrap fails, every time
+        tries = []
+        with mock.patch.object(services, "_move", side_effect=lambda releases: tries.append(services.install(caps.CTX))):
+            for now in range(1000, 1000 + 3000, 60):  # fifty passes, under an hour
+                doctor.run(caps.CTX, fix=True, now=now)
+        self.assertLessEqual(len(tries), doctor.REPAIRS_PER_HOUR, "repairs stay capped")
+        self.assertTrue(all(any(a.startswith("failed local.athena") for a in t) for t in tries))
+        self.assertIn("local.athena.doctor.plist", self.plists(), "the old doctor stays to try again")
+        self.assertIn("local.athena.doctor", self.loaded())
+        services_told = [c for c in self.told() if "services" in c]
+        self.assertEqual(len(services_told), 1, f"told once, not per attempt: {services_told}")
+        health = json.loads(store.path("health.json").read_text())
+        self.assertFalse(health["checks"]["services"]["ok"], "and the row stays failing, not flipping")
+
+    def test_a_quiet_repair_that_raises_is_a_problem_and_is_told(self):
+        mover = types.SimpleNamespace(__name__="athena_modules.mover", checks=lambda ctx: [
+            caps.Check("services", False, "4 job(s) of the earlier layout", repair=lambda: 1 / 0, grace=0, quiet=True)])
+        real = caps.loaded
+        caps.loaded = lambda: [*real(), mover]
+        self.addCleanup(setattr, caps, "loaded", real)
+        with mock.patch.object(doctor, "notify") as notify:
+            health = doctor.run(caps.CTX, fix=True)
+        self.assertIn("services", [p["check"] for p in health["problems"]])
+        self.assertIn("repair failed: division by zero", [p for p in health["problems"] if p["check"] == "services"][0]["detail"])
+        self.assertIn("services", [p["check"] for p in notify.call_args.args[0]])
+
     def test_a_quiet_repair_that_went_through_is_no_problem_and_raises_no_notification(self):
         """The move to the one job is doctor's repair: upkeep the human asked for fewer notices about, not a problem."""
         moved = []

@@ -492,7 +492,9 @@ and removes each, the old doctor's last, after the one job is loaded, and keeps 
 to this layout's first release runs the old release's updater, which only restarts the old jobs onto the new code and asks
 the new doctor for its verdict; so the move is doctor's `services` repair, which starts `athena services install` in a
 session of its own and does not wait for it (it may build the menu bar app first, and it ends the old doctor job). It
-waits while an update holds the install lock or has a switch on record. Until then, `stop`, `start` and
+waits while an update holds the install lock or has a switch on record. The move is upkeep, not a problem: its first
+try raises no notification, and while the install runs (it holds `locks/services-move.lock`) the row says it is under
+way. Only a move that left the old jobs behind (`services-move-failed.json`) is a problem, told once and hourly after. Until then, `stop`, `start` and
 `restart` act on the old jobs as they did. A rollback (`install --rollback`, or an update's own) to a release without the
 supervisor hands its layout back: that release's own `services install` writes its jobs, then the one job goes.
 
