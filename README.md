@@ -18,7 +18,7 @@ Athena is one Claude Code session that's active 24/7. It remembers everything, w
 - **You talk to HQ**\
   Give it a Linear ticket, a question or a chore, in plain words. HQ manages every other worker.
 - **HQ delegates**\
-  Each piece of work gets a worker: a full Claude Code session with its own `/goal`, its own copy of the repo (a git worktree) and its own window in Rex. HQ watches each one and answers its questions. You can open any window and type to a worker yourself.
+  Each task gets a worker: a Claude Code session with its own `/goal`, git worktree and Rex window. HQ watches it and answers its questions.
 - **HQ runs the whole ticket**\
   Spec, build, test, review, watching CI, getting the pull request ready, and cleaning up the worker once it is done.
 - **It runs around the clock**\
