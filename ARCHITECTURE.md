@@ -93,7 +93,7 @@ A capability is a module or package in `athena/caps/` with `SUMMARY` (one line) 
 
 | Function | What it gives | Who calls it |
 |---|---|---|
-| `checks(ctx)` | `[Check(name, ok, detail, repair, grace, short)]` | doctor, which owns grace, backoff and the repair budget |
+| `checks(ctx)` | `[Check(name, ok, detail, repair, grace, short, quiet)]` | doctor, which owns grace, backoff and the repair budget; a `quiet` check's repair that went through is upkeep, not a problem, and raises no notification |
 | `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | `athena services run`, the one launchd job's supervisor, which runs each as its child |
 | `tick(ctx, now)` | watch lines | the watch, every loop |
 | `on_event(ctx, event)` | watch lines | the watch, for each new bus event |

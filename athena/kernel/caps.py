@@ -29,7 +29,9 @@ _DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 Command = namedtuple("Command", "help configure run hidden", defaults=(False,))
 # short: the status the menu bar's row shows, a few words, when the detail's first clause isn't one (doctor.short_of)
-Check = namedtuple("Check", "name ok detail repair grace short", defaults=("", None, 0.0, ""))
+# quiet: its repair is routine upkeep (moving an install to a new layout), so a pass whose repair of it went through
+# neither notifies nor counts it as a problem
+Check = namedtuple("Check", "name ok detail repair grace short quiet", defaults=("", None, 0.0, "", False))
 Service = namedtuple("Service", "name argv every keep_alive interactive", defaults=(None, True, False))
 
 

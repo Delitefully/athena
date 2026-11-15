@@ -113,6 +113,9 @@ class OneJobUpgrade(Case):
         self.calls.write_text("")
         done = self.athena("doctor", "--fix", "--quiet")  # the old doctor job's next run, on the new code
         self.moved(done)
+        health = json.loads((self.home / "Library/Application Support/athena/health.json").read_text())
+        self.assertIn("repaired services", health["actions"])
+        self.assertNotIn("services", [p["check"] for p in health["problems"]], "upkeep, not a problem: no notification for it")
         self.assertEqual(self.loaded(), {"local.athena"})
         self.assertEqual(self.env_of("local.athena.plist")["ATHENA_HQ"], "hq-of-this-mac")
         self.calls.write_text("")

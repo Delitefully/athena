@@ -167,6 +167,24 @@ class InstallAndRestart(FakeLaunchd):
         self.assertEqual(self._plists(), before, "not a byte, not a touch")
         self.assertEqual([c for c in self.launchctl_calls() if c.split()[0] in ("bootstrap", "bootout", "kickstart")], [], again)
 
+    def test_a_bootstrap_that_fails_during_the_move_keeps_the_old_doctor_and_the_next_install_finishes(self):
+        agents = self.tmp / "agents"
+        agents.mkdir()
+        names = ("doctor", "watch", "dash", "menubar")
+        for name in names:
+            (agents / f"local.athena.{name}.plist").write_bytes(plistlib.dumps(old_plist(name, {})))
+        Path(f"{self.calls}.launchd").write_text("".join(f"local.athena.{n}\n" for n in names))
+        Path(f"{self.calls}.broken").write_text("local.athena\n")  # the one job's bootstrap fails, this once
+        actions = services.install(caps.CTX)
+        self.assertTrue(any(a.startswith("failed local.athena:") for a in actions), actions)
+        self.assertEqual(self.plists(), ["local.athena.doctor.plist", "local.athena.plist"], "the old doctor stays to try again")
+        self.assertEqual(self.loaded(), {"local.athena.doctor"})
+        Path(f"{self.calls}.broken").write_text("")
+        again = services.install(caps.CTX)  # the old doctor's next repair: the plist is the same, but not loaded
+        self.assertIn("started local.athena, which was not loaded", again)
+        self.assertEqual(self.plists(), ["local.athena.plist"])
+        self.assertEqual(self.loaded(), {"local.athena"})
+
     def test_a_job_still_loaded_is_kept_and_a_failure_is_said(self):
         self.install()
         Path(f"{self.calls}.sticky").write_text("local.athena\n")
@@ -220,10 +238,11 @@ class InstallAndRestart(FakeLaunchd):
         self.calls.write_text("")
         self.with_beacon()
         self.assertIn("restarted local.athena: its services changed", services.install(caps.CTX))
-        self.assertEqual(self.launchctl_calls(), [f"kickstart -k gui/{UID}/local.athena"], "the plist is the same; the supervisor reads them as it starts")
+        changes = [c for c in self.launchctl_calls() if not c.startswith("print ")]
+        self.assertEqual(changes, [f"kickstart -k gui/{UID}/local.athena"], "the plist is the same; the supervisor reads them as it starts")
         self.calls.write_text("")
         services.install(caps.CTX)
-        self.assertEqual(self.launchctl_calls(), [])
+        self.assertEqual([c for c in self.launchctl_calls() if not c.startswith("print ")], [])
         made = []
         with mock.patch("athena.kernel.supervisor.Supervisor.main", lambda held: made.append(held) or 0):
             services.run(caps.CTX)
@@ -415,6 +434,37 @@ class QuitAndStart(FakeLaunchd):
         self.assertIn("beacon: ExampleCard set to off until Start", actions)
         self.assertIn("radio: on_quit failed: OSError: card gone", actions)
         self.assertEqual(self.running() & set(CORE), set())
+
+    def test_doctor_last_json_is_the_menus_contract_and_runs_nothing(self):
+        out = json.loads(self.cli("doctor", "--last", "--json").stdout)
+        self.assertEqual(out, {"ran": False, "ts": None, "age": None, "ok": None, "checks": []})
+        self.assertEqual(self.cli("doctor", "--fix", "--quiet").returncode in (0, 1), True)
+        written = json.loads(store.path("health.json").read_text())
+        out = json.loads(self.cli("doctor", "--last", "--json").stdout)
+        self.assertEqual(set(out), {"ran", "ts", "age", "ok", "checks"})
+        self.assertTrue(out["ran"])
+        self.assertEqual(out["ts"], written["ts"])
+        self.assertEqual([c["name"] for c in out["checks"]], sorted(written["checks"]))
+        self.assertEqual(out["ok"], written["ok"])
+        for row in out["checks"]:
+            self.assertEqual(set(row), {"name", "ok", "detail", "short"})
+        self.assertEqual(json.loads(store.path("health.json").read_text()), written, "--last reads it and runs nothing")
+
+    def test_a_quiet_repair_that_went_through_is_no_problem_and_raises_no_notification(self):
+        """The move to the one job is doctor's repair: upkeep the human asked for fewer notices about, not a problem."""
+        moved = []
+        mover = types.SimpleNamespace(__name__="athena_modules.mover", checks=lambda ctx: [
+            caps.Check("services", False, "4 job(s) of the earlier layout", repair=lambda: moved.append(1), grace=0, quiet=True)])
+        real = caps.loaded
+        caps.loaded = lambda: [*real(), mover]
+        self.addCleanup(setattr, caps, "loaded", real)
+        with mock.patch.object(doctor, "notify") as notify:
+            health = doctor.run(caps.CTX, fix=True)
+        self.assertEqual(moved, [1])
+        self.assertIn("repaired services", health["actions"])
+        self.assertTrue(health["checks"]["services"]["ok"])
+        self.assertNotIn("services", [p["check"] for p in health["problems"]])
+        self.assertNotIn("services", [p["check"] for p in notify.call_args.args[0]])
 
     def test_doctor_revives_neither_dash_nor_watch_while_athena_is_stopped(self):
         revived = []

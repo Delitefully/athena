@@ -36,7 +36,7 @@ WATCHDOG = "doctor"
 MENUBAR = "menubar"
 STOPPED = "services-stopped.json"
 CARRIED = ("ATHENA_STATE_DIR", "ATHENA_CONFIG", "ATHENA_HQ", "ATHENA_DASH_PORT", "ATHENA_SERVER", "ATHENA_BINARY")
-AWAIT = float(os.environ.get("ATHENA_SERVICES_AWAIT") or 60)  # how long stop and start wait for the supervisor to act
+AWAIT = 60  # how long stop and start wait for the supervisor to act
 
 
 def agents_dir() -> Path:
@@ -260,10 +260,18 @@ def _remove_old(target, dry_run, actions):
         actions.append(f"failed {target.stem}: {exc}")
 
 
+def _loaded(domain) -> bool:
+    try:
+        return _launchctl("print", f"{domain}/{LABEL}").returncode == 0
+    except UserError:
+        return False
+
+
 def install(ctx, dry_run=False) -> list:
-    """The one job, and none of the earlier layout's: those go first, but the old doctor's goes last, once the one job is
-    loaded, so a move cut short is finished by that doctor's next run. Its services changed (a module added or removed)
-    with the plist the same: the supervisor is restarted, as it reads them when it starts."""
+    """The one job, and none of the earlier layout's: those go first, but the old doctor's goes last, and only once
+    launchd says the one job is loaded, so a move cut short or a bootstrap that failed is finished by that doctor's next
+    run. A plist written before but not loaded (a bootstrap that failed) is loaded now. Its services changed (a module
+    added or removed) with the plist the same: the supervisor is restarted, as it reads them when it starts."""
     if not dry_run:
         world.resolve("launchctl")
     actions = []
@@ -284,7 +292,12 @@ def install(ctx, dry_run=False) -> list:
             _remove_old(path, dry_run, actions)
     if target.exists() and target.read_bytes() == text:
         actions.append(f"unchanged {target}")
-        if ran is not None and sorted(ran) != sorted(names) and not dry_run:
+        if not dry_run and not _loaded(domain):
+            try:
+                actions.append(_bootstrap(domain, target, LABEL) or f"started {LABEL}, which was not loaded")
+            except UserError as exc:
+                actions.append(f"failed {LABEL}: {exc}")
+        elif ran is not None and sorted(ran) != sorted(names) and not dry_run:
             done = _launchctl("kickstart", "-k", f"{domain}/{LABEL}")
             actions.append(f"restarted {LABEL}: its services changed" if done.returncode == 0 else
                            f"failed {LABEL}: launchctl kickstart failed ({done.returncode}): {(done.stderr or done.stdout).strip()[:200]}")
@@ -303,8 +316,12 @@ def install(ctx, dry_run=False) -> list:
             except (UserError, OSError) as exc:
                 actions.append(f"failed {LABEL}: {exc}")
     for path in old:
-        if path.stem == f"{PREFIX}.{WATCHDOG}" and not any(a.startswith(f"failed {LABEL}") for a in actions):
+        if path.stem != f"{PREFIX}.{WATCHDOG}":
+            continue
+        if dry_run or _loaded(domain):
             _remove_old(path, dry_run, actions)
+        elif not any(a.startswith(f"failed {LABEL}") for a in actions):
+            actions.append(f"failed {LABEL}: launchd does not have it loaded, so the old doctor job stays to try again")
     if not dry_run:
         store.write_json(store.path("service-rex.json"), {"jobs": names})
     return actions
@@ -575,7 +592,7 @@ def checks(ctx):
         if not got:
             return [caps.Check("services", True, "an update is under way: the move to the one job waits for its health check")]
     return [caps.Check("services", False, f"{len(old)} job(s) of the earlier layout, one per service: the repair moves them to the one job",
-                       repair=lambda: _move(releases), grace=0, short="earlier layout")]
+                       repair=lambda: _move(releases), grace=0, short="earlier layout", quiet=True)]
 
 
 def _move(releases):
