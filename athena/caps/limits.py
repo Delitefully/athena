@@ -172,7 +172,9 @@ def _sign_in_item():
 def tick(ctx, now):
     from athena.caps.watch import Line
     lines = []
-    workers = [w for w in ledger.live() if ledger.managed(w) and w.get("block")]
+    # Claude's limit, sign-in and outage rows are what is read, and they park the whole fleet: a Pi worker runs on another
+    # account and draws other rows, so its screen is never read for them. Pi says a failed run itself (Rex's program status).
+    workers = [w for w in ledger.live() if ledger.managed(w) and w.get("block") and agents.agent_of(w) == "claude"]
     try:
         running = agents.running([w["name"] for w in workers])
     except agents.Unknown:

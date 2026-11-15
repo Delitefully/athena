@@ -110,7 +110,7 @@ class Case(unittest.TestCase):
         (self.tmp / "pads").mkdir()
         os.environ.update(
             ATHENA_WORKER="rex-harness", HOME=str(self.home), ATHENA_STATE_DIR=str(self.state), ATHENA_BACKEND="fake",
-            ATHENA_FAKE_BACKEND=str(self.tmp / "fake.json"), ATHENA_CLAUDE="true", ATHENA_BUDGET_FAKE="80,500,1.0",
+            ATHENA_FAKE_BACKEND=str(self.tmp / "fake.json"), ATHENA_CLAUDE="true", ATHENA_PI="true", ATHENA_BUDGET_FAKE="80,500,1.0",
             ATHENA_WORLD_STUBS=str(self.stubs), ATHENA_WORLD_CALLS=str(self.calls), ATHENA_LIGHTS_DIR=str(self.tmp / "cards"),
             ATHENA_SCRATCHPADS=str(self.tmp / "pads"), ATHENA_DASH_PORT=str(_free_port()),
             ATHENA_LAUNCH_AGENTS=str(self.tmp / "agents"), ATHENA_PS=str(self.stubs / "no-processes"),

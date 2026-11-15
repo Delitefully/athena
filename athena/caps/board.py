@@ -21,7 +21,8 @@ def render(rows, tails, width=100) -> str:
     out = []
     for r in rows:
         report = (r.get("report") or {}).get("status") or ""
-        out.append(f"{MARKS.get(r['state'], ' ')} {r['name']:<16} {state_words(r):<15} {report:<20} {r.get('title') or r.get('branch') or ''}"[:width])
+        agent = f"[{r['agent']}] " if r.get("agent", "claude") != "claude" else ""  # a Claude row reads as it always did
+        out.append(f"{MARKS.get(r['state'], ' ')} {r['name']:<16} {state_words(r):<15} {report:<20} {agent}{r.get('title') or r.get('branch') or ''}"[:width])
         for line in tails.get(r["name"], []):
             out.append(f"    {line}"[:width])
     return "\n".join(out) if out else "no live workers"

@@ -16,6 +16,7 @@ from athena.kernel import config, store, sandbox
 from athena.kernel.backend import BackendError, Place
 
 READY = {"idle", "done"}
+AGENTS = ("claude", "pi")  # what a worker can run; Claude is the default everywhere, and HQ is always Claude
 STARTUP = re.compile(r"Quick safety check|trust this folder|Do you trust|Enter to confirm|Press Enter to continue")
 _CSI = re.compile(r"\x1b\[([0-9;:?]*)([A-Za-z])")
 _ANY_ESC = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
@@ -48,9 +49,14 @@ def pid_file(name) -> Path:
     return store.path("run", f"{name}.pid")
 
 
-def launcher(name, cwd, argv, env=None) -> Path:
+def agent_of(record) -> str:
+    """The program a worker runs: `claude` unless its record says otherwise."""
+    return (record or {}).get("agent") or "claude"
+
+
+def launcher(name, cwd, argv, env=None, agent="claude") -> Path:
     """The whole command in a file: nothing is typed, and no argument length limit applies."""
-    claude = shlex.split(str(config.rex("claude")))
+    claude = shlex.split(str(config.rex(agent)))
     words = sandbox.wrap(["env"] + [f"{k}={v}" for k, v in sorted((env or {}).items())] + claude + [str(a) for a in argv])
     path = _run_dir() / f"{name}.sh"
     text = (f"#!/bin/sh\necho $$ > {shlex.quote(str(pid_file(name)))}\ncd {shlex.quote(str(cwd))} || exit 111\n"
@@ -62,11 +68,12 @@ def launcher(name, cwd, argv, env=None) -> Path:
     return path
 
 
-def start(backend, name, label, cwd, argv, env=None, repo=None) -> Place:
+def start(backend, name, label, cwd, argv, env=None, repo=None, agent="claude") -> Place:
     """Given `repo`, in a window named for it in the repo's session, made with its first worker: Rex's sidebar groups workers by
     repo. Without, in a session of its own."""
     pid_file(name).unlink(missing_ok=True)
-    run = ["/bin/sh", str(launcher(name, cwd, argv, env))]
+    pi_mark(name).unlink(missing_ok=True)
+    run = ["/bin/sh", str(launcher(name, cwd, argv, env, agent))]
     if not repo:
         return backend.create(label, cwd, run, block_label=name)
     with store.locked("locks/repo-sessions.lock"):
@@ -131,11 +138,11 @@ def forget_repo_session(space):
     store.write_json(_repo_sessions(), {k: v for k, v in known.items() if v != space})
 
 
-def restart(backend, record, name, cwd, argv, env=None, label=None) -> Place:
+def restart(backend, record, name, cwd, argv, env=None, label=None, agent="claude") -> Place:
     """In a new window of the same space when it still exists, else in a new space. Its window and block carry its name.
     The old block stays open: the caller records the new place, then closes it with close_replaced."""
     pid_file(name).unlink(missing_ok=True)
-    run = ["/bin/sh", str(launcher(name, cwd, argv, env))]
+    run = ["/bin/sh", str(launcher(name, cwd, argv, env, agent))]
     known = {s["id"] for s in backend.spaces()}
     if record.get("space") in known:
         return backend.new_window(record["space"], cwd, run, window_label=name, block_label=name, focus=True)
@@ -160,7 +167,8 @@ def stat_of(name):
 
 
 def running(names) -> dict:
-    """{name: stat} for those of `names` whose Claude runs, in one ps."""
+    """{name: stat} for those of `names` whose Claude (or Pi) runs, in one ps. Pi sets its process title to `pi`, which hides its
+    `--name`, so a Pi is its worker's only when athena's extension inside it wrote that same pid to `run/<name>.pi.json`."""
     pids = {name: read_pid(name) for name in names}
     found = _ps([p for p in pids.values() if p])
     out = {}
@@ -169,7 +177,21 @@ def running(names) -> dict:
         words = row[1].split() if row else []
         if any(w == "--name" and following == name for w, following in zip(words, words[1:])):
             out[name] = row[0]
+        elif row and _is_pi(row[1]) and pi_pid(name) == pid:
+            out[name] = row[0]
     return out
+
+
+def pi_mark(name) -> Path:
+    """Written by athena's Pi extension as Pi starts: {pid, session}. Pi's process title hides the flags it was started with."""
+    return store.path("run", f"{name}.pi.json")
+
+
+def pi_pid(name):
+    try:
+        return int(store.read_dict(pi_mark(name)).get("pid"))
+    except (TypeError, ValueError):
+        return None
 
 
 def read_pid(name):
@@ -182,6 +204,16 @@ def read_pid(name):
 def _is_claude(command: str) -> bool:
     head = (command or "").split(" ")[0]
     return "claude" in os.path.basename(head) or "/claude/versions/" in head
+
+
+def _is_pi(command: str) -> bool:
+    """Pi once its process title is set (`pi`), or node running Pi's command before that."""
+    words = (command or "").split()
+    if not words:
+        return False
+    if os.path.basename(words[0]) == "pi":
+        return True
+    return os.path.basename(words[0]) == "node" and len(words) > 1 and (os.path.basename(words[1]) == "pi" or "pi-coding-agent" in words[1])
 
 
 class Unknown(BackendError):
@@ -207,7 +239,7 @@ def _ps(pids) -> dict:
     found = {}
     for line in out.splitlines():
         parts = line.split(None, 2)
-        if len(parts) == 3 and parts[0].isdigit() and _is_claude(parts[2]):
+        if len(parts) == 3 and parts[0].isdigit() and (_is_claude(parts[2]) or _is_pi(parts[2])):
             found[int(parts[0])] = (parts[1], parts[2])
     return found
 
@@ -223,6 +255,8 @@ def state(backend, record, name=None) -> dict:
         return {**out, "state": "blocked", "kind": "stopped", "msg": "Claude is stopped and not reading input"}
     place = place_of(record)
     reported = backend.program_status(place)
+    if reported and reported.get("state") == "error" and agent_of(record) == "pi":
+        return {**out, **reported, "state": "idle"}  # Pi says error once a run failed, and takes the next prompt as at idle
     if reported and reported.get("state"):
         return {**out, **reported}
     if STARTUP.search(backend.screen(place)):
@@ -267,7 +301,10 @@ def box_text(styled_screen: str):
 
 
 def typing(backend, record) -> bool:
-    """Fails closed: an unreadable screen or no box counts as someone typing."""
+    """Fails closed: an unreadable screen or no box counts as someone typing. A Pi is never typed into (its inbox is read by
+    athena's extension), so what is in its editor is never in the way."""
+    if agent_of(record) == "pi":
+        return False
     try:
         return box_text(backend.screen(place_of(record), styled=True)) != ""
     except BackendError:
@@ -313,6 +350,9 @@ def send(backend, record, text, submit=True, wait_box=0.0):
     if now["state"] in REFUSALS:
         raise Refused(*REFUSALS[now["state"]])
     _check_owner(backend, record)
+    if agent_of(record) == "pi":
+        post(record["name"], {"kind": "message", "text": text})
+        return
     give_up = time.monotonic() + wait_box
     while typing(backend, record):
         if time.monotonic() > give_up:
@@ -323,6 +363,19 @@ def send(backend, record, text, submit=True, wait_box=0.0):
     if submit:
         time.sleep(0.2)
         backend.press(target, "enter")
+
+
+def inbox(name) -> Path:
+    return store.path("run", "inbox", name)
+
+
+def post(name, message: dict) -> Path:
+    """A message for a Pi worker, picked up by athena's extension inside it within a second: {"kind": "message", "text"} goes to Pi
+    as the human's own words (queued as a follow-up while it works), {"kind": "quit"} ends it once it is idle. Each in a file of
+    its own, named so they sort in the order sent."""
+    target = store.ensure("run", "inbox", name) / f"{time.time_ns():020d}-{os.getpid()}.json"
+    store.write_text(target, json.dumps(message) + "\n", mode=0o600)
+    return target
 
 
 def wait(backend, record, until, timeout=30.0, poll=0.4) -> dict:
@@ -360,6 +413,8 @@ def graceful_exit(backend, record, grace=8.0, stop_tasks=True) -> bool:
     name = record.get("name")
     if not stat_of(name):
         return True
+    if agent_of(record) == "pi":
+        return _pi_quit(name, grace)
     if typing(backend, record):
         return False
     place = place_of(record)
@@ -387,6 +442,17 @@ def graceful_exit(backend, record, grace=8.0, stop_tasks=True) -> bool:
             time.sleep(0.5)
         else:
             time.sleep(0.2)
+    return True
+
+
+def _pi_quit(name, grace) -> bool:
+    """Pi has no /exit screen: its extension is asked to shut it down, which Pi does once it is idle."""
+    post(name, {"kind": "quit"})
+    deadline = time.monotonic() + grace
+    while stat_of(name):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
     return True
 
 

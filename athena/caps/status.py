@@ -64,9 +64,9 @@ def row(worker, hook, alive, stat=None, seen=None) -> dict:
             "hook_ts": hook.get("ts"), "session_id": hook.get("session_id"), "pending": bool(worker.get("goal_pending")),
             "detail": f"closed-by-human ({worker['closed_by_human']})" if worker.get("closed_by_human") else
             (f"its report came from {'what it filed' if lost['from'] == 'filed' else 'its transcript'}, as its Stop never landed") if lost else worker.get("pending_reason") if worker.get("goal_pending") else (
-                "its Claude is stopped and not reading input" if str(stat or "").startswith("T") else (
+                f"its {'Pi' if agents.agent_of(worker) == 'pi' else 'Claude'} is stopped and not reading input" if str(stat or "").startswith("T") else (
                     "its goal may not have arrived: resume --resend" if worker.get("goal_unconfirmed") else None)),
-            "athena_review": worker.get("review"), "ultracode": bool(worker.get("ultracode")),
+            "athena_review": worker.get("review"), "ultracode": bool(worker.get("ultracode")), "agent": agents.agent_of(worker),
             "background": background, "urgency": URGENCY.get(state, 3)}
 
 
@@ -125,6 +125,8 @@ def _session_words(r) -> str:
 def _line(r) -> str:
     report = r.get("report") or {}
     bits = [f"{r['name']:<16}", f"{state_words(r):<15}"]
+    if r.get("agent", "claude") != "claude":
+        bits.append(f"[{r['agent']}]")  # a Claude worker's line reads as it always did
     if report.get("status"):
         bits.append(str(report["status"]))
     live = r.get("live") or {}
