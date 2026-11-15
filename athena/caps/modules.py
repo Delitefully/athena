@@ -1,5 +1,5 @@
-"""`athena modules`: the optional modules in config's list, as the menu bar shows them, and loading, unloading and
-running their actions. One JSON object per listed module, loaded or not:
+"""`athena modules`: the optional modules in config's list and the default-on public ones, as the menu bar shows them, and
+loading, unloading and running their actions. One JSON object per listed module, loaded or not:
 
     {"name", "title", "public", "loaded", "state": "on|off|error", "detail": "<one short line>", "actions": [{"id", "label"}]}
 
@@ -87,9 +87,9 @@ def load(ctx, name: str) -> dict:
     module, error = loader.load(name)
     if module is None:
         raise UserError(f"{name} {error}")
-    names = loader.listed()
+    names = loader.configured()
     try:
-        if name not in names:
+        if name not in names and name not in loader.defaults():  # a default-on module is listed already
             loader.write_list([*names, name])
     except ValueError as exc:
         raise UserError(str(exc))
@@ -99,16 +99,21 @@ def load(ctx, name: str) -> dict:
 
 
 def unload(ctx, name: str) -> dict:
-    names = loader.listed()
-    if name not in names:
+    """A default-on module stays listed whatever the config says, so unloading it is turning it off, kept until load or toggle."""
+    names = loader.configured()
+    if name not in loader.listed():
         raise UserError(f"{name} is not in the module list")
     before = describe(ctx, name)
     try:
-        loader.write_list([n for n in names if n != name])
+        if name in names:
+            loader.write_list([n for n in names if n != name])
     except ValueError as exc:
         raise UserError(str(exc))
     module, _ = loader.load(name) if before["loaded"] else (None, None)
     result = _call(ctx, module, "stop") if module is not None and before["state"] != "off" else None
+    if name in loader.defaults():
+        loader.set_on(name, False)
+        return _with_failure(describe(ctx, name), "stop", result)
     loader.set_on(name, True)  # a later load starts it on
     gone = {**before, "loaded": False, "state": "off", "detail": "unloaded", "actions": []}
     return _with_failure(gone, "stop", result)

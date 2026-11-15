@@ -1,9 +1,11 @@
 """Optional modules: features that are off unless config lists them, public ones in the repo, private ones in a folder of the
 human's own, outside it.
 
-A module is a folder `<name>/` with `manifest.json` (`{"name", "title"}`) and `__init__.py`. Public modules live in
-athena/modules/, private ones in `rex.modules_dir` (default ~/.config/athena/modules/, read only: nothing here
-creates it). Config's `rex.modules` lists which load, default revive; with an empty list no module's code is imported.
+A module is a folder `<name>/` with `manifest.json` (`{"name", "title"}`, and `"default": true` on a public one that is on
+by default) and `__init__.py`. Public modules live in athena/modules/, private ones in `rex.modules_dir` (default
+~/.config/athena/modules/, read only: nothing here creates it). Config's `rex.modules` lists which load, default none; a
+default-on public module is listed whatever it says, until it is turned off. With an empty list and every default-on
+module off, no module's code is imported.
 
 A loaded module is a capability like any in athena/caps/ (commands, checks, tick, on_event, services), reached the same
 way through kernel/caps.py, plus the optional start, stop, status, actions and action that `athena modules` and the
@@ -27,6 +29,12 @@ _loaded = {}  # name -> (folder, module or None, error): one import per process
 
 
 def listed() -> list:
+    """The config list, then each default-on public module it doesn't name: what loads, unless turned off."""
+    names = configured()
+    return names + [name for name in defaults() if name not in names]
+
+
+def configured() -> list:
     """The config list, read again whenever config.json changed, so a long-running watch sees `modules load` by another
     process. Anything that isn't a name is skipped."""
     config.refresh()
@@ -143,6 +151,11 @@ def get(name: str):
 def write_list(names: list):
     """`rex.modules` in config.json, the rest of the file as it was. A config that doesn't parse is never written over."""
     config.update_rex(lambda rex: rex.__setitem__("modules", list(names)))
+
+
+def defaults() -> list:
+    """The public modules whose manifest says `"default": true`: listed with no config naming them."""
+    return [name for name in public_names() if manifest(PUBLIC / name).get("default") is True]
 
 
 def public_names() -> list:

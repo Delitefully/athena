@@ -1,11 +1,11 @@
 # Writing a module
 
-A module is an optional feature: off unless config lists it (revive is listed by default), and once loaded a capability like those in
+A module is an optional feature: off unless config lists it or its manifest says it is on by default (revive), and once loaded a capability like those in
 `athena/caps/`, with an entry in the menu bar. Public modules live in `athena/modules/<name>/` (clamshell, revive). Private
 ones live in your own folder, its own git repo, outside this one: `rex.modules_dir`, default `~/.config/athena/modules/`.
 
 ```
-<name>/manifest.json   {"name": "<name>", "title": "Shown in the menu"}
+<name>/manifest.json   {"name": "<name>", "title": "Shown in the menu"}; a public one may add "default": true
 <name>/__init__.py     the hooks below; other files beside it import relatively (from . import card)
 <name>/tests/          optional: scripts/test.sh runs a private folder's tests with the same harness
 ```
@@ -39,7 +39,8 @@ athena modules --json              the menu bar's list: one object per listed mo
 
 Each object is `{"name", "title", "public", "loaded", "state": "on|off|error", "detail", "actions"}`. `loaded` means its code
 imported. `state` is `off` when toggled off (kept in the state dir's `modules.json`), and `error` when it won't load or its
-status isn't ok. Doctor names a listed module that won't load. The default list is `["revive"]`; with `rex.modules: []`, no module code is imported.
+status isn't ok. Doctor names a listed module that won't load. A public module whose manifest has `"default": true` is listed after the config's own, whatever `rex.modules` says,
+until it is turned off. With `rex.modules: []` and each such module off, no module code is imported.
 
 ## Revive, on by default
 
@@ -56,8 +57,8 @@ athena revive --json
 athena doctor                      its line: the last restart handled, and any pane that didn't come back
 ```
 
-It keeps `<state>/revive.json`. To turn it off, `athena modules action revive toggle` (or the menu's toggle), which keeps it
-listed; `athena modules unload revive` takes it out of `rex.modules`. A config that sets its own `rex.modules` list gets revive
-only if the list names it.
+It keeps `<state>/revive.json`. It is on whatever `rex.modules` lists, with no need to name it there. To turn it off,
+`athena modules unload revive` or the menu's toggle (`athena modules action revive toggle`): it stays listed, off, across
+restarts, until `athena modules load revive` or the toggle turns it back on.
 
 Next candidates to move out of the core into private modules: the #open-prs extras and HQ skip-perms.

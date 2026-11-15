@@ -97,26 +97,34 @@ class _Modules(Case):
 
 
 class NoModules(_Modules):
-    def test_an_empty_list_runs_the_core_with_no_module_code_loaded(self):
+    def test_an_empty_list_runs_the_core_with_only_the_default_on_module(self):
         self.private_module()
-        for listed in ([], None):  # no list at all is the default, revive alone
+        revive = f"{modules.PACKAGE}.revive"
+        for listed in ([], None):
             if listed is None:
                 (self.state / "config.json").unlink()
                 config.reset()
             else:
                 self.configure([])
-            revive = f"{modules.PACKAGE}.revive"
             for argv in (["--help"], ["status"], ["doctor", "--json"], ["modules", "--json"], ["watch", "--once"]):
                 names = self.loaded_after(*argv)
                 strays = {n for n in names if n.startswith(modules.PACKAGE) or "clamshell" in n or "lights" in n or "toy" in n}
-                if listed is None:
-                    strays -= {n for n in strays if n in (modules.PACKAGE, revive) or n.startswith(revive + ".")}
-                self.assertEqual(strays, set(), argv)
+                self.assertEqual({n for n in strays if n not in (modules.PACKAGE, revive) and not n.startswith(revive + ".")}, set(), argv)
             self.assertEqual(self.cli("clamshell").returncode, 2)
             self.assertEqual(self.cli("toy").returncode, 2)
-            self.assertEqual([m["name"] for m in json.loads(self.cli("modules", "--json").stdout)], [] if listed == [] else ["revive"])
+            self.assertEqual([m["name"] for m in json.loads(self.cli("modules", "--json").stdout)], ["revive"])
         self.assertEqual([name for name, _ in modules.active()], ["revive"])
-        self.assertEqual([m.__name__ for m in caps.loaded() if m.__name__.startswith(modules.PACKAGE)], [f"{modules.PACKAGE}.revive"])
+
+    def test_with_the_default_on_module_off_no_module_code_is_loaded(self):
+        self.private_module()
+        self.configure([])
+        modules.set_on("revive", False)
+        for argv in (["--help"], ["status"], ["watch", "--once"]):  # doctor imports each listed module, off too, to name one that won't
+            names = self.loaded_after(*argv)
+            strays = {n for n in names if n.startswith(modules.PACKAGE) or "clamshell" in n or "lights" in n or "toy" in n}
+            self.assertEqual(strays, set(), argv)
+        self.assertEqual(modules.active(), [])
+        self.assertFalse(any(m.__name__.startswith(modules.PACKAGE) for m in caps.loaded()))
 
     def test_the_default_private_folder_is_never_made(self):
         self.write_config(rex={"modules": ["toy"]})
@@ -156,8 +164,9 @@ class Clamshell(_Modules):
     def test_its_menu_line_comes_from_doctors_last_look(self):
         self.configure(["clamshell"])
         code, rows, _ = self.run_json("--json")
-        self.assertEqual(rows, [{"name": "clamshell", "title": "Clamshell", "public": True, "loaded": True, "state": "on",
-                                 "detail": "doctor hasn't looked yet", "actions": [{"id": "toggle", "label": "Turn off"}]}])
+        self.assertEqual(rows[:1], [{"name": "clamshell", "title": "Clamshell", "public": True, "loaded": True, "state": "on",
+                                     "detail": "doctor hasn't looked yet", "actions": [{"id": "toggle", "label": "Turn off"}]}])
+        self.assertEqual([r["name"] for r in rows], ["clamshell", "revive"], "revive is listed by default")
         store.write_json(store.path("health.json"), {"ts": 1, "ok": True, "problems": [],
                                                      "checks": {"clamshell": {"ok": True, "detail": "awake=True: HQ is running on good AC"}}})
         self.assertEqual(self.run_json("--json")[1][0]["detail"], "awake=True: HQ is running on good AC")
@@ -229,7 +238,7 @@ class Contract(_Modules):
         self.configure(["clamshell", "toy", "nowhere", "../x"])
         code, rows, err = self.run_json("--json")
         self.assertEqual(code, 0, err)
-        self.assertEqual([r["name"] for r in rows], ["clamshell", "toy", "nowhere", "../x"])
+        self.assertEqual([r["name"] for r in rows], ["clamshell", "toy", "nowhere", "../x", "revive"], "the default-on module last")
         for row in rows:
             self.assertEqual(list(row), KEYS)
             self.assertIn(row["state"], ("on", "off", "error"))
@@ -237,7 +246,7 @@ class Contract(_Modules):
         toy = rows[1]
         self.assertEqual(toy, {"name": "toy", "title": "Toy", "public": False, "loaded": True, "state": "on", "detail": "toy is fine",
                                "actions": [{"id": "toggle", "label": "Turn off"}, {"id": "poke", "label": "Poke it"}]})
-        for missing in rows[2:]:
+        for missing in rows[2:4]:
             self.assertEqual((missing["loaded"], missing["state"], missing["actions"]), (False, "error", []))
         self.assertIn("no module nowhere", rows[2]["detail"])
 
@@ -249,7 +258,7 @@ class Contract(_Modules):
         self.assertEqual((off["loaded"], off["state"], off["actions"]), (True, "off", [{"id": "toggle", "label": "Turn on"}]))
         self.assertEqual(self.toy_calls(), ["stop"])
         config.reset()
-        self.assertEqual(modules.listed(), ["toy"])
+        self.assertEqual(modules.listed(), ["toy", "revive"])
         self.assertIsNone(caps.get("toy"))
         self.assertEqual(self.cli("toy").returncode, 2)
         self.assertNotIn("toy", doctor.run(caps.CTX, fix=False, now=time.time())["checks"])
@@ -277,12 +286,11 @@ class Contract(_Modules):
         self.assertEqual((out["name"], out["loaded"], out["state"]), ("toy", True, "on"))
         self.assertEqual(self.toy_calls(), ["start"])
         saved = json.loads((self.state / "config.json").read_text())
-        self.assertEqual((saved["model"], saved["rex"]["dash_port"], saved["rex"]["modules"]), ("sonnet", 2999, ["revive", "toy"]),
-                         "added to the default list, which keeps revive")
+        self.assertEqual((saved["model"], saved["rex"]["dash_port"], saved["rex"]["modules"]), ("sonnet", 2999, ["toy"]))
         self.assertEqual(self.run_json("load", "clamshell")[1]["public"], True)
-        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["revive", "toy", "clamshell"])
+        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["toy", "clamshell"])
         self.run_json("load", "toy")
-        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["revive", "toy", "clamshell"])
+        self.assertEqual(json.loads((self.state / "config.json").read_text())["rex"]["modules"], ["toy", "clamshell"])
 
     def test_load_refuses_what_it_cannot_find_or_import(self):
         self.private_module("bad", code="raise RuntimeError('nope')\n")
@@ -316,7 +324,7 @@ class Loader(_Modules):
         self.private_module("bad", code="raise RuntimeError('nope')\n")
         self.private_module()
         self.configure(["bad", "toy"])
-        self.assertEqual([name for name, _ in modules.active()], ["toy"])
+        self.assertEqual([name for name, _ in modules.active()], ["toy", "revive"])
         health = doctor.run(caps.CTX, fix=False, now=time.time())
         self.assertFalse(health["checks"]["module:bad"]["ok"])
         self.assertIn("RuntimeError: nope", health["checks"]["module:bad"]["detail"])

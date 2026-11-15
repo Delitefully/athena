@@ -23,7 +23,7 @@ athena/kernel/        names no capability
   lab.py                  the overnight lab's guard on the state dir; out of an installed copy only by `install --lab-guard-out`, never out of a checkout
 athena/backends/      rex.py (the one that matters), fake.py (tests)
 athena/caps/          the capabilities, one file or directory each
-athena/modules/       public optional modules, loaded when config lists them (clamshell; revive, listed by default); docs/modules.md
+athena/modules/       public optional modules, loaded when config lists them (clamshell) or on by default by manifest (revive); docs/modules.md
 prompts/              hq.md, worker.md
 scripts/              smoke.sh (VERIFY), test.sh (the only way to run tests), scratch-state.py, chaos-rex.py (the real-process chaos cases), measure.sh (the hot paths, the same way each time), upgrade-from-herdr.py (docs/upgrade-from-herdr.md's steps)
 tests/                contracts and things that broke, in an isolated HOME, inside a sandbox
@@ -41,7 +41,7 @@ A capability is a module or package in `athena/caps/`. It has `SUMMARY` and `com
 | `on_event(ctx, event)` | watch lines | the watch loop, per new bus event |
 
 `config.json`'s `rex.caps` lists which capabilities load; with no list, everything found loads. Optional modules are separate:
-`rex.modules` lists them (default `["revive"]`), from `athena/modules/` or the private `rex.modules_dir`, and once loaded they are
+`rex.modules` lists them (default none; a manifest's `"default": true` lists a public one too, until turned off), from `athena/modules/` or the private `rex.modules_dir`, and once loaded they are
 capabilities like these, plus a menu entry (docs/modules.md). A capability reaches another only through `ctx.cap(name)`, which is `None` when it is absent. So leaving a module out of the list, or deleting its file, changes nothing else. A test checks that the kernel imports no capability.
 
 The backend interface (`kernel/backend.py`) is 14 methods: start a program in a new space, replace a dead one, read a screen, type, press, close. A backend knows nothing about Claude; `agents.py` does.

@@ -845,20 +845,54 @@ class ScriptTests(ReviveCase):
 
 
 class OnByDefault(Case):
-    """Shipped and listed by default: a state dir with no config and no private modules folder has it loaded and on."""
+    """Shipped with `"default": true` in its manifest: listed and on whatever rex.modules says, until turned off."""
 
-    def test_a_fresh_state_dir_lists_it_loaded_and_on(self):
-        self.assertFalse((self.state / "config.json").exists())
+    def listed(self):
         done = self.cli("modules", "--json")
         self.assertEqual(done.returncode, 0, done.stderr)
-        found = [m for m in json.loads(done.stdout) if m["name"] == "revive"]
-        self.assertEqual([(m["loaded"], m["public"], m["state"]) for m in found], [(True, True, "on")], done.stdout)
-        self.assertIsNotNone(caps.get("revive"))
+        return [(m["name"], m["loaded"], m["public"], m["state"]) for m in json.loads(done.stdout)]
 
-    def test_unload_turns_it_off_and_it_stays_off(self):
+    def revive_rows(self):
+        return [row for row in self.listed() if row[0] == "revive"]
+
+    def test_every_config_shape_loads_it_once(self):
+        private = self.tmp / "private-modules" / "mine"
+        private.mkdir(parents=True)
+        (private / "manifest.json").write_text('{"name": "mine", "title": "Mine"}')
+        (private / "__init__.py").write_text("")
+        self.assertFalse((self.state / "config.json").exists())
+        self.assertEqual(self.revive_rows(), [("revive", True, True, "on")], "no config at all")
+        for listed in ([], ["clamshell"], ["mine"], ["revive", "clamshell"], ["clamshell", "revive"]):
+            self.write_config(rex={"modules": listed, "modules_dir": str(private.parent)})
+            config.reset()
+            self.assertEqual(self.revive_rows(), [("revive", True, True, "on")], listed)
+            self.assertEqual([name for name, _ in modules.active()].count("revive"), 1, listed)
+            self.assertIsNotNone(caps.get("revive"), listed)
+            self.assertNotIn("module:revive", self.cli("doctor", "--json").stdout, listed)
+
+    def test_unload_turns_it_off_until_load_turns_it_back_on(self):
+        self.write_config(rex={"modules": ["clamshell"]})
         done = self.cli("modules", "unload", "revive")
         self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["state"], "off")
         config.reset()
-        self.assertEqual(config.rex("modules"), [])
+        self.assertEqual(config.rex("modules"), ["clamshell"], "the config list is the user's: revive was never in it")
+        self.assertEqual(self.revive_rows(), [("revive", True, True, "off")], "a new process reads it off")
         self.assertIsNone(caps.get("revive"))
-        self.assertNotIn("revive", [m["name"] for m in json.loads(self.cli("modules", "--json").stdout)])
+        self.assertEqual(self.cli("revive").returncode, 2)
+        self.assertEqual(self.cli("modules", "unload", "revive").returncode, 0, "unloading it again is no error")
+        done = self.cli("modules", "load", "revive")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        config.reset()
+        self.assertEqual(config.rex("modules"), ["clamshell"], "load turns it on without writing it into the list")
+        self.assertEqual(self.revive_rows(), [("revive", True, True, "on")])
+        self.assertIsNotNone(caps.get("revive"))
+
+    def test_the_menu_toggle_turns_it_off_and_on(self):
+        self.write_config(rex={"modules": []})
+        for state in ("off", "on", "off"):
+            done = self.cli("modules", "action", "revive", "toggle")
+            self.assertEqual((done.returncode, json.loads(done.stdout)["state"]), (0, state), done.stderr)
+            self.assertEqual(self.revive_rows(), [("revive", True, True, state)])
+        config.reset()
+        self.assertIsNone(caps.get("revive"))
