@@ -40,8 +40,8 @@ Lines are as of the final commit.
 
 | Where | Finding | Why parked |
 |---|---|---|
-| `athena/caps/watch.py:448` (`_start_detached`) | Doctor's repair starts a watch outside launchd. If it wins the lock, the launchd copy exits 1, and `KeepAlive` relaunches it every 10 s. | The fix (repair by `launchctl kickstart`, or exit 0 on a held lock) changes how a stuck watch comes back. It needs a real-launchd check that this lab can't run. |
-| `athena/caps/services.py:221` (`stop`) | Quit athena leaves a dash started outside launchd (by `athena hq` or a repair) running. | It is the same supervision question as the line above. |
+| `athena/caps/watch.py:448` (`_start_detached`) | Doctor's repair starts a watch outside launchd. If it wins the lock, the launchd copy exits 1, and `KeepAlive` relaunches it every 10 s. | Since resolved by the one launchd job: while its supervisor runs, the repair asks it to restart its own watch now, and starts a copy only when none runs. |
+| `athena/caps/services.py:221` (`stop`) | Quit athena leaves a dash started outside launchd (by `athena hq` or a repair) running. | Since resolved the same way: with the supervisor running, `dash on` asks it rather than start a dash of its own. Only a dash started while no supervisor ran (or while athena was stopped) is still left. |
 | `athena/kernel/agents.py:294` (`send`) | `send` and `amend` aren't locked against a goal being typed, so text can interleave. | It needs a per-worker send lock shared with `_send_goal`'s, which touches every typing path. Rare: the human or HQ would have to type in the same seconds. |
 | `athena/caps/hq.py:492` (`rotate`) | Two `hq rotate --now` at once can rotate twice. | Rotation runs once in two hours at most, behind a quiet wait. A generation check inside the lock is the fix. |
 | `athena/caps/hq.py` `_run` | `athena hq` typed in HQ's old block now records the new place and sends the routine, but then ends before `_around_hq` (its doctor pass, dash and board). | Doctor's job restarts the dash and runs its pass within a minute. Running `_around_hq` before the close is the fix. |
@@ -79,9 +79,9 @@ Kept stable: `<state>/run/<name>.sh` (same path and content, now created 0700), 
 
 Each line is the call, why, and how to flip it.
 
-- **Launchd labels are `local.athena.*`, not `athena.*`.** `athena.*` are the herdr athena's, and `services` takes every
-  job under its prefix. The menu bar's bundle id was already `local.athena.menubar`. To flip: `PREFIX` in
-  `caps/services.py`.
+- **Launchd labels are `local.athena*`, not `athena.*`.** `athena.*` are the herdr athena's, and `services` takes every
+  job under its prefix: the one job `local.athena` now, and `local.athena.<name>` from the layout before it. The menu
+  bar's bundle id was already `local.athena.menubar`. To flip: `PREFIX` in `caps/services.py`.
 - **HQ's plugin is `athena-hq` (the skill stays `athena`).** That keeps it apart from the herdr athena's
   `athena@athena`, which HQ's settings turn off. To flip: `plugin/.claude-plugin/plugin.json`.
 - **config.json's `rex` key stays.** Renaming it would migrate the live state. To flip: a migration in a later release.

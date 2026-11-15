@@ -74,8 +74,9 @@ The dashboard (`athena dash open`) is your inbox for the whole fleet:
   <img src="assets/revive.svg" alt="Rex restarts and every window comes back as a plain shell; athena brings HQ back first, then each worker, each on its own conversation" width="640">
 </p>
 
-athena's background jobs start at login, check themselves and repair what stopped. If Rex itself restarts, athena
-brings HQ and every worker back in their own windows, on their own conversations, right where they left off.
+athena's background services start at login under one background item, check themselves and repair what stopped. If
+Rex itself restarts, athena brings HQ and every worker back in their own windows, on their own conversations, right
+where they left off.
 
 ## Features
 
@@ -142,8 +143,10 @@ cd athena
 bin/athena install --services
 ```
 
-The installer checks what it needs first and says what is missing. `--services` starts athena's background jobs at
-login.
+The installer checks what it needs first and says what is missing. `--services` starts athena's background services
+at login, all under one launchd job, so macOS shows one "background item added" notice. An install from before this runs
+a job per service; the first update or install that brings this layout moves it to the one job, which shows that one
+notice once more.
 
 ## Getting started
 

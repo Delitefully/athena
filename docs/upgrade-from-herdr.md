@@ -20,8 +20,8 @@ each result before going on. Use either.
 | HQ's conversation (`hq.json`) | Kept. `athena hq` resumes it. |
 | Open items, the ledger, briefs, notes | Kept as they are. Items with `auto` take their recommendation 12 hours after the new watch first looks. |
 
-athena itself is installed in `~/.local/share/athena`, with its command at `~/.local/bin/athena` and its launchd jobs
-`local.athena.doctor`, `.watch` and `.dash`.
+athena itself is installed in `~/.local/share/athena`, with its command at `~/.local/bin/athena` and one launchd job,
+`local.athena`, which runs the doctor, the watch, the dash and the menu bar.
 
 ## Steps
 
@@ -87,7 +87,7 @@ scripts/upgrade-from-herdr.py install
 ```
 
 `install` runs `bin/athena install --services --real-world` from this checkout: preflight (Python, git, Rex, Claude, gh),
-the release, the launcher, the permission profiles, and the launchd jobs. If it says `~/.local/bin is not on your PATH`,
+the release, the launcher, the permission profiles, and the launchd job. If it says `~/.local/bin is not on your PATH`,
 add the line it prints to your shell's profile.
 
 **8. Turn the old plugin off.**
@@ -102,8 +102,8 @@ scripts/upgrade-from-herdr.py plugin
 scripts/upgrade-from-herdr.py verify
 ```
 
-Every row should be `✓`. The new jobs need a minute to come round the first time: if only *the doctor job has run* or
-*the watch has come round* is `✗`, wait a minute and run `verify` again.
+Every row should be `✓`. The new job's services need a minute to come round the first time: if only *doctor has run*
+or *the watch has come round* is `✗`, wait a minute and run `verify` again.
 
 **10. Open HQ.**
 
@@ -121,7 +121,7 @@ From any step:
 scripts/upgrade-from-herdr.py rollback
 ```
 
-It stops athena's jobs, its watch, its dash and its HQ, moves the state back to `~/.local/state/athena`, puts the herdr
+It stops athena's job, its watch, its dash and its HQ, moves the state back to `~/.local/state/athena`, puts the herdr
 athena's `hq.json` back on the newest conversation, takes `rex.real_world` out, puts the herdr athena's command and
 plugin back, and loads the old jobs again. Workers started by the new athena stop it: retire them first (`athena retire
 <name>`), or pass `--leave-workers`. Then start the old HQ with `athena hq`.
