@@ -1,203 +1,679 @@
 # athena architecture
 
-A clean-room athena: same job, written fresh. The old code told us what must work, not how to build it.
+athena runs a fleet of Claude Code sessions on a Mac, inside the Rex terminal app. One session, **HQ** (the chief of
+staff), takes work from the human and hands each piece to a **worker**: a Claude Code session with its own git worktree,
+Rex window, brief and `/goal`. HQ supervises the workers until their pull requests are ready, and brings the human only
+what needs them.
 
-## Module map
+Everything else is plumbing around those sessions:
 
+- **`athena`**, a command line in plain Python, which HQ, the workers, the background jobs and the menu bar all call;
+- **background jobs** under launchd: the **watch** (turns state changes into notices for HQ), **doctor** (checks and
+  repairs), the **dashboard** (a local web page for the human) and the **menu bar** app;
+- **hooks** that Claude Code runs in each session athena starts, which record what the session is doing and hold a
+  worker's turn open until it files a report;
+- **the state dir**, where all of it meets: plain files that every part reads and writes.
+
+```mermaid
+flowchart LR
+  human((human))
+  subgraph Rex
+    HQ[HQ session]
+    W[worker sessions]
+  end
+  human -- chat --> HQ
+  human -- clicks --> dash[dashboard]
+  HQ -- "athena spawn / send / retire" --> W
+  W -- "hooks, athena report" --> state[(state dir)]
+  HQ -- "athena status, item, ..." --> state
+  state --> watch
+  watch -- "wake: athena watch HH:MM: ..." --> HQ
+  dash <--> state
+  doctor -- "checks, repairs" --> watch
+  doctor -- repairs --> dash
 ```
-bin/athena            the command; the lab guard runs here first, in shell
-athena/cli.py         finds the capability that owns a verb and imports only that one
-athena/kernel/        names no capability
-  store.py                state dir, atomic JSON, appended lines, locks
-  ledger.py               ledger.jsonl and the worker lifecycle state machine
-  bus.py                  events.jsonl: emit from anywhere, read by cursor
-  config.py               config.json, ours under the added `rex` key
-  backend.py              the session backend interface
-  agents.py               a Claude in a place: start, state, safe typing, exit, kill
-  gitops.py               what guards a launch and a removal
-  budget.py               memory, disk and load, checked before any launch
-  caps.py                 the contract, discovery and loading
-  modules.py              optional modules: the config list, public and private folders, on/off
-  world.py                the one door to anything outside; shut unless the state dir's config opens it
-  canary.py               the test run's tripwire, loaded only under test
-  lab.py                  the overnight lab's guard on the state dir; out of an installed copy only by `install --lab-guard-out`, never out of a checkout
-athena/backends/      rex.py (the one that matters), fake.py (tests)
-athena/caps/          the capabilities, one file or directory each
-athena/modules/       public optional modules, loaded when config lists them (clamshell) or on by default by manifest (revive); docs/modules.md
-prompts/              hq.md, worker.md
-scripts/              smoke.sh (VERIFY), test.sh (the only way to run tests), scratch-state.py, chaos-rex.py (the real-process chaos cases), measure.sh (the hot paths, the same way each time), upgrade-from-herdr.py (docs/upgrade-from-herdr.md's steps)
-tests/                contracts and things that broke, in an isolated HOME, inside a sandbox
-```
 
-## The contract
+Rex runs the sessions; athena starts Claudes in them, reads their screens and types into them, but never keeps a Claude
+alive itself. Nothing in athena is a server that the sessions depend on: if every athena job stops, HQ and the workers
+keep running.
 
-A capability is a module or package in `athena/caps/`. It has `SUMMARY` and `commands()`, which returns `{verb: Command}`. It may also define any of these, each found by name:
+## The parts
+
+| Part | What it is for |
+|---|---|
+| `bin/athena` | The command. A shell script that guards the state dir for lab workers, then runs the CLI on the system Python. |
+| `athena/cli.py` | Finds the capability that owns a verb, importing as little as it can. |
+| `athena/kernel/` | What every capability builds on: the state dir, the ledger, the event bus, config, the backend interface, starting and typing to a Claude, git, the machine budget, the capability contract, modules, and the door to the outside world. It names no capability (`tests/test_kernel.py` checks that). |
+| `athena/backends/` | Where programs run: `rex.py` drives Rex; `fake.py` is the tests' stand-in. |
+| `athena/caps/` | The capabilities: each command, check, background job and watch source is one file or package here. |
+| `athena/modules/` | Optional modules shipped with athena (`clamshell`, `revive`), loaded like capabilities when on. |
+| `prompts/` | `hq.md` and `worker.md`, appended to HQ's and each worker's system prompt. |
+| `plugin/` | The plugin HQ loads: the `athena` skill (`plugin/skills/athena/SKILL.md`, HQ's procedures) and `never-ask.md`. |
+| `worker-plugin/` | The plugin each worker loads: a Claude Code mod that draws the worker's progress band. |
+| `menubar/` | The menu bar app, in Swift, built on the Mac by `menubar/build.sh`. |
+| `scripts/` | `test.sh` (the only way to run the tests), `smoke.sh` and `chaos-rex.py` (runs against a private Rex server), `scratch-state.py` (a sanitized copy of a state dir), `measure.sh` (timings of the hot paths), among others. |
+| `tests/` | The unit and contract tests, run in a sandbox with an isolated HOME and the fake backend. |
+| `docs/` | Longer pages on single parts, linked from the sections below. |
+
+## The CLI and the kernel
+
+**`bin/athena`** (`bin/athena`) is a POSIX shell script. When `ATHENA_WORKER` starts with `rex-` (a lab worker), it
+refuses any state dir that is the live one or lies inside it (a hook just exits quietly), before Python starts. It then runs
+`${ATHENA_PYTHON:-/usr/bin/python3} -I -S` with the repository first on `sys.path` and bytecode turned on, and calls
+`athena.cli.main()`.
+
+**`athena/cli.py`** resolves the verb through `caps.find_command` (`athena/kernel/caps.py`): first a capability named
+like the verb (or the verb plus `s`), then every enabled capability, then active modules. Only the capability that owns
+the verb is imported when the verb is named like it, so the hot commands cost what they use; any other verb loads
+capabilities in order until one owns it. `athena` with no verb is `athena hq`. A full disk ends a command
+with `disk is full` rather than a traceback.
+
+The kernel (`athena/kernel/`):
+
+| File | What it holds |
+|---|---|
+| `store.py` | The state dir (`~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`): atomic JSON writes, appended lines that a torn write can't merge, `flock` locks (most under `locks/`; `ask.lock` and `doctor.lock` at the top of the state dir), and the trash, so nothing is deleted outright. |
+| `ledger.py` | `ledger.jsonl`, the append-only record of every worker, and the state machines read from it: `LIFECYCLE`, `phase`, and the goal's moves (`GOAL_MOVES`). It also keeps a snapshot of the live workers in `run/ledger-live.json` and restores from it. |
+| `bus.py` | `events.jsonl`: any process emits an event, readers follow it by byte offset. It rotates at 4 MiB, and `emit` never raises. |
+| `config.py` | `config.json` in the state dir. Top-level keys (`model`, `effort`, `hq_model`, `hq_rotate_tokens`, `human_merge_repos`, Slack and CI keys, ...) and a `rex` block for the rest (`binary`, `server`, `caps`, `modules`, `dash_port`, `max_workers`, ...). A file that doesn't parse falls back to the last good copy, `run/config.good.json`. |
+| `backend.py` | The session backend interface: create a session or window, read a screen, type, press a key, close, label, follow events. |
+| `agents.py` | A Claude in a place, independent of the backend: start it from a launcher, read what state it is in, type to it safely, make it exit, kill it. |
+| `gitops.py` | Git for what guards a launch and a removal: preflight, worktrees, unsaved work, backup refs under `refs/athena-backup/`, git-ignored work. Reads take no optional locks. |
+| `budget.py` | The machine budget checked before a launch: free memory, free disk, load. |
+| `caps.py` | The capability contract, discovery and loading. |
+| `modules.py` | Optional modules: which are listed, where they live, which are switched off. |
+| `world.py` | The one door to real side effects, shut unless the state dir's own config opens it. |
+| `lab.py`, `sandbox.py`, `canary.py` | The lab guard on the state dir, the opt-in signal sandbox for Claudes athena starts, and the tests' tripwire. |
+
+## Capabilities
+
+A capability is a module or package in `athena/caps/` with `SUMMARY` (one line) and `commands()`, which returns
+`{verb: Command}`. It may also define any of these, each found by name (`athena/kernel/caps.py`):
 
 | Function | What it gives | Who calls it |
 |---|---|---|
-| `checks(ctx)` | `[Check(name, ok, detail, repair, grace)]` | doctor, which owns grace, backoff and the repair budget |
-| `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | services, which only knows launchd |
-| `tick(ctx, now)` | watch lines | the watch loop; a throw becomes a line, not a dead loop |
-| `on_event(ctx, event)` | watch lines | the watch loop, per new bus event |
+| `checks(ctx)` | `[Check(name, ok, detail, repair, grace, short)]` | doctor, which owns grace, backoff and the repair budget |
+| `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | `athena services`, which writes them as launchd jobs |
+| `tick(ctx, now)` | watch lines | the watch, every loop |
+| `on_event(ctx, event)` | watch lines | the watch, for each new bus event |
+| `on_quit(ctx)` | a line to say, or `None` | `athena services stop`, once the watch is down |
 
-`config.json`'s `rex.caps` lists which capabilities load; with no list, everything found loads. Optional modules are separate:
-`rex.modules` lists them (default none; a manifest's `"default": true` lists a public one too, until turned off), from `athena/modules/` or the private `rex.modules_dir`, and once loaded they are
-capabilities like these, plus a menu entry (docs/modules.md). A capability reaches another only through `ctx.cap(name)`, which is `None` when it is absent. So leaving a module out of the list, or deleting its file, changes nothing else. A test checks that the kernel imports no capability.
+Every capability found loads, unless `config.json`'s `rex.caps` lists which do. A capability reaches another only
+through `ctx.cap(name)`, which is `None` when that one is absent, so leaving one out changes nothing else.
 
-The backend interface (`kernel/backend.py`) is 14 methods: start a program in a new space, replace a dead one, read a screen, type, press, close. A backend knows nothing about Claude; `agents.py` does.
+The capabilities, by what they are for:
 
-## Old module to new
+- **Sessions:** `hq` (HQ's session, rotation, handoff), `spawn`, `send` (`send`, `nudge`, `keys`, `screen`), `retire`,
+  `trust`, `brief`, `profiles`, `sessions`.
+- **What the sessions say:** `hooks`, `report`, `rules`, `progress`, `limits`.
+- **Following work:** `watch`, `prs`, `follow`, `reviews`, `slack`.
+- **The human's view:** `status`, `items`, `dash/`, `board`, `flame/`, `menubar`.
+- **Keeping it running:** `doctor`, `services`, `install/`, `config`, `modules`.
+- **The Mac:** `workspaces`, `disk`, `heavy`.
 
-| Old | New | Notes |
+`athena --help` lists every verb, and [docs/commands.md](docs/commands.md) covers the ones whose behaviour is more than
+their help line.
+
+## Rex, the backend
+
+A **space** is a Rex session, a **window** is a tab in it, and a **block** is a terminal pane
+(`athena/kernel/backend.py`). athena lays them out the way the human sees them in Rex's sidebar:
+
+- **HQ** has its own session, whose session, window and block are all labelled `athena` (`config.hq_name()`, or
+  `ATHENA_HQ`). HQ's session is moved to the front of the list.
+- **Each repo** has one session, labelled with the repo folder's name, found or made by spawn and recorded in
+  `run/repo-sessions.json`. Each worker is a window in its repo's session, labelled with the worker's name.
+- The ledger records each worker's space, window and block.
+
+A repo's session is every worker's on it, so a worker never renames it (REX-LABEL). Rex's own SessionStart hook tells
+every Claude to `rex session rename` its session, which would show the whole repo's group under one worker's name, so
+`prompts/worker.md` says never to, and athena's SessionStart hook (`athena/caps/hooks.py`, `NO_RENAME`) says it again to
+each worker. Should a label drift anyway, the sessions tick (`athena/caps/sessions.py`)
+puts each repo session athena made back to the label it was made with (the repo folder's name) and says so in one line. HQ's session and sessions athena
+did not make are never touched. `athena sessions` lists every session on the server as `hq`, `worker`, `orphan` (athena
+made it and every worker in it is gone) or `other`, which nothing closes.
+
+`athena/backends/rex.py` drives Rex by running the `rex` command line (`rex.binary`, with `-S <server>` when
+`rex.server` is set) as a subprocess for each call. A call that times out raises `timeout` rather than reading as a
+server that is down. Blocks run their program directly, and stay open after it exits, so a crashed Claude leaves a
+readable screen. Text is typed in pieces of 200 characters (`TYPE_PIECE`).
+
+`athena/backends/fake.py` keeps its spaces, blocks, typed text and pressed keys in a JSON file and runs nothing; the
+tests use it.
+
+## HQ starting
+
+Files: `athena/caps/hq.py`, `prompts/hq.md`, `plugin/`.
+
+`athena hq` (the same as `athena hq open`, and `athena` with no verb):
+
+1. Takes `locks/hq.lock`, so only one HQ starts on a state dir.
+2. If HQ's Claude is already running, it only relabels and focuses HQ's session.
+3. Otherwise it starts Claude in HQ's session (a new window in the recorded session if it still exists, else a new
+   session), resuming HQ's last conversation when there is one (from `hq-start.json`, which HQ's SessionStart hook
+   writes, else `hq.json`). The arguments are:
+   - `--append-system-prompt-file prompts/hq.md`: the rules that never change;
+   - `--plugin-dir plugin/`: the `athena` skill, which holds HQ's procedures;
+   - `--settings settings/hq-rex.json`: HQ's hooks, its permission profile, `ATHENA_ROLE=hq`, and
+     `"idleCompaction": false`;
+   - `--model <hq_model>` when config `hq_model` is set (`hq open --model` wins over it); with `""`, the default, HQ
+     runs on the user's Claude Code default.
+4. Writes `hq.json` (backend, space, window, block, cwd, the Claude arguments, the conversation), keeping the last copy
+   as `hq.json.prev`.
+5. Once HQ is ready, types its routine prompt: load the athena skill, run `athena status`, check doctor shows the watch
+   running, then report what is live. The skill's §1 is the rest of the session start.
+6. `athena hq open` then runs a `doctor --fix` pass, starts the dashboard and opens the board, each skippable by a flag.
+
+HQ's state (`hq.state`) is computed from `hq.json` and whether its Claude runs, never stored: `absent`, `running`,
+`gone`, `gone-fresh`, `lost` or `unrecorded`. Doctor reports a gone HQ and never restarts it; `athena hq` opens it again
+on its conversation.
+
+## Spawning a worker and giving it its goal
+
+Files: `athena/caps/spawn.py`, `athena/caps/brief.py`, `athena/caps/trust.py`, `athena/caps/profiles.py`,
+`athena/kernel/agents.py`, `athena/kernel/budget.py`, `prompts/worker.md`.
+
+HQ runs `athena spawn --name <name> --repo <repo> --branch <branch> --brief <file> --goal "<condition>"`. Spawn refuses before
+it changes anything, and then builds the worker in order:
+
+1. **Checks.** A valid name that isn't reserved, a config that parses, no fleet-wide usage limit, no worker the ledger
+   has lost, a brief that passes `brief check` (`--skip-brief-check` overrides), a goal under the length limit, room in
+   the machine budget, a clean git preflight, a worktree path that doesn't exist yet, and Rex up.
+2. **Capacity.** Under `locks/spawn.lock`: at most `rex.max_workers` live workers (16; `--force` goes past it) and never
+   more than `rex.hard_cap` (16). Then the `spawn` line goes into the ledger.
+3. **Worktree.** `git worktree add` under `worktree_root/<repo>/<branch slug>`, then the repo's setup script if
+   `repos/<repo>.setup` exists beside the config.
+4. **Brief.** Copied to `briefs/<name>.md`, with the state dir's `preferences.md` added as PREFERENCES.
+5. **Settings.** `settings/<name>.json`: the worker's environment (`ATHENA_WORKER`, `ATHENA_HQ`, `ATHENA_STATE_DIR`,
+   `ATHENA_BRIEF`, and `ATHENA_REAPPROVAL` for repos in `reapproval_repos`), its hooks, its permission profile
+   (`athena/caps/profiles.py`, plus any `rex.grants`), and cross-session messages accepted.
+6. **Trust.** The repo's main checkout is marked trusted in Claude's config (below), so the launch never stops at the
+   trust prompt.
+7. **Launch.** Claude starts in a new window of the repo's Rex session with `--name`, `--model` and `--effort` (config
+   `model` and `effort` unless given), `--settings`, `--plugin-dir worker-plugin` and
+   `--append-system-prompt-file prompts/worker.md`. Spawn waits for it to come up, ready or blocked at a startup prompt;
+   one that shows no state within 20 seconds fails the launch.
+8. **Goal.** The goal is typed in as `/goal <condition> Your brief is <path>; read it first. ...`, with fixed clauses
+   on how to file the report, what is out of scope and messaging HQ once. A worker that is still at a startup prompt
+   gets its goal later, from spawn's watch tick, once it is ready.
+
+A launch that fails after the worktree exists kills its Claude, closes its window and removes the worktree.
+
+**The launcher.** `agents.start` writes `run/<name>.sh` (mode 0700), which writes its own pid to `run/<name>.pid`, `cd`s
+into the worktree and `exec`s Claude with its environment. Rex runs that script directly in the new block.
+
+**The goal's moves.** The ledger records where each goal is (`GOAL_MOVES` in `athena/kernel/ledger.py`): `first` while a
+first goal waits, `amended` while a goal HQ restated with `athena amend <name> "<condition>"` waits, and `unconfirmed`
+from the moment it is typed until it is seen to land, then back to none. A worker that shows no turn within 30 seconds
+of its goal leaves it unconfirmed, which wakes HQ. Each move holds `locks/<name>.goal.lock`, so an amend waits for
+a send in flight. A goal waiting at a startup prompt is typed only once the Claude is ready; a goal spawn sends at once,
+and an amended one, go in even while the worker works, as Claude queues what is typed while it works and a worker
+looping on a goal may never be idle.
+
+**Typing safely** (`agents.send`, `athena/caps/send.py`). Nothing is typed into a Claude that is blocked, not running or
+still starting, into a block labelled for someone else, or into an input box holding text someone hasn't sent. Text goes
+in pieces of 200 characters: Claude takes about 800 characters arriving at once for a paste, and a pasted `/goal` never
+runs. `GOAL_MAX` is 3990 characters.
+
+**Folder trust** (`athena/caps/trust.py`). Claude's trust prompt is answered by writing
+`projects[<main checkout>].hasTrustDialogAccepted: true` into `~/.claude.json`, as Claude's own message names it. Claude
+writes that file often, re-reading it under `~/.claude.json.lock`, so trust takes the same lock, changes the one key
+and renames the file into place. A worktree follows its main checkout.
+
+**The budget** (`athena/kernel/budget.py`). Spawn refuses a launch under 25% free memory (10 points more for each extra unit an
+ultracode worker costs), under 10 GB of free disk, or at load above 3 per core. A reading it can't get counts as room:
+this holds launches, it is not an interlock. `--force-budget` goes past it.
+
+## Hooks, status and the report gate
+
+Files: `athena/caps/hooks.py`, `athena/caps/report.py`, `athena/caps/rules.py`, `athena/caps/progress.py`,
+`athena/caps/status.py`, `worker-plugin/`.
+
+Every Claude athena starts gets its hooks from its own `--settings` file; nothing is installed globally. Each hook runs
+`bin/athena hook` with the event on stdin:
+
+| Event | What it does |
+|---|---|
+| `SessionStart`, `UserPromptSubmit`, `Stop`, `SubagentStop`, `StopFailure`, `Notification`, `SessionEnd` | A worker's state, into `workers/<name>.json`; for HQ, its conversation id into `hq-start.json` and each prompt into the request log. |
+| `Stop` (workers) | The report gate, below. |
+| `PreToolUse` on Bash | `rules.py`: the standing orders a machine can check. |
+| `PostToolUse` on the task tools | `progress.py`: the worker's progress, from the task list it keeps. |
+
+**A worker's state** comes from one pure step, `hooks.next_state`:
+
+```
+starting -SessionStart-> idle -UserPromptSubmit-> working -Stop-> done | blocked | idle   (by the report)
+any -Notification (needs the human)-> blocked        working -Notification (idle prompt)-> idle
+any -SessionEnd-> exited
+```
+
+A turn that ends while its subagents or background shells still run shows as `working (background)`. Each write holds
+`locks/<name>.hook.lock`, so a Notification beside a Stop can't lose the report.
+
+**The report.** A worker files its report with a command, in its own session:
+
+```
+athena report --status DONE|DONE_WITH_CONCERNS|IN_PROGRESS|BLOCKED|NEEDS_CONTEXT --verify "<command> -> pass|fail" \
+  [--decision "..."]... [--concern "..."]... [--summary "..."]
+```
+
+`report.py` fills in `head` from the worktree and `pr` from the branch's open PR, runs the gate's checks at once (a
+DONE the gate would refuse is not filed, and the worker hears why), and writes the report into its status file as
+`filed`.
+
+**The gate.** At each worker Stop, the hook takes in what was filed this turn and moves it to `report`, the one field
+that status, the watch, review and the dashboard read. It sends the turn back (`decision: block`, with the reason) when:
+
+- nothing was filed this turn;
+- a DONE or DONE_WITH_CONCERNS has no `--verify "... -> pass"`, its worktree is gone, its `head` is not the worktree's
+  HEAD, or the repo is on GitHub and the report has no PR URL (unless the brief says no PR).
+
+BLOCKED, NEEDS_CONTEXT and IN_PROGRESS need only the report; IN_PROGRESS rests as idle and wakes no one. Every Stop and
+every new prompt uses up what was filed, so a turn sent back files again. The gate sends a turn back at most three
+times in a row (the count resets after five quiet minutes); the next refusal gives way, and the worker reads as
+`idle-unreported`, which wakes HQ. When nothing was filed, an
+`ATHENA-REPORT {json}` line at the end of the worker's last message is read as its report.
+
+**The transcript as a second source.** When a Stop event carries no last message, the hook reads it from the end of
+Claude's own transcript, and `athena status` rebuilds a last report the same way when a status file is missing. Its
+format is Claude's, so anything unexpected is simply no report.
+
+**Rules** (`athena/caps/rules.py`). The PreToolUse hook reads each Bash command line as a shell would (each command
+after `&&`, `;` or a newline, in a subshell, under `sh -c` or `eval`; quoted words are not commands) and denies, with
+`athena rule: <why>`:
+
+- `git push` with `--force`, `-f` or a `+ref` (use `--force-with-lease`);
+- a push to `main` or `master`;
+- `gh pr merge --admin`;
+- `rex server stop` without `-S`.
+
+It guards against mistakes, not against a script: what a script does inside isn't on the line.
+
+**Progress** (`athena/caps/progress.py`, `worker-plugin/`). The PostToolUse hook turns each task-list update into done,
+total and the step in progress, in `workers/<name>.progress.json`. The worker plugin's mod
+(`worker-plugin/hooks/progress-mod/`) draws it as a band above the worker's prompt. When the list has been quiet for ten
+minutes while the worker works, the mod asks `athena progress` for a short Haiku estimate instead (`rex.progress_haiku:
+false` turns that off).
+
+**Status** (`athena/caps/status.py`). `athena status` reads the ledger, the status files, the pid files and `ps` (one
+call for every worker), with no backend call unless `--live`, so it answers in milliseconds. A Claude whose pid is gone reads as `exited`. A `ps` that can't
+answer raises `Unknown`, which never reads as gone.
+
+## The watch and its notices
+
+Files: `athena/caps/watch.py`, `athena/caps/follow.py`, `athena/caps/prs.py`, `athena/caps/slack.py`,
+`athena/caps/sessions.py`, `athena/caps/limits.py`; [docs/watch.md](docs/watch.md).
+
+The watch (`athena watch --tagged --wake`) is a long-running process, a launchd job of its own. It holds
+`locks/watch.lock`, so only one runs. Every loop (20 seconds by default) it:
+
+1. folds the workers (ledger, status files, PRs) into a snapshot and diffs it against the last one;
+2. reads new events from the bus;
+3. calls every capability's and module's `tick` and `on_event`;
+4. prints each resulting line, and types the ones that need HQ into it.
+
+Each line is `wake`, `routine` or `quiet`, decided where it is made. Routine lines go to the watch's log; quiet ones go to
+`logs/watch-suppressed.log` with their reason; a wake repeated within ten minutes is dropped (Slack's lines excepted). A
+capability whose `tick` raises becomes a `watch error` line, not a dead loop.
+
+**A wake** is typed into HQ as one prompt, `athena watch HH:MM: <line> · <line> · ...`, and only while HQ is idle with an
+empty input box; until then the lines are held. Each line is rebuilt from an allowlist of fixed shapes (names, states,
+report and check words, `#n`) before it goes out, and a line that fits none goes out as `a watch line not shown here
+(athena status)`. HQ reads a typed prompt as the person's own words, so nothing from a PR, a ticket or Slack is ever
+typed into it. The lines also go to `run/inbox.jsonl`, which `athena watch --inbox` prints as data.
+
+The snapshot, the bus offset, the lines already told and any held wakes are saved in `run/watch-state.json` each loop,
+so a restarted watch carries on without telling anything twice. `athena doctor` restarts a watch whose loop hasn't come
+round in five minutes.
+
+**What it follows:**
+
+- **Workers:** state changes (into blocked, exited or idle-unreported is a wake), reports (all but IN_PROGRESS), a
+  worker gone from the ledger, a goal unconfirmed. Spawn's tick delivers pending goals.
+- **Workers' PRs** (`prs.py`): checks, reviews, conflicts, and whose move each PR waits on (`prs.move`). GitHub is read
+  on a thread of its own, so a slow GitHub never holds up the loop.
+- **Beyond the workers' PRs** (`follow.py`), every two minutes on its own thread: stacked PR chains (`stack.json`,
+  set with `athena stack`), retired workers' open PRs for two weeks, PRs asking the human for a review (for the
+  dashboard), failed CI on each repo's default branch (one incident per workflow, in `ci-failed.json`), main moving
+  (config `watch_main_moved`), and AI reviewers' threads on every followed PR.
+- **Slack** (`slack.py`), at most once a minute: new messages for the human in their DMs and watched channels, as
+  `slack-new <id> <n>`, counting only what the human hasn't read. The token comes from the Keychain, through the door
+  below.
+- **Rex** (`sessions.py`): labels put back, sessions left behind. On its own thread the watch follows Rex's event
+  stream, and acts when the human closes a worker's window: it retires that worker the safe way.
+- **The account** (`limits.py`): a usage limit, an expired sign-in or an API outage, read from Rex's program status and
+  the bottom rows of each worker's screen. It is noticed once for the whole fleet: a usage limit parks the fleet until
+  its reset, and then each parked worker is told to carry on.
+- **The dashboard's answers:** `dash-queue <n>` when the human answered something (below). The watch looks at the queue
+  every second between loops, so an answer rings at once.
+
+[docs/watch.md](docs/watch.md) covers closed windows, AI reviewers' threads and how Slack is read.
+
+## Items and the dashboard
+
+Files: `athena/caps/items.py`, `athena/caps/dash/`.
+
+**Items** are everything asked of or promised to the human, in `needs-you.json`: a `decision`, `request`, `result`,
+`promise` or `incident`, each with whose move it is next (`you`, `athena`, a worker, a reviewer, CI, ...). HQ files each
+request the human makes as a named item (`athena item add`), puts each decision on the dashboard as an item with at most
+a few options and a recommendation, and resolves an item once the human took the last step (`athena item done`). All
+writes hold `ask.lock`, and a `needs-you.json` that doesn't parse is never overwritten. Items resolved more than a week
+ago move to `items-archive.jsonl`. What the human types into HQ is logged to `requests.jsonl` by HQ's UserPromptSubmit
+hook, with secret-shaped strings redacted, so `athena item check` can find requests no item holds.
+
+**The dashboard** (`athena dash open`) is one page on `127.0.0.1` (port `rex.dash_port`, 2843), served by
+`athena dash run` with the Python standard library (`server.py`; `state.py` reads the files, `view.py` places each row,
+`page.py` renders it, `markdown.py` turns an item's body into safe HTML, `static/` holds the script, style and fonts). It reads the state files and writes only what the
+human does on it: `actions.jsonl`, `needs-you.json` (Done, Snooze, Reopen) and `dismissed-prs.json`. The page groups:
+
+- **Needs you:** decisions, with HQ's recommendation and a one-click answer; workers blocked at a permission prompt; PRs
+  whose next move is the human's.
+- **Ready for you:** results and reports to read.
+- **Awaiting review:** PRs waiting on a teammate.
+- **In flight:** every worker and what it is doing.
+- **Done today:** what settled in the last 24 hours.
+
+The page updates itself over server-sent events. It answers only to its own host names on loopback, sends a strict
+Content-Security-Policy, and takes a POST only from its own origin with the token it was served.
+
+**An answer's path.**
+
+1. A click posts the answer, which the server checks against what the page offered and appends to `actions.jsonl` as
+   `queued`.
+2. For six seconds the human can undo it.
+3. Once it settles, the watch rings `dash-queue <n>` in HQ.
+4. HQ reads the answers with `athena ask queue`, acts on each in order, and runs `athena item done <id>`.
+
+An answer not taken up within ten minutes shows its item again. A low-stakes decision filed with `--rec <option> --auto`
+takes its recommendation on its own 12 hours after it was filed, or 2 hours once the human has been away, if they don't
+object; never one with stakes (security, a customer, money, one-way).
+
+The dashboard's Flame page (`/flame`, `athena/caps/flame/`) shows where time and tokens went, from an index of Claude's
+transcripts that holds their shape and cost, never their text ([docs/flame.md](docs/flame.md)).
+
+**The board** (`athena board`, `athena/caps/board.py`) is a read-only panel in a block beside HQ: a row per worker and
+the tail of each busy worker's screen, redrawn from status. It is for a glance, never for typing.
+
+## Doctor and services
+
+Files: `athena/caps/doctor.py`, `athena/caps/services.py`.
+
+**Doctor** is one stateless pass over everything athena needs. Its own checks are the Rex server, each running worker's
+hooks, disk, memory, the ledger and the config; every other line comes from a capability's or module's `checks(ctx)`: the
+watch, the dashboard, HQ and its context, PRs, Slack, items, workspaces, sessions, limits, modules, the installed release,
+revive and clamshell. A `checks` that raises is one failing line, not a failed pass.
+
+Doctor owns only the rules around a check:
+
+- a failing check with a repair is repaired once its grace has passed (`grace`, 0 unless the check sets one);
+- at most three repairs per check an hour, backing off 2 then 4 minutes between tries;
+- no repairs while load is above 3 per core, since a repair only adds to it;
+- no repairs without `doctor.lock`; on a full disk it still reports.
+
+What it repairs: a watch whose loop stopped, a dashboard that isn't answering, a ledger that lost workers (restored from
+its snapshot), an update left half-switched, and HQ's context (by asking HQ, once every two hours while it is idle, to
+rotate). It never starts the Rex server, a worker's Claude or HQ: Rex runs those, and doctor only says what is gone.
+
+Each pass writes `health.json` (each check, the problems and since when, what was repaired, and `hq_alive`) and keeps its
+memory under the `rex` key of `doctor.json`. `athena doctor --last --json` reads `health.json` and runs nothing. With
+`--fix`, a new problem also raises one macOS notification, repeated hourly while it lasts. The watch tells HQ once when
+doctor hasn't reported for five minutes, so each of the two watches the other.
+
+**Services** (`athena services install|uninstall|status|stop|start|restart`) turns every capability's `services(ctx)` into
+launchd agents in `~/Library/LaunchAgents`, labelled `local.athena.<name>`, logging to `logs/service-<name>.log`:
+
+| Job | Runs | How |
 |---|---|---|
-| `herdr.py` | `backends/rex.py` | behind the interface |
-| `paths.py` | `kernel/store.py` | |
-| `ledger.py` | `kernel/ledger.py` | same file, compatible; adds `phase` |
-| `config.py` | `kernel/config.py`, `caps/config.py` | |
-| `gitops.py` | `kernel/gitops.py` | reads take no optional locks; WIP backups include untracked files |
-| `composer.py` | `kernel/agents.py` | |
-| `spawn.py` | `caps/spawn.py`, `caps/trust.py` | |
-| `retire.py` | `caps/retire.py` | |
-| `status.py` | `caps/status.py` | files and one `ps` |
-| `sockets.py` | none | Rex runs the sessions |
-| `hookstatus.py`, `hooks/worker-status`, `hooks.json` | `caps/hooks.py` | per-session `--settings`; the fast path and `nested()` are gone |
-| `asks.py`, `requestlog.py` | `caps/items.py` | same files; redacts secret shapes |
-| `brief.py` | `caps/brief.py` | |
-| `pr.py` | `caps/prs.py` | |
-| `watch.py`, `dashstate.py` | `caps/watch.py` | own process; restarts tell the gap |
-| `doctor.py` | `caps/doctor.py` | rules only; the checks come from each capability |
-| `service.py` | `caps/services.py` | |
-| `hq.py`, `handoff.py`, `launch.py` | `caps/hq.py` | |
-| `slack.py` | `caps/slack.py` | first version: DMs and listed channels; own state file |
-| `board.py` | `caps/board.py` | a read-only live panel, see decisions |
-| `dash.py`, `dash/*.go`, `page.html` | `caps/dash/` | Python standard library |
-| `local/clamshell` | `modules/clamshell/` | a public module, off by default; decision and caffeinate; the root daemon stays the actuator |
-| none | `modules/revive/` | a public module, on by default; brings HQ and workers back after a Rex restart |
-| `hq.md`, `worker.md` | `prompts/` | |
-| `init.py` | `caps/install.py` | see decision 31 |
-| none | `caps/workspaces.py`, `caps/limits.py`, `caps/heavy.py`, `kernel/budget.py`, `kernel/bus.py`, `caps/sessions.py`, `caps/profiles.py`, `caps/permissions.py`, `caps/rules.py`, `caps/disk.py`, `caps/flame/` | new |
+| `doctor` | `athena doctor --fix --quiet` | every 60 seconds |
+| `watch` | `athena watch --tagged --wake` | kept alive |
+| `dash` | `athena dash run` | kept alive |
+| `menubar` | `athena menubar run` | kept alive, interactive |
 
-**Dropped, with why:**
-- Board columns of attached panes: Rex has no terminal mirror, and one session per worker was the point.
-- `athena hq restart --update`: updating Claude is not HQ's restart's job. It also made every restart slow and risky (chaos C4).
-- `reviewpost.py`, the automatic lane that posts PRs to Slack: `open-prs` keeps the record, posting stays HQ's by hand until someone wants the lane back.
-- `--preview` on items: unused enough that the old flag was a silent no-op on edit. Pass a flag it lacks and argparse now refuses.
-- `herdr-on-rex`, `report-agent-session`: the study's shim, and a herdr concept. Doctor relaunches from the ledger.
-- `local/verify`: never athena's; it served one repo's PRs.
+A module may add jobs of its own. A plist whose bytes haven't changed is left as it is. `services stop` is the menu bar's
+**Quit athena**: it marks athena stopped (`services-stopped.json`), then disables and boots out doctor first (so nothing
+brings the rest back) and then the others, stops a watch doctor started outside launchd, and runs each loaded
+capability's and module's `on_quit`. A module's jobs and the menu bar stay. While stopped, doctor's watch and dash repairs
+stand back, as a repair would undo Quit. `services start` loads them again, doctor last. Quit never stops the Rex server,
+HQ or any worker.
 
-**Not built yet (for later workers):**
-- The watch mod's status band and its completion block: Claude Code draws them from a mod, and athena's HQ on Rex has none. Wakes are typed as the herdr athena's mod wrote them.
-- Slack: replies in threads the human joined outside the DMs and watched channels; a refused channel skipped for an hour.
-- The `<w> post for review` lane (a module on the modules loader).
+## The menu bar
 
-The skill's procedures are `plugin/skills/athena/`; the CI doorbell, `main moved`, stacks, review requests and retired workers' PRs are `caps/follow.py`. Messaging sockets aren't watched: Rex runs the sessions.
+Files: `athena/caps/menubar.py`, `menubar/`.
 
-## Decisions
+The menu bar app is an AppKit status item in Swift (`menubar/Sources/`), built by `menubar/build.sh` with `swiftc` into
+`menubar/build/AthenaMenu.app`. `services install` builds it when it is missing or its sources changed (by content
+hash), and its login job runs `athena menubar run`, which hands over to the app.
 
-These are the calls, each easy to reverse unless it says otherwise.
+The app does everything through the CLI, so it never names launchctl or the Rex server. It polls `services status
+--json`, `status --json` and `modules --json` every 5 seconds, one poll at a time, and `doctor --last --json` at most
+every 30 seconds. It acts with `services stop|start|restart`, `dash open`, `hq open`, `doctor --fix --quiet` and
+`modules action <name> <id>`. Its icon, a knot, shows athena working, idle, needing the human or stopped
+(`menubar/glyphs/`); the working motion is drawn in Swift from the strands of `knot-working.svg`.
 
-**0. Clean room, and what that does and doesn't mean here.** The same person read the old code and wrote this, so it isn't a clean room in the legal sense. A similarity scan (`difflib`, per function, against the old athena and the Rex prototype) found functions that came out too close, and those were rewritten from their behaviour. What remains above 0.7 is generic: three-line try/except helpers, often matching unrelated files. Shared by necessity, as contracts rather than code: file formats, the `refs/athena-backup/` namespace, the report line, the `NOT_HUMAN` prompt prefixes, and Claude's on-screen strings.
+## Modules
 
-**1. Python standard library, on `/usr/bin/python3`.** Nothing to compile. It starts in 20 to 40 ms, against about 170 ms for the pyenv shim. Code stays 3.9-compatible. `bin/athena` runs it with `-S`, and turns bytecode back on: Xcode's python keeps none by default, so every command compiled everything it imported.
+Files: `athena/kernel/modules.py`, `athena/caps/modules.py`, `athena/modules/`; [docs/modules.md](docs/modules.md).
 
-**2. Start Claude directly, never type it into a shell.** `session.create` with a command runs a launcher script at the right size. This removes the 1024-byte line limit, the wait for a prompt, the shell history, the "is a shell in front" checks and the 80x24 redraw. A launcher records its pid before `exec`, so the pid is ours on any backend.
+A module is an optional feature: a folder with `manifest.json` and `__init__.py`. Once loaded it is a capability like
+those in `athena/caps/`, plus a menu bar entry. Public modules live in `athena/modules/`, and private ones in
+`rex.modules_dir` (`~/.config/athena/modules` by default), outside the repository. A name found in both is an error.
 
-**3. One Rex session per repo, a window per worker, keyed by id.** A Rex session is close to a herdr space, as the human expected: session is workspace, window is tab, block is pane. Rex's sidebar groups workers by repo: spawn finds or makes the repo's session (`run/repo-sessions.json`, labelled with the repo folder's name) and opens the worker in a window and block labelled with its name; retire closes that window, and the session once it is empty. The ledger records session, window and block, and `status` finds a worker by its window. A worker from before keeps the session of its own it was given. HQ's session, window and block are all `athena`. Labels are for people. A repo's session is every worker's on it, so a worker never renames it (REX-LABEL): Rex's SessionStart hook tells every Claude to `rex session rename` its session, which would show the whole repo's group under one worker's name. `prompts/worker.md` says never to, overriding that hook, and athena's own SessionStart hook says it again to each worker, as Rex's reaches it before the brief does. Should a label drift anyway, the watch's sessions tick puts each repo session athena made back to the label it was made with (the repo folder's name) and says so in one line; HQ's session and sessions that aren't athena's are never touched. HQ's session moves to first in the list. After a server restart, ids return and programs don't, and a block comes back as a plain shell. So a revive opens a new window in the same session and closes the old block: one path for a crash, a restart and a lost session. Blocks stay open after exit, so a crash leaves a readable screen.
+- Config's `rex.modules` lists the modules to load; a public module whose manifest says `"default": true` loads too.
+- `athena modules load|unload <name>` changes the list; a module switched off stays listed, off, in `modules.json`.
+- `athena modules --json` is the menu bar's list, one object per module (`name`, `title`, `public`, `loaded`, `state`,
+  `detail`, `actions`).
 
-**4. Hooks and the gate go in each session's `--settings`, not a global plugin.** They fire only in a Claude athena started. This removes a whole class of bugs: status landing on the wrong worker from a matching cwd, nested Claudes (chaos K6, K7), and the hook's shell fast path. It also turns the old plugin off in those sessions, so both versions can be installed together.
+The two public modules:
 
-**5. Folder trust is written, not answered.** Claude's own error text names `projects[<main checkout>].hasTrustDialogAccepted`. `CLAUDE_CODE_SANDBOXED` skips the prompt too, and changes more than trust, so it is not used. Claude re-reads its config under `~/.claude.json.lock` before each write, so `trust` takes that lock, changes one key and renames. It writes nothing without the lock. **Checked with a real Claude:** without the key it stops at the prompt on a new repo's first worktree; with only the main-checkout key it goes to its input box. Rex starts programs through `/usr/bin/login`, which **resets HOME**, so an isolated HOME must be set on the program itself, not the server.
+- **revive** (on by default): when the Rex server restarts, every pane comes back as a plain shell. Revive brings HQ
+  back first, then each live worker, in its own pane, on its own conversation (`--resume`), with the flags it was
+  started with, and tells a worker that was mid-turn to carry on. `athena revive` shows what a restart now would bring
+  back. It records each server instance it handled in `revive.json`.
+- **clamshell** (off by default): whether the Mac stays awake with its lid closed. It decides from AC power, the lid and
+  doctor's last pass in `health.json` (`decide`, a pure function), and runs `caffeinate` while a worker works on AC
+  power. The privileged side is a root daemon outside this repository, which reads `hq_alive` from `health.json`.
 
-**6. Status is files first.** `status` reads the ledger, the status files and one `ps`, with no backend call unless `--live`. A dead Claude reads as `exited` from its pid. **Liveness has three answers:** a `ps` that cannot answer raises `Unknown`, which never reads as gone, and retire then removes nothing.
+## HQ rotation and handoff
 
-**7. Explicit state machines.** Worker lifecycle: `ledger.LIFECYCLE`, `ledger.phase`. Goal delivery: `ledger.GOAL_MOVES`. Retire: its stages, in `caps/retire.py`, none of them stored. HQ: `hq.state`. Activity: `hooks.next_state`, a pure step. Workspace: `workspaces.classify`, a pure function of facts. Whose move: `prs.move`. Clamshell: `decide`. These replace flags read in many places.
+Files: `athena/caps/hq.py`, `plugin/skills/athena/SKILL.md` §1a.
 
-**8. Shared state stays compatible; ours is additive.** Same files, same fields, for `ledger.jsonl`, `workers/`, `needs-you.json`, `actions.jsonl`, `requests.jsonl`, `history.jsonl`, `health.json`, `watch.json`, `hq.json`, `stack.json`, `open-prs-posted.json`, `config.json`. Rex places are the added fields `backend`, `space`, `block`. Doctor's memory is under an added `rex` key of `doctor.json`. New files: `events.jsonl`, `slack-rex.json`, `board-rex.json`, `service-rex.json`, `run/`, `settings/hq-rex.json`, `hq.json.prev`, `needs-you.json.prev`, `scratch/`. A worker with no `backend` is the old athena's: it is listed, and retire won't stop it. Not locked against the old athena: one runs at a time.
+A long HQ conversation is not compacted: it is ended and a fresh HQ starts from a handoff. HQ's `--settings` set
+`"idleCompaction": false`, so Claude Code never compacts HQ while it sits idle. `autoCompactEnabled` is left to the user,
+as a backstop near the limit. Workers' settings leave compaction alone.
 
-**9. The watch is its own process.** A flock makes it single, it persists its snapshot and undelivered wakes, and doctor restarts it alone. GitHub is fetched on its own thread, so a slow GitHub can't read as a dead loop, and liveness is measured per loop. It never costs HQ a restart. Lines are `wake`, `routine` or `quiet` where they are made, and pass an allowlist before they go out. Wakes are still typed as prompts (issue 28: mitigated, not removed).
+**When.** HQ rotates once its context holds config `hq_rotate_tokens` (400k unless set), counted from the last usage in
+HQ's transcript. `athena status` and `athena doctor` show it as `hq context 171k of 400k (rotates at hq_rotate_tokens)`,
+and doctor asks HQ to rotate once it is past the line, at most every two hours, only while HQ is idle with an empty
+input box. HQ also rotates daily, by the skill. Nothing rotates HQ by force: HQ runs the command.
 
-**10. Rex runs the sessions, HQ's and the workers'.** Doctor never brings a Claude back, starts the Rex server or restarts HQ; it says what is gone, and `athena hq` opens HQ again on its conversation.
+- `athena hq rotate` rotates now.
+- `athena hq rotate --if-context-over` rotates only past `hq_rotate_tokens`, and says why not otherwise.
+- `athena hq rotate --if-context-over <pct>` measures a percent of `rex.hq_context_window` (1M unless set;
+  `ATHENA_HQ_CONTEXT_WINDOW` overrides) instead.
 
-**11. The machine budget holds launches.** Spawn refuses under 25% free memory, under 10 GB of disk, or at load above 3 per core. An ultracode worker costs more. `--force-budget` goes past it for spawn. Readings it can't get count as room: this holds launches, it isn't an interlock.
+**How.**
 
-**12. New report status `IN_PROGRESS`.** Rests as idle and wakes no one, so a worker with background work stops reporting a false BLOCKED. DONE doesn't need HEAD pushed: local-only work reports DONE, as in the old athena.
+1. HQ writes its in-flight threads (what it waits on, promises, a review in progress), passed with `--threads -` or kept
+   in `threads.md`; without them, HQ's last words from its transcript stand in.
+2. `build_handoff` writes `handoff.md` from athena's state: the fleet, PRs, every open item by name (never cut), the
+   threads, the notes tail and the standing orders' path, at most 150 lines.
+3. The rest runs detached (`logs/hq-restart.log`), since HQ asked from its own Bash tool. It waits up to two minutes for
+   HQ to be idle with an empty input box, else skips; `/exit`s HQ's Claude; starts a fresh one in the same session,
+   with no `--resume`; and types a prompt telling it to read `handoff.md` and run the session start.
+4. The old conversation stays resumable, recorded in `hq.json` as `previous_session`, and `threads.md` moves to
+   `threads.prev.md`.
 
-**13. Board replacement.** A read-only panel (`board open`), redrawn from status and capture, with the tail of each busy worker's screen. A glance, not a place to type. `board jump` needs Rex's Remote Control setting, which is off by default and which nothing here changes.
+A rotation is refused during a usage limit or right after an account change. Workers, the dashboard and the watch keep
+running through it.
 
-**14. Clamshell keeps the root daemon.** It reads `hq_alive` from `health.json`, which doctor still writes, so no new root code is needed. It needs no repointing either: the old path stays as a link (decision 32), so no `sudo` is part of the cut-over.
+## Retire and workspaces
 
-**15. Default state dir `~/Library/Application Support/athena`,** `ATHENA_STATE_DIR` overrides. Paths with a space are quoted in hooks and handled by `plistlib` in services.
+Files: `athena/caps/retire.py`, `athena/caps/workspaces.py`, `athena/caps/disk.py`, `athena/kernel/gitops.py`;
+[docs/workspaces.md](docs/workspaces.md).
 
-**16. Real side effects have one door, shut by default.** `kernel/world.py` is the only way to run `security`, `osascript`, `pmset`, `ioreg`, `caffeinate`, `launchctl` or `gh`, or to reach a module's real card, Slack, a browser, the human's Rex server or the real `~/.claude.json`. It opens only when `config.json` in the state dir itself says `rex.real_world: true` (`ATHENA_CONFIG` can't point it elsewhere), and never while `ATHENA_WORKER` starts with `rex-`. No environment variable opens it: were the door shut by one, a test harness that deleted it would open the door to the tests. A scratch copy can't inherit it. Places are compared by what they are, not how they're spelled: links are followed, case is ignored, and a folder is also known by device and inode (`lab.inside`), since a macOS disk usually ignores case and `realpath` keeps a wrong spelling. With the door shut, the only Rex endpoint that may be named is one under the per-user scratch root with a `.athena-server-owner` mark beside its socket naming this state dir, so neither the human's server nor another worker's can be; and any Claude config under the real home is off limits. **`install` sets `rex.real_world: true` on a state dir it creates, and `install --real-world` on one that moved (the upgrade from the herdr athena runs it: [docs/upgrade-from-herdr.md](docs/upgrade-from-herdr.md)),** or the real install stops short of all of these. Until then a launch that stops at Claude's prompt says trust wasn't written. `ps`, `git`, `du` and `memory_pressure` stay outside the door on purpose: they only read. Under test `ps` is a recording stub too. `kernel/lab.py` and its shell copies separately keep the rewrite's workers off the live state dir; `install --lab-guard-out` empties `LIVE_PATHS` in the installed copy alone.
+`athena retire <name>` moves through `saved -> marked -> stopped -> removed -> closed -> retired`. No stage is stored:
+each run asks the world what is left, so a retire that was killed is finished by running it again.
 
-**16a. Tests have four walls, and run only through `scripts/test.sh`.** An OS sandbox holds for every child, Python or not: no writes under the real HOME or `/Volumes`, no reads of live state, the card or Claude's files, none of the real tools, Rex or Claude, no network but loopback and not the live dashboard's port, no Unix socket but its own folder's, no signals outside. The harness stops at import outside it, asking the sandbox by a write only it forbids and accepting only its `EPERM`. The door is shut, and each test ends by checking that. Named tools resolve to recording stubs, first on `PATH`, and the card is a fake folder. A canary, a Python audit hook in the test process and its `bin/athena` children, stops and records any reach for a real tool, an unexpected program, a guarded path, a Unix socket outside the test's own folders, the network, the live dashboard's port or a signal to a pid that isn't the test's, and the harness fails any test whose log has an entry, even if the test swallowed the error. `tests/test_world.py` proves each with poses, the real list directly with no file touched, and shell children against the sandbox. The sandbox uses `sandbox-exec`, which Apple marks deprecated, so a later macOS could drop it; the suite then refuses to run rather than running bare.
+1. **Saved.** The head is backed up under `refs/athena-backup/<name>/`. Uncommitted, unpushed or git-ignored work
+   refuses the retire. `--force` saves it first: changes, untracked files included, as a `-wip` backup ref, and
+   git-ignored work copied to `trash/`, up to `rex.ignored_copy_max_mb` (2 GB). A save that fails stops the retire.
+2. **Marked.** The ledger records where the work went (`retire_kept`) and that the worker is retiring.
+3. **Stopped.** Claude is asked to `/exit`, then its block is closed, then it is killed; whatever else it left running
+   on its terminal is stopped too, listed before the stop.
+4. **Removed.** `git worktree remove`. It adds `--force` only once the changes are saved as a `-wip` ref, or on a
+   `retire --force` that needs it, so git still refuses a dirty tree nobody saved.
+5. **Closed.** Its window closes, and its repo's session once that is empty.
+6. **Retired.** A line in `history.jsonl` and in the ledger. The branch stays.
 
-**17. Scratch copies come from `scripts/scratch-state.py`.** It copies named files only, never `secrets/`, pids, locks or `hq.json`. It clears live and failed workers, repoints roots, and turns HQ's bypass off.
+`athena workspaces` lists every worktree, Claude worktree, scratchpad, scratch space and leftover in the state dir, with
+an owner and a state computed from facts on every read (`workspaces.classify`: active, crashed, retired, orphan,
+expired, held). `athena workspaces clean --apply` removes only what holds no unsaved work, backing up a worktree's head
+first and moving anything else to `trash/`. `athena disk` lists named caches and empties one by name.
 
-**18. Text is typed in pieces of 200.** Over about 800 characters at once, Claude takes typed text for a paste: it arrives wrapped as `<pasted_content>`, it reads as data and not instructions, and a `/goal` never runs. Measured on a real Claude: 800 clean, 900 wrapped, and 3990 in pieces clean. Spawn's own goal clauses are about 450 characters, so this is the normal case, not an edge. Smoke checks a long prompt.
+## Install and update
 
-**19. A second source for reports: the transcript.** Reports still go through hooks. A status file that's lost, a Stop that never landed or a hook field that gets renamed fall back on Claude's own transcript, and a report read that way says so, since the gate never saw it. It counts only if no prompt or tool call follows it and the gate's own rules pass, so a long tool call never reads as last turn's report, and a DONE the gate sent back never reads as done. Its format is Claude's, so anything unexpected is simply no report.
+Files: `athena/caps/install/` (`__init__.py`, `releases.py`, `update.py`).
 
-**20. Limits, sign-in and outages are read from the bottom of a screen.** Claude tells no hook about them. It's the weakest input here: it's only read when a worker isn't working, only in the last 12 rows, and only as a row of its own, so a worker discussing limits, API errors or a login doesn't park itself or get typed at; a miss only means reading as idle, as before. A reset names no date, so it's taken as the nearest such time, which can be past: the line stays on screen after its reset.
+`bin/athena install` (from a checkout the first time) makes a release: a whole copy of the shipped files under
+`~/.local/share/athena/releases/<version>-<content hash>`, and a `current` link swapped atomically by one rename.
+`~/.local/bin/athena` is a small launcher that `exec`s through `current`. Everything athena hands out by path (hooks, prompts,
+launchd jobs) goes through `current`, so a running Claude's hook never sees a half-copied tree. Two releases are kept.
+Install writes nothing in `~/.claude`, since hooks and permissions go in each session's own `--settings`, and never edits
+a shell profile: it prints the line to add.
 
-**21. Slow is not dead, at every level.** A Rex timeout raises instead of reading as down, and doctor touches nothing for it. Load above 3 per core holds all repairs, since a repair only adds to it. So a starved Mac gets flags, and no action, until it recovers.
+- `--check` reports the release, the launcher, `PATH` and the permission profiles; `--dry-run` changes nothing;
+  `--rollback` goes back to the previous release; `--uninstall` removes the jobs, the launcher and the releases and
+  keeps the state.
+- `--services` also installs the launchd jobs.
+- `--real-world` opens the door to real side effects on a state dir that lacks it; a state dir install creates gets it.
 
-**22. Who watches doctor is the watch.** They're separate supervised processes, and each raises the other: doctor restarts a stale watch, and the watch tells HQ, once, about a stale doctor.
+`install.json`, beside the releases, is the one record of what runs: the current and previous release, where updates come
+from and on which channel, a switch under way, what the repository last offered, and how the last update ended. Nothing is
+read off the folder or the link alone.
 
-**23. A lost ledger comes back from a snapshot** doctor keeps beside it (`run/ledger-live.json`), and no launch happens until it has. A retire after the last snapshot and before the loss would bring that worker back as live; retiring it again costs little, and a lost live worker costs more.
+**`athena update`** fetches the repository into a clone of its own, takes the newest `vX.Y.Z` tag above the running
+version (or main's head with `--channel main`; never an older version), makes the release beside the running one,
+records the switch, swaps `current`, restarts athena's launchd jobs, and asks the new release's doctor. Any check that
+passed before and fails now, a doctor that doesn't answer, or a SIGTERM swaps back. A switch left on record by a killed
+update is undone by the next update or by doctor's `update` check, which otherwise only says which version runs and
+whether a newer one is out (one `ls-remote` a day).
 
-**24. Retire stops what its worker left running,** as listed from its terminal before the stop, and only a pid still running that command. The old classifier refused such kills; this is a retire someone asked for, and it says what it stopped.
+## State on disk
 
-**25. On a full disk the gate outranks the lock, and only the gate and doctor's look do.** A lock file that can't be created raises, so nothing that decides (two HQs, a capacity, a heavy slot) runs on a lock it doesn't hold, and the command says the disk is full. Hooks opt in with `full_disk_ok`, so two hooks on one worker could race there: losing a status write is the smaller loss, as a gate that stops working turns off every report check. Doctor opts in to report, and repairs nothing without the lock. An event that can't be written is lost alone (`bus.emit` never raises), and a running watch carries on without its files.
+The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. The main files, and who writes them:
 
-**25a. A broken config with no good copy refuses.** Defaults would quietly change what HQ may do, so HQ and spawn stop and say so. A running worker carries on.
+| Path | Writer | What it holds |
+|---|---|---|
+| `config.json` | the human, `athena install`, `athena modules` | config: top-level keys, and the `rex` block |
+| `ledger.jsonl` | `spawn`, `retire`, the kernel's `ledger.py` | every worker's lifecycle, append-only |
+| `events.jsonl` | `kernel/bus.py` | the event bus |
+| `history.jsonl` | `retire` | retired workers |
+| `workers/<name>.json` | `hooks`, `report` | a worker's state, last report and filed report |
+| `workers/<name>.progress.json` | `progress` | a worker's progress band |
+| `briefs/<name>.md` | `spawn` | each worker's brief |
+| `settings/<name>.json`, `settings/hq-rex.json` | `spawn`, `hq` | each session's `--settings` |
+| `hq.json`, `hq.json.prev`, `hq-start.json` | `hq`, HQ's SessionStart hook | where HQ runs and on which conversation |
+| `handoff.md`, `threads.md` | `hq rotate`, HQ | the rotation's handoff and in-flight threads |
+| `needs-you.json`, `items-archive.jsonl`, `actions.jsonl`, `requests.jsonl` | `items`, the dashboard | items, old items, the dashboard's answers, the request log |
+| `dismissed-prs.json` | the dashboard | PR rows the human dismissed |
+| `health.json`, `doctor.json` | `doctor` | the last pass, and doctor's memory |
+| `watch.json` | `watch` | workers, PRs, review requests and stacks, for the dashboard |
+| `stack.json`, `open-prs-posted.json`, `ci-failed.json` | `prs`, `follow` | stacked PRs, posted PRs, CI incidents |
+| `slack-rex.json` | `slack` | each conversation's cursor |
+| `service-rex.json`, `services-stopped.json` | `services` | installed jobs, and Quit's mark |
+| `board-rex.json` | `board` | where the board's block is |
+| `modules.json`, `revive.json` | `modules`, revive | modules switched off; Rex instances handled |
+| `run/` | many | runtime state: launchers and pids, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json` |
+| `flame/index.sqlite` | `flame index` | the Flame page's index |
+| `scratch/<owner>/<name>/` | `athena scratch new` | disposable work with an owner and a ttl |
+| `locks/`, `ask.lock`, `doctor.lock` | `store.locked` | `flock` files |
+| `logs/` | services, hooks, the watch | job logs, `hook-errors.log`, `watch-suppressed.log`, `hq-restart.log` |
+| `trash/<date>/` | `store.to_trash` | anything athena removes |
 
-**26. An amended goal goes in even when Claude is busy,** unlike a first goal, as Claude queues what is typed while it works, and a worker looping on a goal may never be idle.
+Outside the state dir: the releases and `install.json` under `~/.local/share/athena/`, the launcher at
+`~/.local/bin/athena`, the launchd jobs in `~/Library/LaunchAgents`, and each worker's worktree under `worktree_root`.
 
-**27. The gate checks a PR's URL, not GitHub.** A hook has seconds, and the quota is shared. The watch's own fetch sees the real PR.
+## The door to the outside world
 
-**28. A retire keeps no stage, only pointers.** A killed retire is finished by running it again, and each stage asks the world what is left. What the world can't say goes on record as it is made: where the work went (`retire_kept`, with `backup`, `wip_backup`, `trash`, `ignored_kept`), and what else ran on its terminal (`retire_kin`). Every save stays listed, since a re-run's wip can hold less than the first: a removal killed halfway reads as deleted files.
+Files: `athena/kernel/world.py`, `athena/kernel/lab.py`, `athena/kernel/sandbox.py`, `bin/athena`.
 
-**29. A first goal is a goal state, not "at a startup prompt".** `first` means it hasn't gone out, whether Claude is at a prompt or its box was full. So the typing guard asks `agents.state`: only when it says startup, which a Claude reporting a status never is, does a numbered row or no box at all stop counting as typing. Past that, only a first goal whose Claude has shown nothing yet goes through, as a launch that timed out leaves it. Every move of a goal takes one lock, so an amend waits for a send in flight instead of being overwritten by its outcome.
+`world.py` is the only way to run `security`, `osascript`, `pmset`, `ioreg`, `caffeinate`, `launchctl` or `gh`, or to
+reach Slack or a module's card on a mounted volume. The door is shut by default. It opens only when `config.json` in the
+state dir itself says `rex.real_world: true` (`ATHENA_CONFIG` can't point it elsewhere), and never while
+`ATHENA_WORKER` starts with `rex-`. No environment variable opens it: a test harness that dropped one would otherwise open
+the door to the tests. With the door shut, the only Rex server that may be named is a private one under the per-user
+scratch root, marked with this state dir. `ps`, `git`, `du` and `memory_pressure` stay outside the door: they only read.
 
-**30. A snooze ends, and a default gives its whole wait again after it.** Applying it the moment the snooze ends would answer for someone who asked to be asked later. The same goes for a whole queue: what was waiting at the first look on a state dir gets its whole 12 hours from then, with one line saying so, so a cut-over answers nothing on its first tick.
+**The lab guard** (`lab.py`, and its shell copy in `bin/athena`) keeps a lab worker (one whose `ATHENA_WORKER` starts with
+`rex-`) off the live state dir: it refuses the live paths, anything holding them and anything under the real home.
+Places are compared by what they are, not how they are spelled: links followed, case ignored, and by device and inode.
+`install --lab-guard-out` takes the guard out of an installed copy alone, never out of a checkout.
 
-**31. The installer is a capability, not a script: `athena install`.** One word for install, update, `--check`, `--rollback`, `--uninstall`, `--dry-run`, run from a checkout the first time. A release is a whole copy under `~/.local/share/athena/releases/<id>`, and `current` is a link swapped atomically, so a running Claude's hook never sees a half-copied tree. For that to hold, everything handed out by path (hooks, prompts, launchd jobs) goes through `current`, never a release, and `bin/athena` keeps its path logical. Two releases are kept. Nothing is written in `~/.claude`, as hooks and permissions go in each session's own `--settings`. It never edits a shell profile: it prints the line. Someone else's file at `~/.local/bin/athena` stops it, and `--force` moves that aside. Launchd is `--services`, separate, since before a cut-over nobody wants both. Where it improves on the old one: a checklist before anything changes, a dry run, one clear line per thing with `=` for unchanged, profile changes shown as a diff, and a rollback.
+**The signal sandbox** (`sandbox.py`), when config sets `rex.signal_sandbox: true`, runs each Claude athena starts under a
+`sandbox-exec` profile that lets it signal only what it started, so a stray `kill` can't reach HQ, other Claudes or Rex.
+A launch whose sandbox can't start is refused.
 
-**31a. Updates are explicit records, and a release is kept only if healthy.** `install` is a package: `releases.py` owns the release store and its one record, `install.json` (what runs, what it replaced, where updates come from and on which channel, the lab guard's state, a switch under way, what the repo last offered, how the last update ended), and nothing is read off the folder or the link alone. `athena update` fetches the repo into a clone of its own, takes the newest `vX.Y.Z` tag above the running version (or main's head on `--channel main`; never an older version), makes the release beside the running one, records the switch, swaps `current`, restarts athena's own launchd jobs, and asks the new release's doctor: any check the old release passed that now fails, a doctor that can't answer, or a SIGTERM swaps back. A switch left on record by a killed update is rolled back by the next update or by doctor's `update` check, which otherwise only says which version runs and whether a newer one is out (one `ls-remote` a day, door open), and never fails doctor. Install, rollback and update share one lock beside the releases.
+## Tests
 
-**32. The state moves by one rename and a link back.** The old and the new athena had to work from the same path. The old athena's hooks, its job files, live workers' settings and the root daemon all name `~/.local/state/athena`, and all keep working. So live old workers aren't disturbed, there is nothing to repoint, and going back is a rename. The link stays until the daemon's job names the new path.
+Files: `scripts/test.sh`, `tests/harness.py`, `athena/kernel/canary.py`.
 
-**32a. launchd is asked, not assumed.** A job file gone or a bootout's exit code says nothing of a running job, so the upgrade goes by `launchctl print`, and `services` fails on a failed launchctl. Two systems on one state is the failure this exists to prevent, so it stops rather than says "stopped". Before the move it looks at what is running: a Claude named as HQ and the old athena-watch mod's `athena watch --tagged`. That mod needs the plugin and `ATHENA_ROLE=hq`, and the new HQ's settings turn the plugin off for that session.
+Tests run only through `scripts/test.sh`, behind four walls:
 
-**32b. HQ rotates by tokens, config `hq_rotate_tokens`, 400k unless set.** A transcript names no window, an HQ runs far past 200k on plain `opus`, and Claude Code does not compact at 200k, so no window is derived from the model. Doctor asks HQ to rotate once its context holds the line, and status and doctor show it as `hq context 171k of 400k (rotates at hq_rotate_tokens)`; a bare `hq rotate --if-context-over` rotates past it. Only `--if-context-over <pct>` measures a window: `rex.hq_context_window`, 1M unless set (`ATHENA_HQ_CONTEXT_WINDOW` overrides). HQ's own `--settings` (`settings/hq-rex.json`) set `"idleCompaction": false`, so Claude Code never compacts HQ while it sits idle: HQ rotates instead. Workers' settings leave it alone, and `autoCompactEnabled` is never set for either, the user's backstop near the limit. Config `hq_model` (default `""`) is the model HQ starts on: `""`, null or unset passes no `--model`, so HQ runs on the user's Claude Code default; `hq open --model` wins over it. Both keys are top-level, shared with the old athena's config, where they mean the same.
+1. **An OS sandbox** (`sandbox-exec`) for the test process and every child: no writes under the real HOME or
+   `/Volumes`, no reads of live state or Claude's files, none of the real tools, Rex or Claude, no network but loopback
+   and not the live dashboard's port, no signals outside. The harness stops at import unless a write the sandbox forbids
+   fails with `EPERM`, so the suite refuses to run bare.
+2. **The door is shut**, and each test ends by checking it still is.
+3. **Stubs**: the door's tools resolve to recording stubs first on `PATH`, `ps` is a fake, the backend is the fake one,
+   and HOME and the state dir are marked scratch folders.
+4. **A canary**: a Python audit hook in the test process and its `bin/athena` children records any reach for a real
+   tool, a guarded path, the network or a foreign signal, and the harness fails any test whose log has an entry, even if
+   the test swallowed the error.
 
-**33. The lab guard leaves an installed copy, not the source.** `install --lab-guard-out` rewrites that copy's `lab.py` and `bin/athena`, and stays out through later updates (the `-live` release). The checkout keeps its guard, since it's what protects this state from a test or a `rex-*` worker there. In a checkout the shell guard names the new default path only in the account's own home, so an isolated HOME's default path is that HOME's own.
+`scripts/smoke.sh` runs real Claudes through spawn, status, send, the report gate and retire on a private Rex server
+and a scratch state dir. `scripts/chaos-rex.py` runs the [chaos catalogue](docs/chaos.md)'s cases that need real
+processes, on a private server.
 
-**34. Workers are windows in their repo's Rex session, in the words of the app.** `status` reads a snapshot the watch and the dash keep (`run/sessions.json`), so it stays a read of files: a label always, `(gone)` only from a fresh look that didn't find it, never from a server that didn't answer. `sessions` asks Rex for panes and who is looking. Only what the ledger says athena made can be an orphan; everything else is `other`, which nothing closes.
+## Design reasons
 
-**35. A permission prompt's answer is pressed only while that same prompt is asked.** The dash writes an answer, and the watch's tick presses Enter or Escape only if the last thing on that session's screen is `Do you want to proceed?` with Yes under the cursor, and the command between its rules is exactly this one, by digest, so a secret needn't be kept to compare it. A late click presses nothing. A reply is words, not a yes. It never has a default, and "Always allow" adds that exact command, not a prefix, and never one holding a secret. Bash only: other tools' prompts are drawn differently, and stay blocked and wake HQ.
+Why the parts are the way they are:
 
-**36. Checkable orders are a hook, the rest prose.** Profiles' deny rules match how a command starts, so `cd x && git push -f` gets past them. `caps/rules.py` reads the line as a shell would, each command of it, so quoted words aren't commands, and `bash -c` and later lines are. It is a guard against mistakes, not a sandbox: a script can do what its text doesn't say. The hook adds about 80 ms to each Bash call, and only Bash.
-
-**37. A wake carries its lines, rebuilt from fixed words (restored).** It was once a constant line read back with `watch --inbox`, which is kept for anyone who calls it. Decision 9's lines still pass the allowlist, and now go to `run/inbox.jsonl`. HQ reads them with a command, so they reach it as a tool's output, and what's typed in its voice is constant. It costs one tool call per wake. A wake that can't be typed leaves nothing in the inbox, and is held as before.
-
-**38. Goals up to athena's 3990 characters, typed in pieces of 200 (restored).** Once it was under 800. Spawn's clauses are about 250 now, and `goal_text` refuses at 790, as anyone pasting one by hand has no pieces. Typing in pieces stays for everything else: a long prompt, or a `/goal` someone sends with `send`.
-
-**39. A forced retire won't copy more than `rex.ignored_copy_max_mb` (2 GB) of git-ignored work.** It refuses before it has changed anything, and says how to get past it: a 40 GB copy into the trash on a nearly full disk is its own failure. The limit never means losing it.
-
-**40. The menu bar app is Swift, and does everything through the CLI.** `menubar/` is an AppKit status item built by `menubar/build.sh` with swiftc, which `services install` runs when the app is missing or its sources changed (by content, as a release is a copy), and installed as the `menubar` login job, which runs `athena menubar run`. It reads `services status --json`, `status --json`, `modules --json` (the modules menu contract) and `doctor --last --json`, and acts with `services stop|start|restart`, `dash open`, `hq open` and `modules action <name> <id>`, so it never names launchctl or the Rex server and the lab's doors hold for it. Quit athena is `services stop`: doctor first, so nothing brings the rest back, then athena's other jobs, each disabled as well as booted out so a login doesn't bring it back either. Rex runs the sessions, HQ's and the workers', so Quit never stops the Rex server or any Claude. Once the watch is down each capability's and module's `on_quit` runs, so nothing they drive is left frozen on a stale state. A module's jobs and the app's own are left: the app shows athena stopped, with Start athena, which is `services start`, loading them again with doctor last. While stopped, Open dashboard and Open HQ are off, as each would start part of athena outside launchd. Doctor's dash and watch repairs stand back too, as a repair then would undo Quit. A Doctor submenu shows the last pass from `doctor --last --json`, which reads health.json and runs nothing, read at most every 30 s; Run doctor --fix runs it. Each check is a row of at most 40 characters, its mark, name and short status (the check's own `short`, else its detail's first clause, long ids left out), and a click on it shows the whole detail, wrapped, with Copy: doctor's whole line in each row made the submenu about 1500 px wide. The app polls one at a time: a poll asked for while one runs runs once after it, so a slow athena never piles up processes. Knot's working motion is drawn in Swift from the strands in `knot-working.svg`, with no frame files.
-
-**41. A worker files its report with a command; the chat carries a summary.** `athena report --status ... --verify ...` fills in `head` from the worktree and `pr` from the branch's open PR, and writes the report, with the fields a typed line had, into the worker's status file as `filed`, under the hook's lock. It does not write `report` itself. The Stop hook's gate takes in what was filed this turn and moves it to `report`, or sends it back, so status, watch, review and the dash read one field in one file as before, and never see a DONE the gate refused. Every Stop uses up what was filed, accepted or not, and so does a new prompt: a turn sent back, or one another Stop hook keeps going, files again, as it once wrote the line again. A DONE the gate would refuse is not filed at all, so the worker hears why at once, not at the Stop. A report filed whose Stop never landed is read as decision 19's transcript fallback was, held to the gate's rules. Transition: when nothing was filed, a typed `ATHENA-REPORT` line in the last message is parsed as before and lands in the same field, so workers started on the old prompt keep working. The filed report wins when there are both. A worker whose spawn-time settings lack the rule `Bash(athena report:*)` would stop at a prompt running the command, so when the gate sends its turn back it also shows that worker the typed line. New workers are shown only the command. `brief check --goal` flags a goal that still asks for the line.
-
-**42. Flame reads Claude's transcripts into an index of shape and cost, never of text.** `athena flame index` reads each transcript under `~/.claude/projects` once, from the byte it stopped at, one line in memory at a time, into `flame/index.sqlite` in the state dir; the dash's Flame page (`/flame`, linked from every page's header) draws it as an icicle with a metric toggle, a scope picker and a ranked table. A frame is the action a model call chose, and carries that call's time and tokens, so a polling loop shows what it costs; time is agent-time, so concurrent agents add up. Only timestamps, token counts, models, tool names, a command's first two words, subagent types and skill names reach the index. Opening the page updates an index more than 5 minutes old in the background, one at a time and niced, and swaps the new data in when it lands, so it is current every morning without a command; there is no launchd or doctor job for it. Its style and script are files the dash serves under /static/, as its Content-Security-Policy wants. See [docs/flame.md](docs/flame.md).
-
-## What is proven, and how
-
-- `scripts/smoke.sh`, on a private server, with real Claudes: trust (with a negative control), 3 workers at once, send, refusals, the report gate, a kill mid-turn reading as exited and left to Rex, watch, dash, the signal sandbox, HQ and its rotation.
-- `tests/`, in an isolated HOME on the fake backend, behind decision 16a. `tests/test_chaos.py` is `docs/chaos.md`, one test per case.
-- `scripts/chaos-rex.py --real`, on a private server: a killed server and a cut ledger, HUP ignored, what a worker leaves running, a real full disk, long prompts and goals, nested and foreign Claudes.
-- `tests/test_shapes.py`: every shared file, made by its real writer, held to what the old athena reads. The rehearsal runs the old athena's own hook and CLI on the moved state.
-- Not proven: how any of it looks in the Rex app, a real app update, launchd installs, real Slack and GitHub, a module's real card, the clamshell daemon, a real usage limit or account switch, an expired login on a real account (its row is from a real Claude given a 401 by a local API), deny rules under the bypass flag, doctor starting a server by repair. All are off limits here or can't be had on demand.
-
-Workspaces have their own design in [docs/workspaces.md](docs/workspaces.md).
+- **Python standard library on the system Python.** Nothing to compile or install, and a command starts fast enough to
+  run in every hook. `bin/athena` runs it with `-S` and keeps bytecode on, which Xcode's Python turns off by default.
+- **Claude starts from a launcher script, never typed into a shell.** The pid is athena's whichever backend ran it, and
+  nothing depends on a shell prompt, its line limit or its history.
+- **Hooks go in each session's `--settings`.** They fire only in a Claude athena started, so a Claude started from a
+  Bash tool, or one in a matching folder, can never report as a worker.
+- **Status is files first.** `athena status` costs file reads and a `ps`, so HQ, the menu bar and the watch can ask
+  often. Liveness has three answers: running, gone, and unknown, which never reads as gone.
+- **State machines are explicit and computed, never stored**: a worker's lifecycle and phase (`ledger.py`), its goal
+  (`GOAL_MOVES`), its activity (`hooks.next_state`), HQ (`hq.state`), a workspace (`workspaces.classify`), whose move a PR
+  waits on (`prs.move`), clamshell (`decide`). A computed state can't drift from the record it comes from.
+- **The watch is its own process.** A slow GitHub or a failed loop never costs HQ a turn or a restart, and doctor
+  restarts the watch alone.
+- **A wake is typed only from fixed words.** HQ reads a typed prompt as the human's own, so a line is rebuilt from an
+  allowlist before it goes out, and nothing a PR, ticket or Slack message says reaches HQ that way.
+- **Rex runs the sessions.** Doctor never brings a Claude back or starts the Rex server; it says what is gone. A worker
+  or HQ comes back through Rex (`athena hq`, revive) or is retired.
+- **Slow is not dead.** A Rex call that times out raises instead of reading as down, and doctor holds every repair while
+  load is above 3 per core, so a starved Mac gets flags, not actions.
+- **The budget holds launches, the fleet's size alone does not.** A fleet that counts only itself can take the Mac down.
+- **Text is typed in pieces of 200.** About 800 characters at once reads as a paste, and a pasted `/goal` doesn't run.
+- **The gate checks a PR's URL, not GitHub.** A hook has seconds and the API quota is shared; the watch's own fetch sees
+  the real PR.
+- **On a full disk the gate outranks the lock.** The hooks and doctor's look run without the lock they can't create, as
+  a gate that stops working turns off every report check; nothing that decides (two HQs, capacity, the heavy slot) runs
+  on a lock it doesn't hold.
+- **A broken config with no good copy refuses.** Defaults would quietly change what HQ may do, so HQ and spawn stop and
+  say so.
+- **A lost ledger comes back from a snapshot** doctor keeps beside it, and no launch happens until it has.
+- **Limits are read from the bottom of a screen**, only when a worker isn't working, only in the last 12 rows, and only
+  as a row of their own, so a worker discussing limits never parks the fleet. It is the weakest input athena has, and a
+  miss only means reading as idle.
+- **Checkable orders are a hook, the rest are prose.** A permission profile's rules match only how a command starts;
+  `rules.py` reads every command on the line.
+- **A release is a whole copy behind one link,** so an update or a rollback is one rename, and a running hook never sees
+  half of each.
+- **The menu bar does everything through the CLI,** so the door and the lab guard hold for it too.
+- **Real side effects have one door, shut by default,** so a test, a scratch copy or a lab worker can't reach the Mac's
+  power, keychain, launchd, Slack or GitHub by accident.

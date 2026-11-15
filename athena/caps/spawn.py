@@ -84,7 +84,7 @@ def claude_args(name, model, effort, settings, prompt_file=None) -> list:
     return args + ["--append-system-prompt-file", str(prompt_file or PROMPTS / "worker.md")]
 
 
-GOAL_MAX = 3990  # the old athena's cap; typed in pieces of 200, a goal this long arrives whole (decision 18)
+GOAL_MAX = 3990  # the old athena's cap; typed in pieces of 200, a goal this long arrives whole, where ~800 characters at once reads as a paste and its /goal never runs
 
 
 def goal_text(condition, brief) -> str:

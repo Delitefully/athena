@@ -1,6 +1,6 @@
 """The state files the page is built from, read as the old athena dash read them (its dash/state.go and items.go): a file caught
 mid-write or broken by hand shows its last good parse, a missing one is an empty source, and nothing here ever fails the page.
-athena writes the same files (ARCHITECTURE.md decision 8); its own knowledge of a worker (a dead Claude, a usage limit, a
+athena writes the same files (ARCHITECTURE.md, "State on disk"); its own knowledge of a worker (a dead Claude, a usage limit, a
 startup prompt) comes in through `overlay`."""
 import fcntl
 import json
