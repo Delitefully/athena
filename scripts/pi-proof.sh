@@ -145,6 +145,8 @@ check "and the worker filed its report again" wait_for 180 report_is DONE
 say "the gate's events: $(grep '"worker.gate"' "$state/events.jsonl" | cut -c1-160)"
 "$ar" status pi-a | head -1
 
+inbox_empty() { [ -z "$(ls -A "$state/run/inbox/pi-a" 2>/dev/null)" ]; }
+check "Pi took every message: its inbox holds nothing claimed, failed or waiting" wait_for 20 inbox_empty
 say "\$ athena retire pi-a --force"
 "$ar" retire pi-a --force
 check "pi-a retired" test $? = 0

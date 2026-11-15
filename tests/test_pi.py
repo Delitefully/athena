@@ -433,3 +433,79 @@ class PiElsewhere(PiCase):
         self.assertEqual(limits.tick(caps.CTX, time.time()), [])
         self.assertIsNone(limits.parked())
         self.assertFalse(ledger.get("pi-a").get("limit_seen"))
+
+
+INBOX_DRIVER = """
+import { makeInbox } from './athena.ts'
+import { readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const folder = process.env.INBOX
+const sent = []
+let idle = true, shut = 0
+const pi = { sendUserMessage: (text, options) => sent.push([text, options?.deliverAs ?? null]) }
+const ctx = { isIdle: () => idle, shutdown: () => { shut += 1 } }
+const put = (n, message) => writeFileSync(join(folder, `${String(n).padStart(20, '0')}-1.json`), JSON.stringify(message))
+const files = () => readdirSync(folder).sort()
+const out = {}
+put(1, { kind: 'message', text: 'the goal' })
+put(2, { kind: 'message', text: 'main moved' })
+const inbox = makeInbox(folder, pi)
+inbox.tick(ctx, 1000)
+inbox.tick(ctx, 1500)  // Pi reads idle until the goal's run starts: the second must not go out as a prompt beside it
+out.first = { sent: [...sent], files: files() }
+inbox.accepted('the goal'); idle = false  // before_agent_start: its run began
+inbox.tick(ctx, 2000)
+out.second = { sent: [...sent], files: files() }
+inbox.accepted('main moved')  // input, followUp: queued
+out.queued = files()
+idle = true
+put(3, { kind: 'message', text: 'no run took this' })
+for (const now of [3000, 13001, 23002, 33003]) inbox.tick(ctx, now)
+out.retried = { sent: sent.slice(2), files: files() }
+put(4, { kind: 'quit' })
+inbox.tick(ctx, 50000)
+out.quit = { shut, files: files() }
+writeFileSync(join(folder, `${'5'.padStart(20, '0')}-1.json.taken`), JSON.stringify({ kind: 'message', text: 'again' }))
+makeInbox(folder, pi)
+out.restarted = files()
+process.stdout.write(JSON.stringify(out))
+"""
+
+
+class PiInbox(Case):
+    """The extension's own inbox loop, run under Node (type stripping) with a stand-in Pi, as tests/test_progress.py runs the
+    band's core.ts: two messages in one tick while Pi is idle."""
+
+    def _run(self) -> dict:
+        from test_progress import NODE
+        if not NODE:
+            raise AssertionError("node is needed to test the Pi extension's inbox")
+        node = self.tmp / "node"
+        node.symlink_to(os.path.realpath(NODE))
+        folder = self.tmp / "inbox"
+        folder.mkdir()
+        out = subprocess.run([str(node), "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", INBOX_DRIVER],
+                             capture_output=True, text=True, cwd=ROOT / "pi-extension", timeout=60,
+                             env={**os.environ, "INBOX": str(folder), "ATHENA_WORKER": "", "ATHENA_STATE_DIR": "", "ATHENA_BIN": ""})
+        if out.returncode != 0:
+            raise AssertionError(out.stderr)
+        return json.loads(out.stdout)
+
+    def test_two_messages_in_one_tick_while_idle_go_one_at_a_time_and_none_is_lost(self):
+        out = self._run()
+        first, second = "0" * 19 + "1-1.json", "0" * 19 + "2-1.json"
+        self.assertEqual(out["first"]["sent"], [["the goal", None]])  # only the first goes out as a new prompt
+        self.assertEqual(out["first"]["files"], [f"{first}.taken", second])  # claimed until Pi has it; the next waits
+        self.assertEqual(out["second"]["sent"], [["the goal", None], ["main moved", "followUp"]])
+        self.assertEqual(out["second"]["files"], [f"{second}.taken"])
+        self.assertEqual(out["queued"], [])
+
+    def test_a_message_no_run_took_is_sent_again_then_kept_not_lost(self):
+        out = self._run()
+        self.assertEqual(out["retried"]["sent"], [["no run took this", None]] * 3)
+        self.assertEqual(out["retried"]["files"], ["0" * 19 + "3-1.failed"])
+
+    def test_quit_ends_pi_and_a_claimed_file_left_by_a_restart_goes_back_in_the_queue(self):
+        out = self._run()
+        self.assertEqual(out["quit"], {"shut": 1, "files": ["0" * 19 + "3-1.failed"]})
+        self.assertEqual(out["restarted"], ["0" * 19 + "3-1.failed", "0" * 19 + "5-1.json"])
