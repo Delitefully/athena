@@ -25,10 +25,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const NAME = (process.env.ATHENA_WORKER || "").trim();
 const STATE = process.env.ATHENA_STATE_DIR || "";
 const BIN = process.env.ATHENA_BIN || "";
-const HOOK_TIMEOUT_MS = 15000;
+export const HOOK_TIMEOUT_MS = 15000;
 const INBOX_EVERY_MS = 1000;
 const MESSAGE_FILE = /^\d{20}-\d+\.json$/;
-const RETRY_AFTER_MS = 10000; // a message sent while Pi was idle, and no run of it began, goes again once Pi is idle again
+// A message sent while Pi was idle, and no run of it began, goes again once Pi is idle again: twice the hook's timeout, as Pi
+// reads idle while it awaits `agent_settled` handlers (ours runs a hook) and parks a prompt sent meanwhile until they end
+// (agent-session.js `_emitAgentSettled`, `_deferredSettledActions`). A retry inside that wait would run the message twice.
+export const RETRY_AFTER_MS = 2 * HOOK_TIMEOUT_MS;
 const MAX_TRIES = 3; // then its file stays, as <name>.failed, rather than being lost or sent forever
 
 type Said = Record<string, any> | null;

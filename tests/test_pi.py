@@ -436,7 +436,7 @@ class PiElsewhere(PiCase):
 
 
 INBOX_DRIVER = """
-import { makeInbox } from './athena.ts'
+import { HOOK_TIMEOUT_MS, RETRY_AFTER_MS, makeInbox } from './athena.ts'
 import { readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const folder = process.env.INBOX
@@ -460,7 +460,10 @@ inbox.accepted('main moved')  // input, followUp: queued
 out.queued = files()
 idle = true
 put(3, { kind: 'message', text: 'no run took this' })
-for (const now of [3000, 13001, 23002, 33003]) inbox.tick(ctx, now)
+inbox.tick(ctx, 3000)
+inbox.tick(ctx, 3000 + HOOK_TIMEOUT_MS + 1)  // Pi may still be awaiting its settled handlers, a hook among them: not yet
+out.waited = sent.length
+for (const now of [3000 + RETRY_AFTER_MS, 3000 + 2 * RETRY_AFTER_MS, 3000 + 3 * RETRY_AFTER_MS]) inbox.tick(ctx, now)
 out.retried = { sent: sent.slice(2), files: files() }
 put(4, { kind: 'quit' })
 inbox.tick(ctx, 50000)
@@ -468,6 +471,7 @@ out.quit = { shut, files: files() }
 writeFileSync(join(folder, `${'5'.padStart(20, '0')}-1.json.taken`), JSON.stringify({ kind: 'message', text: 'again' }))
 makeInbox(folder, pi)
 out.restarted = files()
+out.timers = { hook: HOOK_TIMEOUT_MS, retry: RETRY_AFTER_MS }
 process.stdout.write(JSON.stringify(out))
 """
 
@@ -502,8 +506,13 @@ class PiInbox(Case):
 
     def test_a_message_no_run_took_is_sent_again_then_kept_not_lost(self):
         out = self._run()
+        self.assertEqual(out["waited"], 3)  # the two before it, and its first send: no retry inside a hook's timeout
         self.assertEqual(out["retried"]["sent"], [["no run took this", None]] * 3)
         self.assertEqual(out["retried"]["files"], ["0" * 19 + "3-1.failed"])
+
+    def test_a_retry_waits_out_the_longest_hook_so_a_parked_prompt_is_never_sent_twice(self):
+        timers = self._run()["timers"]
+        self.assertGreater(timers["retry"], timers["hook"])
 
     def test_quit_ends_pi_and_a_claimed_file_left_by_a_restart_goes_back_in_the_queue(self):
         out = self._run()
