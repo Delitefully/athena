@@ -42,7 +42,7 @@ keep running.
 | Part | What it is for |
 |---|---|
 | `bin/athena` | The command. A shell script that guards the state dir for lab workers, then runs the CLI on the system Python. |
-| `athena/cli.py` | Finds the capability that owns a verb and imports only that one. |
+| `athena/cli.py` | Finds the capability that owns a verb, importing as little as it can. |
 | `athena/kernel/` | What every capability builds on: the state dir, the ledger, the event bus, config, the backend interface, starting and typing to a Claude, git, the machine budget, the capability contract, modules, and the door to the outside world. It names no capability (`tests/test_kernel.py` checks that). |
 | `athena/backends/` | Where programs run: `rex.py` drives Rex; `fake.py` is the tests' stand-in. |
 | `athena/caps/` | The capabilities: each command, check, background job and watch source is one file or package here. |
@@ -58,20 +58,21 @@ keep running.
 ## The CLI and the kernel
 
 **`bin/athena`** (`bin/athena`) is a POSIX shell script. When `ATHENA_WORKER` starts with `rex-` (a lab worker), it
-refuses any state dir that is, or holds, the live one, before Python starts. It then runs
+refuses any state dir that is the live one or lies inside it (a hook just exits quietly), before Python starts. It then runs
 `${ATHENA_PYTHON:-/usr/bin/python3} -I -S` with the repository first on `sys.path` and bytecode turned on, and calls
 `athena.cli.main()`.
 
 **`athena/cli.py`** resolves the verb through `caps.find_command` (`athena/kernel/caps.py`): first a capability named
 like the verb (or the verb plus `s`), then every enabled capability, then active modules. Only the capability that owns
-the verb is imported, so a command costs what it uses. `athena` with no verb is `athena hq`. A full disk ends a command
+the verb is imported when the verb is named like it, so the hot commands cost what they use; any other verb loads
+capabilities in order until one owns it. `athena` with no verb is `athena hq`. A full disk ends a command
 with `disk is full` rather than a traceback.
 
 The kernel (`athena/kernel/`):
 
 | File | What it holds |
 |---|---|
-| `store.py` | The state dir (`~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`): atomic JSON writes, appended lines that a torn write can't merge, `flock` locks under `locks/`, and the trash, so nothing is deleted outright. |
+| `store.py` | The state dir (`~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`): atomic JSON writes, appended lines that a torn write can't merge, `flock` locks (most under `locks/`; `ask.lock` and `doctor.lock` at the top of the state dir), and the trash, so nothing is deleted outright. |
 | `ledger.py` | `ledger.jsonl`, the append-only record of every worker, and the state machines read from it: `LIFECYCLE`, `phase`, and the goal's moves (`GOAL_MOVES`). It also keeps a snapshot of the live workers in `run/ledger-live.json` and restores from it. |
 | `bus.py` | `events.jsonl`: any process emits an event, readers follow it by byte offset. It rotates at 4 MiB, and `emit` never raises. |
 | `config.py` | `config.json` in the state dir. Top-level keys (`model`, `effort`, `hq_model`, `hq_rotate_tokens`, `human_merge_repos`, Slack and CI keys, ...) and a `rex` block for the rest (`binary`, `server`, `caps`, `modules`, `dash_port`, `max_workers`, ...). A file that doesn't parse falls back to the last good copy, `run/config.good.json`. |
@@ -95,7 +96,7 @@ A capability is a module or package in `athena/caps/` with `SUMMARY` (one line) 
 | `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | `athena services`, which writes them as launchd jobs |
 | `tick(ctx, now)` | watch lines | the watch, every loop |
 | `on_event(ctx, event)` | watch lines | the watch, for each new bus event |
-| `on_quit(ctx)` | nothing | `athena services stop`, once the watch is down |
+| `on_quit(ctx)` | a line to say, or `None` | `athena services stop`, once the watch is down |
 
 Every capability found loads, unless `config.json`'s `rex.caps` lists which do. A capability reaches another only
 through `ctx.cap(name)`, which is `None` when that one is absent, so leaving one out changes nothing else.
@@ -172,7 +173,7 @@ on its conversation.
 Files: `athena/caps/spawn.py`, `athena/caps/brief.py`, `athena/caps/trust.py`, `athena/caps/profiles.py`,
 `athena/kernel/agents.py`, `athena/kernel/budget.py`, `prompts/worker.md`.
 
-HQ runs `athena spawn <name> --repo <repo> --branch <branch> --brief <file> --goal "<condition>"`. Spawn refuses before
+HQ runs `athena spawn --name <name> --repo <repo> --branch <branch> --brief <file> --goal "<condition>"`. Spawn refuses before
 it changes anything, and then builds the worker in order:
 
 1. **Checks.** A valid name that isn't reserved, a config that parses, no fleet-wide usage limit, no worker the ledger
@@ -201,9 +202,10 @@ A launch that fails after the worktree exists kills its Claude, closes its windo
 **The launcher.** `agents.start` writes `run/<name>.sh` (mode 0700), which writes its own pid to `run/<name>.pid`, `cd`s
 into the worktree and `exec`s Claude with its environment. Rex runs that script directly in the new block.
 
-**The goal's moves.** The ledger records where each goal is (`GOAL_MOVES` in `athena/kernel/ledger.py`): `first` until it
-has gone out, then sent; `amended` when HQ runs `athena amend <name> "<condition>"`; `unconfirmed` when the worker
-showed no turn within 30 seconds of it, which wakes HQ. Each move holds `locks/<name>.goal.lock`, so an amend waits for
+**The goal's moves.** The ledger records where each goal is (`GOAL_MOVES` in `athena/kernel/ledger.py`): `first` while a
+first goal waits, `amended` while a goal HQ restated with `athena amend <name> "<condition>"` waits, and `unconfirmed`
+from the moment it is typed until it is seen to land, then back to none. A worker that shows no turn within 30 seconds
+of its goal leaves it unconfirmed, which wakes HQ. Each move holds `locks/<name>.goal.lock`, so an amend waits for
 a send in flight. A goal waiting at a startup prompt is typed only once the Claude is ready; a goal spawn sends at once,
 and an amended one, go in even while the worker works, as Claude queues what is typed while it works and a worker
 looping on a goal may never be idle.
@@ -518,7 +520,8 @@ each run asks the world what is left, so a retire that was killed is finished by
 2. **Marked.** The ledger records where the work went (`retire_kept`) and that the worker is retiring.
 3. **Stopped.** Claude is asked to `/exit`, then its block is closed, then it is killed; whatever else it left running
    on its terminal is stopped too, listed before the stop.
-4. **Removed.** `git worktree remove`, without `--force`, so git refuses a dirty tree.
+4. **Removed.** `git worktree remove`. It adds `--force` only once the changes are saved as a `-wip` ref, or on a
+   `retire --force` that needs it, so git still refuses a dirty tree nobody saved.
 5. **Closed.** Its window closes, and its repo's session once that is empty.
 6. **Retired.** A line in `history.jsonl` and in the ledger. The branch stays.
 
@@ -532,7 +535,7 @@ first and moving anything else to `trash/`. `athena disk` lists named caches and
 Files: `athena/caps/install/` (`__init__.py`, `releases.py`, `update.py`).
 
 `bin/athena install` (from a checkout the first time) makes a release: a whole copy of the shipped files under
-`~/.local/share/athena/releases/<version>-<commit>`, and a `current` link swapped atomically by one rename.
+`~/.local/share/athena/releases/<version>-<content hash>`, and a `current` link swapped atomically by one rename.
 `~/.local/bin/athena` is a two-line launcher through `current`. Everything athena hands out by path (hooks, prompts,
 launchd jobs) goes through `current`, so a running Claude's hook never sees a half-copied tree. Two releases are kept.
 Install writes nothing in `~/.claude`, since hooks and permissions go in each session's own `--settings`, and never edits
@@ -561,7 +564,7 @@ The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. 
 
 | Path | Writer | What it holds |
 |---|---|---|
-| `config.json` | the human, `athena install`, `athena modules` | config; ours under the `rex` key |
+| `config.json` | the human, `athena install`, `athena modules` | config: top-level keys, and the `rex` block |
 | `ledger.jsonl` | `spawn`, `retire`, the kernel's `ledger.py` | every worker's lifecycle, append-only |
 | `events.jsonl` | `kernel/bus.py` | the event bus |
 | `history.jsonl` | `retire` | retired workers |
@@ -583,7 +586,7 @@ The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. 
 | `run/` | many | runtime state: launchers and pids, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json` |
 | `flame/index.sqlite` | `flame index` | the Flame page's index |
 | `scratch/<owner>/<name>/` | `athena scratch new` | disposable work with an owner and a ttl |
-| `locks/` | `store.locked` | `flock` files |
+| `locks/`, `ask.lock`, `doctor.lock` | `store.locked` | `flock` files |
 | `logs/` | services, hooks, the watch | job logs, `hook-errors.log`, `watch-suppressed.log`, `hq-restart.log` |
 | `trash/<date>/` | `store.to_trash` | anything athena removes |
 
