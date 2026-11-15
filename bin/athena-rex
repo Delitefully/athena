@@ -1,0 +1,4 @@
+#!/bin/sh
+# athena's old name, kept for what still calls it (a running HQ, settings, scripts): it says so in one line, then runs athena.
+echo "athena-rex is now athena: this alias goes in a later release" >&2
+exec "$(dirname "$0")/athena" "$@"

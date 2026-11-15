@@ -1,0 +1,3 @@
+{"type":"session_event","payload":{"session_id":"session:01a1c947-125a-740f-a575-9e194f3a1144","event":{"type":"block_closed","payload":{"block_id":"block:01a1c947-1340-777a-9648-6d7228e3429d"}}}}
+{"type":"session_event","payload":{"session_id":"session:01a1c947-125a-740f-a575-9e194f3a1144","event":{"type":"window_closed","payload":{"window_id":"window:01a1c947-134b-7cf8-baa1-a2e3435ed8ac"}}}}
+{"type":"session_event","payload":{"session_id":"session:01a1c947-125a-740f-a575-9e194f3a1144","event":{"type":"session_view_changed","payload":{"revision":4}}}}
