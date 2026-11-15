@@ -72,7 +72,7 @@ def start(backend, name, label, cwd, argv, env=None, repo=None, agent="claude") 
     """Given `repo`, in a window named for it in the repo's session, made with its first worker: Rex's sidebar groups workers by
     repo. Without, in a session of its own."""
     pid_file(name).unlink(missing_ok=True)
-    pi_mark(name).unlink(missing_ok=True)
+    forget_pi(name)  # a new worker of an old name never reads the old one's mark or messages, a quit retire left unread above all
     run = ["/bin/sh", str(launcher(name, cwd, argv, env, agent))]
     if not repo:
         return backend.create(label, cwd, run, block_label=name)
@@ -351,6 +351,8 @@ def send(backend, record, text, submit=True, wait_box=0.0):
         raise Refused(*REFUSALS[now["state"]])
     _check_owner(backend, record)
     if agent_of(record) == "pi":
+        if not submit:
+            raise Refused("not_typed", "a Pi worker's messages go through its inbox and are always sent: there is no box to leave text in")
         post(record["name"], {"kind": "message", "text": text})
         return
     give_up = time.monotonic() + wait_box
@@ -367,6 +369,19 @@ def send(backend, record, text, submit=True, wait_box=0.0):
 
 def inbox(name) -> Path:
     return store.path("run", "inbox", name)
+
+
+def forget_pi(name):
+    """A Pi worker's mark and the messages nobody read: once it is retired, or before a launch under its name."""
+    pi_mark(name).unlink(missing_ok=True)
+    folder = inbox(name)
+    for left in (folder.glob("*") if folder.is_dir() else []):
+        if left.is_file():
+            left.unlink(missing_ok=True)
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
 
 
 def post(name, message: dict) -> Path:

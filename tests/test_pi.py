@@ -349,6 +349,23 @@ class PiElsewhere(PiCase):
         self.assertFalse(_alive(pid))  # killed, as a last resort: nothing read its quit here
         self.assertEqual(self.fake()["typed"], [])  # no /exit typed into Pi's editor
         self.assertFalse(path.exists())
+        self.assertEqual(self.inbox(), [])  # its unread quit is gone with it, so a new pi-a doesn't quit at once
+        self.assertFalse(agents.pi_mark("pi-a").exists())
+
+    def test_a_new_pi_of_an_old_name_starts_with_an_empty_inbox(self):
+        agents.post("a", {"kind": "quit"})
+        store.write_json(agents.pi_mark("a"), {"pid": 77})
+        self.write_config(worktree_root=str(self.tmp / "wt"))
+        spawn.spawn(caps.CTX, self.repo(), "t/a", "a", timeout=0.1, fetch=False, agent="pi", prompt="hi")
+        self.assertEqual(self.inbox("a"), [])
+        self.assertFalse(agents.pi_mark("a").exists())
+
+    def test_send_no_submit_is_refused_for_a_pi(self):
+        self.pi_worker(status_={"state": "idle"})
+        self.pi_running()
+        out = self.cli("send", "pi-a", "--no-submit", "half")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(self.inbox(), [])
 
     def test_graceful_exit_of_a_pi_posts_quit(self):
         self.pi_worker(status_={"state": "idle"})

@@ -188,6 +188,7 @@ def _close(ctx, name, worker, result):
                 result["backend_error"] = str(exc)
     for leftover in (agents.pid_file(name), store.path("run", f"{name}.sh")):
         leftover.unlink(missing_ok=True)
+    agents.forget_pi(name)  # a quit Pi never read, as it was killed mid-run, must not reach the next worker of this name
 
 
 def retire(ctx, name, force=False, keep_worktree=False, grace=8.0) -> dict:
