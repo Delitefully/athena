@@ -14,7 +14,7 @@ What the herdr athena left, and where each goes:
     the old HQ's herdr workspace     closed, so herdr's session restore has no pane to resume the old HQ in
     ~/.local/bin/athena              herdr athena's link to its checkout, moved aside to ~/.local/bin/athena-herdr
     the athena@athena Claude plugin  turned off in ~/.claude/settings.json (hooks, skill, watch mod), the file kept in the snapshot
-    athena                           installed with its launchd jobs, local.athena.*
+    athena                           installed with its one launchd job, local.athena, which runs every service
 """
 import argparse
 import hashlib
@@ -38,7 +38,7 @@ RECORD = os.path.join(HOME, ".local/state/athena-upgrade.json")
 AGENTS = os.path.join(HOME, "Library/LaunchAgents")
 OFF = os.path.join(HOME, "Library/LaunchAgents.athena-old")
 OLD_JOBS = ("athena.doctor", "athena.dash", "athena.board", "athena-lights")  # doctor first, or it brings the others back
-NEW_JOBS = ("local.athena.doctor", "local.athena.watch", "local.athena.dash")
+NEW_JOBS = ("local.athena",)  # one job: its supervisor runs the doctor, the watch, the dash and the menu bar
 KEPT = "athena.herdr"
 CHECKOUT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCHER = os.path.join(HOME, ".local/bin/athena")
@@ -557,8 +557,8 @@ def _dash_serves() -> str:
 
 
 def _doctor_job_ran() -> bool:
-    """health.json newer than the job's file, and recent. Loaded says nothing of a job that crashes on every run. Read before verify's own doctor."""
-    job = os.path.join(AGENTS, "local.athena.doctor.plist")
+    """health.json newer than the job's file, and recent. Loaded says nothing of a doctor that crashes on every run. Read before verify's own doctor."""
+    job = os.path.join(AGENTS, "local.athena.plist")
     deadline = time.monotonic() + WAIT_FOR_JOBS
     while True:
         ts = float(_read(os.path.join(NEW, "health.json")).get("ts") or 0)
@@ -595,7 +595,7 @@ def cmd_verify(args):
         problems = [p["check"] for p in answer.get("problems") or []]
     except (ValueError, AttributeError):
         answer, problems = {}, ["doctor did not answer"]
-    if answer.get("busy"):  # the doctor job's own pass holds the lock: a pass is running, not a doctor that failed
+    if answer.get("busy"):  # the job's own doctor pass holds the lock: a pass is running, not a doctor that failed
         say("!", "doctor: another doctor pass is running, so this one did not look; `athena doctor` again in a minute")
     else:
         say("✓" if not problems else "!", f"doctor: {', '.join(problems) or 'all ok'}")
@@ -607,7 +607,7 @@ def cmd_verify(args):
     if args.services:
         for job in NEW_JOBS:
             row(_loaded(job) is True, f"{job} is loaded")
-        row(doctor_ran, "the doctor job has run and written health.json, so the clamshell daemon and the dash have a heartbeat")
+        row(doctor_ran, "doctor has run and written health.json, so the clamshell daemon and the dash have a heartbeat")
         row(_watch_came_round(), "the watch has come round, so HQ gets its wakes")
         serves = _dash_serves()
         row(bool(serves) and os.path.realpath(serves) == os.path.realpath(NEW), f"the dash on port {_dash_port()} serves this state" if serves != "old" else f"an old dash holds port {_dash_port()}: `~/.local/bin/athena-herdr dash off`, the herdr athena's command")
@@ -680,7 +680,7 @@ def _stop_new(hq_gone=False):
     for job in NEW_JOBS:
         if not _gone_within(job, 10):
             stop(f"{job} is still loaded, or launchctl can't say, so nothing moved. Look: launchctl print {_domain()}/{job}")
-    say("-", "the new jobs are gone")
+    say("-", "the new job is gone")
     for argv, what in ((("watch", "--stop"), "a watch doctor started"), (("dash", "off"), "the dash")):
         done = _ran("athena", *argv)
         if done.returncode:
