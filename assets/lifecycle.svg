@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 304" width="640" height="304" role="img" aria-labelledby="t d">
+<title id="t">One ticket, start to finish</title>
+<desc id="d">Seven steps joined by a red thread: 1 you hand HQ a ticket, 2 athena HQ writes the spec, 3 a worker builds and tests, 4 a fresh reviewer reviews, 5 GitHub runs CI, 6 you say merge, 7 athena HQ cleans up.</desc>
+<style>
+  .ui{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  .serif{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif}
+  .card{fill:#FBF8F1;stroke:rgba(30,35,80,.18);stroke-width:1.2}
+  .on{fill:none;stroke:#B8321F;stroke-width:2}
+  .who{font-size:14px;font-weight:600;fill:#5B5E78;letter-spacing:.02em}
+  .you{fill:#B8321F}
+  .step{font-size:19px;font-weight:650;fill:#1E2350}
+  .thread{fill:none;stroke:#B8321F;stroke-width:3;stroke-linecap:round;stroke-dasharray:890;stroke-dashoffset:0}
+  .run{animation:12s linear infinite both}
+  .thread.run{animation-name:draw}
+  @keyframes draw{0%,4%{stroke-dashoffset:890}76%,92%{stroke-dashoffset:0}100%{stroke-dashoffset:0;opacity:0}}
+  .c1{animation-name:c1}.c2{animation-name:c2}.c3{animation-name:c3}.c4{animation-name:c4}.c5{animation-name:c5}.c6{animation-name:c6}.c7{animation-name:c7}
+  @keyframes c1{0%,3%{opacity:0}5%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c2{0%,15%{opacity:0}17%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c3{0%,27%{opacity:0}29%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c4{0%,40%{opacity:0}42%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c5{0%,50%{opacity:0}52%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c6{0%,63%{opacity:0}65%,95%{opacity:1}100%{opacity:0}}
+  @keyframes c7{0%,75%{opacity:0}77%,95%{opacity:1}100%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+<rect width="640" height="304" rx="14" fill="#F3EEE4"/>
+<text x="24" y="42" class="serif" font-size="24" fill="#1E2350">One ticket, start to finish</text>
+
+<path d="M92 112H548V242H244" fill="none" stroke="rgba(30,35,80,.18)" stroke-width="3" stroke-linecap="round"/>
+<path class="thread run" d="M92 112H548V242H244"/>
+
+<g class="ui">
+  <!-- row 1, left to right -->
+  <rect class="card" x="24" y="74" width="136" height="76" rx="10"/>
+  <rect class="on run c1" x="24" y="74" width="136" height="76" rx="10"/>
+  <text x="38" y="100" class="who you">1 · YOU</text>
+  <text x="38" y="129" class="step">Ticket</text>
+
+  <rect class="card" x="176" y="74" width="136" height="76" rx="10"/>
+  <rect class="on run c2" x="176" y="74" width="136" height="76" rx="10"/>
+  <text x="190" y="100" class="who">2 · ATHENA HQ</text>
+  <text x="190" y="129" class="step">Spec</text>
+
+  <rect class="card" x="328" y="74" width="136" height="76" rx="10"/>
+  <rect class="on run c3" x="328" y="74" width="136" height="76" rx="10"/>
+  <text x="342" y="100" class="who">3 · WORKER</text>
+  <text x="342" y="129" class="step">Build &amp; test</text>
+
+  <rect class="card" x="480" y="74" width="136" height="76" rx="10"/>
+  <rect class="on run c4" x="480" y="74" width="136" height="76" rx="10"/>
+  <text x="494" y="100" class="who">4 · FRESH EYES</text>
+  <text x="494" y="129" class="step">Review</text>
+
+  <!-- row 2, right to left -->
+  <rect class="card" x="480" y="204" width="136" height="76" rx="10"/>
+  <rect class="on run c5" x="480" y="204" width="136" height="76" rx="10"/>
+  <text x="494" y="230" class="who">5 · GITHUB</text>
+  <text x="494" y="259" class="step">CI checks</text>
+
+  <rect class="card" x="328" y="204" width="136" height="76" rx="10"/>
+  <rect class="on run c6" x="328" y="204" width="136" height="76" rx="10"/>
+  <text x="342" y="230" class="who you">6 · YOU</text>
+  <text x="342" y="259" class="step">Merge</text>
+
+  <rect class="card" x="176" y="204" width="136" height="76" rx="10"/>
+  <rect class="on run c7" x="176" y="204" width="136" height="76" rx="10"/>
+  <text x="190" y="230" class="who">7 · ATHENA HQ</text>
+  <text x="190" y="259" class="step">Clean up</text>
+
+  <text x="24" y="226" font-size="15" fill="#5B5E78">All along, HQ</text>
+  <text x="24" y="245" font-size="15" fill="#5B5E78">answers the worker</text>
+  <text x="24" y="264" font-size="15" fill="#5B5E78">and asks you only</text>
+  <text x="24" y="283" font-size="15" fill="#5B5E78">what is yours.</text>
+
+</g>
+</svg>

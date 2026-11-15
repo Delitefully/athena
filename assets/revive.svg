@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" width="720" height="330" role="img" aria-labelledby="t d">
+<title id="t">Back after a Rex restart</title>
+<desc id="d">A Rex window. Rex restarts and every window comes back as a plain shell. athena brings HQ back first, then each worker, each on its own conversation; the worker that was mid-task is told to carry on.</desc>
+<style>
+  .ui{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:13px}
+  .row{font-size:14px;fill:#DCD7D1}
+  .group{font-size:12px;font-weight:600;fill:#8C8782}
+  .head{font-size:12px;font-weight:600;fill:#9A958F}
+  .txt{fill:#E9E4DD} .dim{fill:#8F8A85} .ok{fill:#7DBE8C}
+  .a{animation-duration:14s;animation-iteration-count:infinite;animation-fill-mode:both;animation-timing-function:ease-out}
+  .shell{opacity:0}
+  .s0{animation-name:s0}.s1{animation-name:s1}.s2{animation-name:s2}.s3{animation-name:s3}
+  .k0{animation-name:k0}.k1{animation-name:k1}.k2{animation-name:k2}.k3{animation-name:k3}
+  .t0{animation-name:t0}.t1{animation-name:t1}.t2{animation-name:t2}.t3{animation-name:t3}.ban{animation-name:ban}
+  @keyframes ban{0%,8%{opacity:0}12%,93%{opacity:1}97%,100%{opacity:0}}
+  @keyframes s0{0%,8%{opacity:0}11%,24%{opacity:1}27%,100%{opacity:0}}
+  @keyframes k0{0%,8%{opacity:1}11%,24%{opacity:0}27%,100%{opacity:1}}
+  @keyframes s1{0%,8%{opacity:0}11%,36%{opacity:1}39%,100%{opacity:0}}
+  @keyframes k1{0%,8%{opacity:1}11%,36%{opacity:0}39%,100%{opacity:1}}
+  @keyframes s2{0%,8%{opacity:0}11%,48%{opacity:1}51%,100%{opacity:0}}
+  @keyframes k2{0%,8%{opacity:1}11%,48%{opacity:0}51%,100%{opacity:1}}
+  @keyframes s3{0%,8%{opacity:0}11%,60%{opacity:1}63%,100%{opacity:0}}
+  @keyframes k3{0%,8%{opacity:1}11%,60%{opacity:0}63%,100%{opacity:1}}
+  @keyframes t0{0%,24%{opacity:0}27%,93%{opacity:1}97%,100%{opacity:0}}
+  @keyframes t1{0%,36%{opacity:0}39%,93%{opacity:1}97%,100%{opacity:0}}
+  @keyframes t2{0%,48%{opacity:0}51%,93%{opacity:1}97%,100%{opacity:0}}
+  @keyframes t3{0%,60%{opacity:0}63%,93%{opacity:1}97%,100%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+<defs>
+  <linearGradient id="win" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#262425"/><stop offset="1" stop-color="#1C1A1B"/></linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#000" flood-opacity=".28"/></filter>
+  <g id="spark" stroke-width="1.6" stroke-linecap="round"><path d="M0-6V6M-6 0H6M-4.2-4.2L4.2 4.2M-4.2 4.2L4.2-4.2"/></g>
+  <g id="shell" fill="none" stroke="#D8D3CD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M-5.5-3.5l3.5 3.5-3.5 3.5M0 4.5H5.5"/></g>
+  <g id="tile"><rect x="-10" y="-10" width="20" height="20" rx="5" fill="#2C2A2A" stroke="#55514F"/></g>
+</defs>
+
+<rect x="20" y="12" width="680" height="294" rx="14" fill="url(#win)" stroke="#3B3839" filter="url(#shadow)"/>
+<path d="M34 12.5H686" stroke="#FFFFFF" stroke-opacity=".07"/>
+<circle cx="44" cy="38" r="6" fill="#FF5F57"/><circle cx="64" cy="38" r="6" fill="#FEBC2E"/><circle cx="84" cy="38" r="6" fill="#28C840"/>
+<g fill="none" stroke="#8C8782" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="104" y="31.5" width="16" height="13" rx="3"/><path d="M109.5 31.5v13"/>
+  <path d="M188 38s3.5-5 8.5-5 8.5 5 8.5 5-3.5 5-8.5 5-8.5-5-8.5-5z"/><circle cx="196.5" cy="38" r="2.2"/>
+  <path d="M226 35.5a2 2 0 1 1 2-2v9a2 2 0 1 1-2-2h9a2 2 0 1 1-2 2v-9a2 2 0 1 1 2 2z"/>
+  <path d="M252 38h11M257.5 32.5v11"/>
+</g>
+
+<g class="ui">
+  <text x="40" y="84" class="group">athena</text>
+  <rect x="30" y="96" width="234" height="34" rx="17" fill="#3A3736" stroke="#4E4A49"/>
+  <g transform="translate(54 113)">
+    <g class="a k0"><rect x="-10" y="-10" width="20" height="20" rx="5" fill="#D97757"/><use href="#spark" stroke="#FFF5EE"/></g>
+    <g class="shell a s0"><use href="#tile"/><use href="#shell"/></g>
+  </g>
+  <text x="74" y="118" class="row">athena HQ</text>
+
+  <text x="40" y="160" class="group">web-app</text>
+  <g transform="translate(54 185)">
+    <g class="a k1"><use href="#tile"/><use href="#spark" stroke="#D8D3CD"/></g>
+    <g class="shell a s1"><use href="#tile"/><use href="#shell"/></g>
+  </g>
+  <text x="74" y="190" class="row">Sign-in fix</text>
+  <g transform="translate(54 221)">
+    <g class="a k2"><use href="#tile"/><use href="#spark" stroke="#D8D3CD"/></g>
+    <g class="shell a s2"><use href="#tile"/><use href="#shell"/></g>
+  </g>
+  <text x="74" y="226" class="row">Faster search</text>
+  <g transform="translate(54 257)">
+    <g class="a k3"><use href="#tile"/><use href="#spark" stroke="#D8D3CD"/></g>
+    <g class="shell a s3"><use href="#tile"/><use href="#shell"/></g>
+  </g>
+  <text x="74" y="262" class="row">CSV export</text>
+</g>
+
+<rect x="278" y="22" width="412" height="274" rx="10" fill="#131213" stroke="#2E2C2D"/>
+<path d="M278 60H690" stroke="#2E2C2D"/>
+<text x="296" y="46" class="ui head">athena</text>
+<g class="mono">
+  <g class="a ban">
+    <circle cx="300" cy="88" r="3.5" fill="#D97757"/>
+    <text x="314" y="93" class="txt">Rex restarted. Every window came</text>
+    <text x="314" y="113" class="txt">back as a plain shell.</text>
+  </g>
+  <text x="314" y="145" class="txt a t0"><tspan class="dim">⎿</tspan><tspan x="332">athena HQ</tspan><tspan x="460" class="ok">✓ back</tspan></text>
+  <text x="314" y="169" class="txt a t1"><tspan class="dim">⎿</tspan><tspan x="332">Sign-in fix</tspan><tspan x="460" class="ok">✓ back</tspan></text>
+  <text x="314" y="193" class="txt a t2"><tspan class="dim">⎿</tspan><tspan x="332">Faster search</tspan><tspan x="460" class="ok">✓ back</tspan></text>
+  <text x="314" y="217" class="txt a t3"><tspan class="dim">⎿</tspan><tspan x="332">CSV export</tspan><tspan x="460" class="ok">✓ back, carries on</tspan></text>
+  <g class="a t3"><circle cx="300" cy="252" r="3.5" fill="#D97757"/><text x="314" y="257" class="txt">Each on its own conversation.</text></g>
+</g>
+</svg>
