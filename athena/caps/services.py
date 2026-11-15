@@ -38,7 +38,8 @@ STOPPED = "services-stopped.json"
 CARRIED = ("ATHENA_STATE_DIR", "ATHENA_CONFIG", "ATHENA_HQ", "ATHENA_DASH_PORT", "ATHENA_SERVER", "ATHENA_BINARY")
 AWAIT = 60  # how long stop and start wait for the supervisor to act
 MOVE_LOCK = "locks/services-move.lock"  # held by `services install` for as long as it moves the earlier layout
-MOVE_FAILED = "services-move-failed.json"  # what the last move that left old jobs behind said
+MOVE = "services-move.json"  # the move's record: {"state": "running" | "failed", "since", "failed": what the last failure said}
+MOVE_START = 30  # a try doctor started may take this long to take MOVE_LOCK
 
 
 def agents_dir() -> Path:
@@ -270,19 +271,52 @@ def _loaded(domain) -> bool:
 
 
 def install(ctx, dry_run=False) -> list:
-    """`_install`, and while it moves the earlier layout it holds MOVE_LOCK, so doctor reads a move under way (the menu bar
-    app may build first, for minutes) as under way, not as a problem; and it records a move that left old jobs behind, so
-    doctor reads the next try as a failure to tell once, not as more routine upkeep."""
+    """`_install`. While it moves the earlier layout it holds MOVE_LOCK and keeps the move's record (MOVE): running from
+    the moment it holds the lock, failed with what went wrong when it raises or leaves old jobs behind, and gone only once
+    the move is done. A try killed outright leaves its record running with the lock free, which `move_state` reads as
+    failed. Doctor's row is derived from these two alone, in `move_state`."""
     if dry_run or not old_plists():
         return _install(ctx, dry_run)
     with store.locked(MOVE_LOCK):
-        actions = _install(ctx, dry_run)
+        _record("running", store.read_dict(store.path(MOVE)).get("failed"))
+        try:
+            actions = _install(ctx, dry_run)
+        except BaseException as exc:
+            _record("failed", str(exc) or type(exc).__name__)
+            raise
         if old_plists():
             failed = [a for a in actions if a.startswith("failed ")]
-            store.write_json(store.path(MOVE_FAILED), {"ts": time.time(), "said": (failed or ["old jobs are left"])[0]})
+            _record("failed", (failed or ["old jobs are left"])[0])
         else:
-            store.path(MOVE_FAILED).unlink(missing_ok=True)
+            store.path(MOVE).unlink(missing_ok=True)
     return actions
+
+
+def _record(state, failed):
+    store.write_json(store.path(MOVE), {"state": state, "since": time.time(), "failed": failed})
+
+
+def move_state(now=None) -> tuple:
+    """(state, what the last failure said) of the move from the earlier layout, from the lock and the record alone:
+
+        not started   no record, and no install holds the lock
+        under way     an install holds the lock (or doctor started one moments ago), and no try has failed yet
+        retrying      the same, after a try that failed
+        failed        no install holds the lock, and the record says failed, or running (a try killed outright)
+    """
+    now = time.time() if now is None else now
+    record = store.read_dict(store.path(MOVE))
+    with store.locked(MOVE_LOCK, blocking=False) as free:
+        held = not free
+    failed = record.get("failed")
+    starting = record.get("state") == "running" and now - float(record.get("since") or 0) < MOVE_START
+    if held or starting:
+        return ("retrying", failed) if failed else ("under way", None)
+    if not record:
+        return "not started", None
+    if record.get("state") == "running":
+        return "failed", "a try was cut off before it finished" + (f", after one that said: {failed}" if failed else "")
+    return "failed", failed or "a try failed"
 
 
 def _install(ctx, dry_run=False) -> list:
@@ -597,12 +631,13 @@ def checks(ctx):
     jobs (onto this code) and asks this doctor for its verdict; so this waits while an update holds the install lock or has
     a switch on record, and moves nothing until the update's health check has passed and been saved.
 
-    The move is upkeep the human asked for fewer notices about: its first try is `quiet` (no notification when it goes
-    through), and while its install runs, building the menu bar app first for minutes perhaps, the row says it is under
-    way and is ok. A move that left the old jobs behind is an ordinary problem from then on: told once and hourly after,
-    tried again at doctor's usual pace, until one goes through."""
+    The move is upkeep the human asked for fewer notices about. Its row follows `move_state`: not started is a `quiet`
+    repair (no notification when it goes through); under way is ok, however long the menu bar app takes to build; failed
+    is an ordinary problem, told once and hourly after, its repair tried at doctor's usual pace; retrying stays failing
+    and starts no second try. Done (no old jobs) has no row."""
     old = old_plists()
     if not old:
+        store.path(MOVE).unlink(missing_ok=True)  # done: whatever a try left on record is over
         return []
     install = ctx.cap("install")
     releases = getattr(install, "releases", None)
@@ -614,12 +649,13 @@ def checks(ctx):
     with releases.locked() as got:
         if not got:
             return [caps.Check("services", True, "an update is under way: the move to the one job waits for its health check")]
-    with store.locked(MOVE_LOCK, blocking=False) as free:
-        if not free:
-            return [caps.Check("services", True, "the move to the one job is under way", short="moving")]
-    failed = store.read_dict(store.path(MOVE_FAILED))
-    if failed:  # an ordinary problem from here: told once and hourly after, its repair tried at doctor's usual pace
-        return [caps.Check("services", False, f"the move to the one job left the old jobs: {failed.get('said')}; the repair tries again",
+    state, failed = move_state()
+    if state == "under way":
+        return [caps.Check("services", True, "the move to the one job is under way", short="moving")]
+    if state == "retrying":  # still failing until a try goes through, and no second try beside this one
+        return [caps.Check("services", False, f"the move to the one job failed: {failed}; a new try is under way", short="move failed")]
+    if state == "failed":  # an ordinary problem: told once and hourly after, its repair tried at doctor's usual pace
+        return [caps.Check("services", False, f"the move to the one job failed: {failed}; the repair tries again",
                            repair=lambda: _move(releases), grace=0, short="move failed")]
     return [caps.Check("services", False, f"{len(old)} job(s) of the earlier layout, one per service: the repair moves them to the one job",
                        repair=lambda: _move(releases), grace=0, short="earlier layout", quiet=True)]
@@ -632,6 +668,7 @@ def _move(releases):
         if not got or releases.load()["switch"]:
             raise UserError("an update is under way: the move waits for it")
         installed = releases.load()["current"]
+    _record("running", store.read_dict(store.path(MOVE)).get("failed"))  # under way from now, before it holds the lock
     binary = releases.root() / "current/bin/athena" if installed else store.ROOT / "bin" / "athena"  # else run from a checkout
     with open(store.ensure("logs") / "services-move.log", "ab") as log:
         subprocess.Popen([str(binary), "services", "install"], stdin=subprocess.DEVNULL, stdout=log, stderr=log,

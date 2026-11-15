@@ -483,6 +483,7 @@ class QuitAndStart(FakeLaunchd):
         with mock.patch.object(services, "_move", side_effect=lambda releases: tries.append(services.install(caps.CTX))):
             for now in range(1000, 1000 + 3000, 60):  # fifty passes, under an hour
                 doctor.run(caps.CTX, fix=True, now=now)
+        self.assertTrue(tries, "it was tried")
         self.assertLessEqual(len(tries), doctor.REPAIRS_PER_HOUR, "repairs stay capped")
         self.assertTrue(all(any(a.startswith("failed local.athena") for a in t) for t in tries))
         self.assertIn("local.athena.doctor.plist", self.plists(), "the old doctor stays to try again")
@@ -491,6 +492,77 @@ class QuitAndStart(FakeLaunchd):
         self.assertEqual(len(services_told), 1, f"told once, not per attempt: {services_told}")
         health = json.loads(store.path("health.json").read_text())
         self.assertFalse(health["checks"]["services"]["ok"], "and the row stays failing, not flipping")
+
+    def install_as_doctors_move(self, releases):
+        """What _move starts, run here in-process: the install's own record and lock, its error going nowhere but the log."""
+        try:
+            services.install(caps.CTX)
+        except UserError:
+            pass
+
+    def services_row(self, now):
+        health = doctor.run(caps.CTX, fix=True, now=now)
+        return health["checks"]["services"], [p["check"] for p in health["problems"]]
+
+    def test_a_move_whose_app_build_raises_is_failed_with_the_build_error_and_told_once(self):
+        self.old_layout_here()
+        with mock.patch.object(menubar, "ensure_built", side_effect=UserError("the menu bar app did not build (1): swiftc broke")), \
+                mock.patch.object(services, "_move", side_effect=self.install_as_doctors_move) as moved:
+            row, problems = self.services_row(1000)
+            self.assertTrue(row["ok"], "not started: a quiet repair that went through")
+            self.assertEqual(services.move_state(), ("failed", "the menu bar app did not build (1): swiftc broke"))
+            rows = [self.services_row(now) for now in range(1060, 1060 + 600, 60)]
+        self.assertTrue(all(not r["ok"] and "swiftc broke" in r["detail"] for r, _ in rows), "failing, with the build's error, every pass")
+        self.assertTrue(all("services" in p for _, p in rows))
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1, "told once, not per try")
+        self.assertIn("swiftc broke", [c for c in self.told() if "services" in c][0])
+        self.assertLessEqual(moved.call_count, doctor.REPAIRS_PER_HOUR)
+        self.assertEqual(self.loaded(), {f"local.athena.{n}" for n in ("doctor", "watch", "dash", "menubar")}, "nothing moved")
+
+    def test_a_try_killed_mid_move_reads_failed_on_the_next_pass_not_as_never_started(self):
+        self.old_layout_here()
+        left = []
+        with mock.patch.object(services, "_install", side_effect=lambda ctx, dry_run=False: left.append(
+                store.path(services.MOVE).read_text()) or (_ for _ in ()).throw(KeyboardInterrupt())):
+            with self.assertRaises(KeyboardInterrupt):
+                services.install(caps.CTX)
+        self.assertEqual(json.loads(left[0])["state"], "running", "on record before any work, with the lock held")
+        store.path(services.MOVE).write_text(left[0])  # as a kill outright leaves it: no handler ran, and the OS freed the lock
+        since = json.loads(left[0])["since"]
+        self.assertEqual(services.move_state(now=since + 5)[0], "under way", "a try just started may not hold the lock yet")
+        state, said = services.move_state(now=since + 120)
+        self.assertEqual(state, "failed")
+        self.assertIn("cut off", said)
+        store.path(services.MOVE).write_text(json.dumps({**json.loads(left[0]), "since": time.time() - 120}))  # the next pass, later
+        with mock.patch.object(services, "_move") as moved:
+            row, problems = self.services_row(time.time())
+        self.assertFalse(row["ok"])
+        self.assertIn("services", problems)
+        moved.assert_called_once()
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1)
+
+    def test_a_retry_still_running_past_a_pass_after_a_failure_stays_failing_and_starts_no_second_try(self):
+        self.old_layout_here()
+        services._record("failed", "launchctl bootstrap failed (122)")
+        with mock.patch.object(services, "_move") as moved:
+            row, problems = self.services_row(1000)
+            self.assertFalse(row["ok"])
+            moved.assert_called_once()  # the retry
+            with store.locked(services.MOVE_LOCK):  # its install still runs, as the record it keeps says
+                services._record("running", "launchctl bootstrap failed (122)")
+                self.assertEqual(services.move_state()[0], "retrying")
+                for now in (1060, 1120, 1180, 1240):
+                    row, problems = self.services_row(now)
+                    self.assertFalse(row["ok"], "still failing until a try goes through")
+                    self.assertIn("a new try is under way", row["detail"])
+                    self.assertIn("services", problems)
+            self.assertEqual(moved.call_count, 1, "no second try beside the running one")
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1, "told once, at the failure")
+
+    def test_once_moved_a_leftover_record_is_cleared_and_there_is_no_row(self):
+        services._record("failed", "an old failure")
+        self.assertEqual(services.checks(caps.CTX), [])
+        self.assertFalse(store.path(services.MOVE).exists())
 
     def test_a_quiet_repair_that_raises_is_a_problem_and_is_told(self):
         mover = types.SimpleNamespace(__name__="athena_modules.mover", checks=lambda ctx: [
