@@ -479,7 +479,8 @@ reaches it only through launchctl (install, restart) or a file it polls:
   repair never races the supervisor for the dash's port or the watch's lock.
 
 `services restart` is launchd's `kickstart -k` of the one job: the supervisor and every child restart on the code
-`current` names. Run by a child of the supervisor (doctor, the menu bar), it ends that caller too, after launchd has it.
+`current` names. It first builds that release's menu bar app if it is missing or stale, as a release is copied without
+its build and `menubar run` exits clean (and stays down) without one. Run by a child of the supervisor (doctor, the menu bar), it ends that caller too, after launchd has it.
 While athena is stopped it still restarts the supervisor, and the mark keeps the rest stopped.
 
 The one job is `ProcessType` Interactive, as the menu bar app is one of its children; the supervisor puts every other
@@ -489,8 +490,9 @@ changed is left as it is, since each write shows the human a notice.
 **The layout before the one job** was one launchd job per service, `local.athena.<name>`. `services install` boots out
 and removes each, the old doctor's last, after the one job is loaded, and keeps the environment they carried. An update
 to this layout's first release runs the old release's updater, which only restarts the old jobs onto the new code and asks
-the new doctor for its verdict; so the move is doctor's `services` repair (`athena services install`, in a session of its
-own), which waits while an update holds the install lock or has a switch on record. Until then, `stop`, `start` and
+the new doctor for its verdict; so the move is doctor's `services` repair, which starts `athena services install` in a
+session of its own and does not wait for it (it may build the menu bar app first, and it ends the old doctor job). It
+waits while an update holds the install lock or has a switch on record. Until then, `stop`, `start` and
 `restart` act on the old jobs as they did. A rollback (`install --rollback`, or an update's own) to a release without the
 supervisor hands its layout back: that release's own `services install` writes its jobs, then the one job goes.
 
