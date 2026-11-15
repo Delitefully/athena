@@ -129,7 +129,7 @@ Also in the box:
 ## Requirements
 
 - **macOS.** athena runs on a Mac only.
-- **[Rex](TODO), by Superlogical.** <!-- TODO: Rex link, the human supplies it --> Rex is currently in closed beta.
+- **Rex, by Superlogical.** Rex is currently in closed beta.
 - **[Claude Code](https://claude.com/claude-code)**, signed in. A Claude Max or Ultra account is recommended.
 - **[gh](https://cli.github.com)**, GitHub's command line tool, signed in.
 - **Linear**, where HQ reads your tickets and the name of each branch.
