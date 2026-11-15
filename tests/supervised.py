@@ -21,23 +21,23 @@ FIXTURE_MODULES = ROOT / "tests" / "fixtures" / "modules"
 class Supervised(Case):
     def setUp(self):
         super().setUp()
-        self.fake = self.tmp / "fake"
-        (self.fake / "alive").mkdir(parents=True)
-        os.environ["ATHENA_FAKE_CHILDREN"] = str(self.fake)
+        self.kids = self.tmp / "fake"
+        (self.kids / "alive").mkdir(parents=True)
+        os.environ["ATHENA_FAKE_CHILDREN"] = str(self.kids)
         self.spawned = []
         self.addCleanup(self.assert_children_gone)  # first in, so it runs last: after each supervisor and process is ended
 
     # fake children
 
     def mode(self, tag, text):
-        (self.fake / f"mode-{tag}").write_text(text)
+        (self.kids / f"mode-{tag}").write_text(text)
 
     def release(self, tag_or_pid):
-        (self.fake / f"release-{tag_or_pid}").write_text("")
+        (self.kids / f"release-{tag_or_pid}").write_text("")
 
     def starts(self, tag=None) -> list:
         """[(tag, pid, pgid, ppid)] each start noted, in order; once each child a supervisor here started has noted its own."""
-        path = self.fake / "starts.log"
+        path = self.kids / "starts.log"
         deadline = time.monotonic() + 15
         while True:
             rows = [line.split() for line in path.read_text().splitlines()] if path.exists() else []
@@ -47,13 +47,13 @@ class Supervised(Case):
         return [(r[0], int(r[1]), int(r[2]), int(r[3])) for r in rows if tag is None or r[0] == tag]
 
     def stops(self) -> list:
-        path = self.fake / "stops.log"
+        path = self.kids / "stops.log"
         return path.read_text().split() if path.exists() else []
 
     def alive(self, tag=None) -> list:
         """The pids of fake children alive now, by the lock each holds while it lives."""
         out = []
-        for lock in sorted((self.fake / "alive").glob("*.lock")):
+        for lock in sorted((self.kids / "alive").glob("*.lock")):
             name, pid = lock.stem.rsplit("-", 1)
             if tag is not None and name != tag:
                 continue

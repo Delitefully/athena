@@ -146,7 +146,7 @@ class Every(Supervised):
         self.assertEqual(len(self.alive("hourly")), 1)
         self.release("hourly")
         self.exit_of(held, "hourly")
-        os.unlink(self.fake / "release-hourly")
+        os.unlink(self.kids / "release-hourly")
         held.step(T0 + 7400)
         self.assertEqual(len(self.starts("hourly")), 1, "the slot it ran through is skipped, not queued")
         held.step(T0 + 10800)
@@ -164,14 +164,14 @@ class Every(Supervised):
 
 class Asked(Supervised):
     def test_quit_stops_what_the_mark_names_watchdog_first_and_start_brings_them_back_watchdog_last(self):
-        names = ("doctor", "watch", "dash", "menubar", "beacon")
+        names = ("doctor", "dash", "watch", "menubar", "beacon")
         held = self.supervisor([fake(n, every=60 if n == "doctor" else None, keep_alive=n != "doctor") for n in names])
         self.mode("doctor", "keep")
         held.step(T0)
         self.starts()
-        store.write_json(store.path("services-stopped.json"), {"at": T0, "jobs": ["doctor", "watch", "dash"]})
+        store.write_json(store.path("services-stopped.json"), {"at": T0, "jobs": ["doctor", "dash", "watch"]})
         held.step(T0 + 1)
-        self.assertEqual(self.stops(), ["doctor", "watch", "dash"])
+        self.assertEqual(self.stops(), ["doctor", "dash", "watch"])
         self.assertEqual(sorted(c.name for c in held.children if c.proc), ["beacon", "menubar"])
         self.assertTrue(all(c.held and c.state == "stopped" for c in held.children[:3]))
         for later in (60, 120, 600):

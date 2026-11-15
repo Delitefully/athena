@@ -14,8 +14,9 @@ runs, or a copy from an earlier supervisor still alive) or stopped (a clean exit
 
 What it is asked, it reads from files it polls, so the CLI never signals it:
 
-    <state>/services-stopped.json   Quit athena's mark: each child it names is stopped, first to last, and started again
-                                    once the mark is gone, last to first (the watchdog is first in it)
+    <state>/services-stopped.json   Quit athena's mark: each child it names is stopped in its order (the watchdog is
+                                    first in it), and started again once the mark is gone, in the same order but with
+                                    the watchdog last
     <run>/services-ask/<name>       restart that child now and clear its backoff (doctor's repair of the watch or the dash)
 
 and it says what it did in <run>/services.json. It holds <run>/services.lock while it runs: that lock, never the
@@ -125,7 +126,7 @@ class Supervisor:
                 child.state, child.note = STOPPED, "stopped by Quit athena"
         if held:
             self._held_order = held
-        for name in reversed(self._held_order):  # Start: last to first, so the watchdog comes last
+        for name in self._held_order[1:] + self._held_order[:1]:  # Start: in the mark's order but the watchdog last
             child = by_name.get(name)
             if child and child.held and name not in held:
                 child.held, child.state, child.note = False, STARTING, ""
