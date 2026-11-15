@@ -220,7 +220,7 @@ runs. `GOAL_MAX` is 3990 characters.
 writes that file often, re-reading it under `~/.claude.json.lock`, so trust takes the same lock, changes the one key
 and renames the file into place. A worktree follows its main checkout.
 
-**The budget** (`athena/kernel/budget.py`). A launch waits under 25% free memory (10 points more for each extra unit an
+**The budget** (`athena/kernel/budget.py`). Spawn refuses a launch under 25% free memory (10 points more for each extra unit an
 ultracode worker costs), under 10 GB of free disk, or at load above 3 per core. A reading it can't get counts as room:
 this holds launches, it is not an interlock. `--force-budget` goes past it.
 
@@ -363,7 +363,7 @@ hook, with secret-shaped strings redacted, so `athena item check` can find reque
 
 **The dashboard** (`athena dash open`) is one page on `127.0.0.1` (port `rex.dash_port`, 2843), served by
 `athena dash run` with the Python standard library (`server.py`; `state.py` reads the files, `view.py` places each row,
-`page.py` renders it, `static/` holds the script, style and fonts). It reads the state files and writes only what the
+`page.py` renders it, `markdown.py` turns an item's body into safe HTML, `static/` holds the script, style and fonts). It reads the state files and writes only what the
 human does on it: `actions.jsonl`, `needs-you.json` (Done, Snooze, Reopen) and `dismissed-prs.json`. The page groups:
 
 - **Needs you:** decisions, with HQ's recommendation and a one-click answer; workers blocked at a permission prompt; PRs
@@ -536,7 +536,7 @@ Files: `athena/caps/install/` (`__init__.py`, `releases.py`, `update.py`).
 
 `bin/athena install` (from a checkout the first time) makes a release: a whole copy of the shipped files under
 `~/.local/share/athena/releases/<version>-<content hash>`, and a `current` link swapped atomically by one rename.
-`~/.local/bin/athena` is a two-line launcher through `current`. Everything athena hands out by path (hooks, prompts,
+`~/.local/bin/athena` is a small launcher that `exec`s through `current`. Everything athena hands out by path (hooks, prompts,
 launchd jobs) goes through `current`, so a running Claude's hook never sees a half-copied tree. Two releases are kept.
 Install writes nothing in `~/.claude`, since hooks and permissions go in each session's own `--settings`, and never edits
 a shell profile: it prints the line to add.
