@@ -29,7 +29,7 @@ from pathlib import Path
 from athena.cli import UserError
 from athena.kernel import caps, store
 
-SHIP = ("VERSION", "bin", "athena", "prompts", "scripts", "docs", "menubar", "plugin", "worker-plugin", "ARCHITECTURE.md")
+SHIP = ("VERSION", "bin", "athena", "prompts", "scripts", "docs", "menubar", "plugin", "worker-plugin", "pi-extension", "ARCHITECTURE.md")
 SCHEMA = 2
 REPO = "https://github.com/Delitefully/athena.git"
 CHANNELS = ("release", "main")

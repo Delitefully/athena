@@ -244,6 +244,8 @@ class Page:
             meta += f'<span class="ticket">{e(it.ticket)}</span>'
         if it.repo:
             meta += f"<span>{e(it.repo)}</span>"
+        if it.agent:
+            meta += f'<span class="agent">{e(it.agent)}</span>'
         if it.pr is not None:
             p = it.pr
             meta += f'<span class="pr"><a href="{u(p.url)}">{e(p.text)}</a>'

@@ -357,7 +357,8 @@ def _row(decision) -> dict:
     if decision.reason is None:
         told = _prompt(decision)
         then = None if told is None else "its session start" if decision.kind is Kind.HQ else "a nudge to carry on"
-        out.update(session=decision.session, at=decision.detail, then=then)
+        worker = ledger.get(decision.name) if decision.kind is Kind.WORKER else None
+        out.update(session=decision.session, at=decision.detail, then=then, agent=agents.agent_of(worker))
     else:
         out.update(reason=decision.reason.value, why=decision.reason.words, detail=decision.detail)
     return out
@@ -375,7 +376,8 @@ def describe(out) -> list:
              "last handled: " + last_line(parse(out["last"])), "dry run, nothing typed: a revive now would"]
     for row in out["panes"]:
         if row["revive"]:
-            lines.append(f"  revive  {row['name']:<20} {row['kind']:<6} --resume {row['session']} into its idle {row['at']}"
+            how = f"pi --session-id {row['session']}" if row.get("agent") == "pi" else f"--resume {row['session']}"
+            lines.append(f"  revive  {row['name']:<20} {row['kind']:<6} {how} into its idle {row['at']}"
                          + (f", then {row['then']}" if row["then"] else ""))
         else:
             lines.append(f"  skip    {row['name']:<20} {row['kind']:<6} {row['why']}" + (f": {row['detail']}" if row["detail"] else ""))

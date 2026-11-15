@@ -109,6 +109,7 @@ class Item:
     sent: str = ""
     auto_at: float = 0.0
     session: str = ""  # a Rex session's id: its row offers Show
+    agent: str = ""  # a worker that runs something other than Claude says what: pi
 
     item: str = ""
     finds: List[str] = field(default_factory=list)
@@ -207,7 +208,8 @@ def build(s: Snapshot, now: float, linear_workspace: str = "") -> View:
     retired = []
     for w in s.workers:
         hook = s.hooks.get(w.name) or Hook()
-        it = Item(id="w-" + w.name, name=w.name, title=w.title, repo=w.repo.rstrip("/").rsplit("/", 1)[-1] if w.repo else "")
+        it = Item(id="w-" + w.name, name=w.name, title=w.title, repo=w.repo.rstrip("/").rsplit("/", 1)[-1] if w.repo else "",
+                  agent="" if w.agent == "claude" else w.agent)
         if w.linear:
             it.ticket = w.linear.upper()
             if linear_workspace:

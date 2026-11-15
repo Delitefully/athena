@@ -97,7 +97,7 @@ def _nudge(args):
     except agents.Refused as exc:
         print(f"refused: {exc}")
         return 3
-    if re.fullmatch(r"/\S+", text):
+    if re.fullmatch(r"/\S+", text) and agents.agent_of(record) == "claude":  # a Pi's goes through its inbox: no menu, no key
         time.sleep(0.5)
         caps.CTX.backend.press(agents.place_of(record), "enter")
     print("sent")

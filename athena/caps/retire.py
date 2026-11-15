@@ -144,7 +144,7 @@ def _stop(ctx, name, worker, record, force, grace, result):
         if kin:
             ledger.append("update", name, retire_kin={str(pid): command for pid, command in kin.items()}, retire_kin_at=listed)
         if not _stop_claude(backend, record, grace):
-            raise RetireError(f"{name}'s Claude did not stop; {name} stays tracked")
+            raise RetireError(f"{name}'s {'Pi' if agents.agent_of(worker) == 'pi' else 'Claude'} did not stop; {name} stays tracked")
     if kin:
         result["leftovers"] = agents.stop_leftovers(kin, listed_at=listed)
 
@@ -188,6 +188,7 @@ def _close(ctx, name, worker, result):
                 result["backend_error"] = str(exc)
     for leftover in (agents.pid_file(name), store.path("run", f"{name}.sh")):
         leftover.unlink(missing_ok=True)
+    agents.forget_pi(name)  # a quit Pi never read, as it was killed mid-run, must not reach the next worker of this name
 
 
 def retire(ctx, name, force=False, keep_worktree=False, grace=8.0) -> dict:

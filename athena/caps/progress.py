@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from athena.kernel import caps, config, store
+from athena.kernel import agents, caps, config, ledger, store
 
 SUMMARY = "a worker's progress from its task list, and a rare Haiku estimate (internal)"
 TASK_TOOLS = ("TodoWrite", "TaskCreate", "TaskUpdate")
@@ -218,5 +218,13 @@ def _sub_cfg(p):
     _answer_cfg(sub.add_parser("answer"))
 
 
+PI_SKIP = ("{name} runs Pi, so it has no progress band: the band is a Claude Code mod, drawn from Claude's task tools, and Pi has "
+           "neither")
+
+
 def _sub(args):
+    name = _name(args)
+    if agents.agent_of(ledger.get(name)) == "pi":  # nothing for a Pi to estimate from, and no band to draw it in
+        print(PI_SKIP.format(name=name), file=sys.stderr)
+        return 0
     return _ask(args) if args.action == "ask" else _answer(args)

@@ -40,6 +40,7 @@ REX_DEFAULTS = {
     "max_workers": 16,
     "hard_cap": 16,
     "claude": "claude",
+    "pi": "pi",  # the Pi command, for workers spawned with --agent pi
     "scratch_ttl_days": 14,
     "bots": [],
     "ignored_copy_max_mb": 2048,
@@ -50,7 +51,7 @@ REX_DEFAULTS = {
     "scratchpads": f"/private/tmp/claude-{os.getuid()}",
 }
 REX_ENV = {"backend": "ATHENA_BACKEND", "binary": "ATHENA_BINARY", "server": "ATHENA_SERVER",
-           "dash_port": "ATHENA_DASH_PORT", "max_workers": "ATHENA_MAX_WORKERS", "claude": "ATHENA_CLAUDE",
+           "dash_port": "ATHENA_DASH_PORT", "max_workers": "ATHENA_MAX_WORKERS", "claude": "ATHENA_CLAUDE", "pi": "ATHENA_PI",
            "scratchpads": "ATHENA_SCRATCHPADS"}
 
 KNOWN_VERSION = 1

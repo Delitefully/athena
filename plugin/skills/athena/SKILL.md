@@ -79,6 +79,13 @@ For each ticket the human names (ids, Linear URLs or PR links):
 2. **Pick the repo.** Use `<state>/repo-map.md` (you maintain it: Linear team or project to repo path). If unknown, ask once and record the answer.
 3. **Name the worker** with the lowercase ticket id (`abc-112`). For work without a ticket, ask the human for one: the branch must come from Linear.
 4. **Choose model and effort** (decision D7): the config's `model` and `effort` by default (`athena spawn` uses them when you pass neither; opus/high unless the human changed them). Use another model only if the human asks. Add `--ultracode` (and `--workflow-size small|medium|large|unrestricted` if they name one) only when the human asks for ultracode or multi-agent workflows on that worker, never on your own judgement: it turns on the official `"ultracode": true` setting in the worker's settings file, so never write "ultracode" into the goal, the brief or a message. Note the choice on the launch card.
+
+   **Pi (DeepSeek) workers.** Add `--agent pi` only when the human asks for DeepSeek or Pi on that worker; Claude is the default, and no config changes that. Pass no `--model` unless the human names one: Pi then runs its own configured default (DeepSeek through the human's Pi setup), and a `--model` is passed to Pi as written. What differs for such a worker:
+   - **Messaging:** it has no SendMessage, and its own SendMessage to you doesn't exist either. Message it with `athena send <w> "<text>"`, which goes through its inbox into its conversation, queued while it works. Wherever this skill says "SendMessage the worker", use that. Its report is how it reaches you.
+   - **No permission classifier:** Pi has no permission prompts and no auto mode, so every command it runs, runs. athena's git rules (no force-push, no push to main, no `--admin` merge) still hold through its extension; nothing else does. Keep FORBIDDEN explicit, and don't give a Pi worker prod, credentials or destructive work.
+   - **No ultracode:** `athena spawn` refuses `--agent pi --ultracode`; launch ultracode on Claude.
+   - **No goal evaluator:** its goal arrives in words, not `/goal`, and the report gate alone holds it: a turn can't end without a filed report. `/goal clear` means nothing to it; restate a goal with `athena amend <w> "<condition>"`.
+   - **No subagents, no progress band, no flame figures.** Its self-review is its own read of the diff, so review its PR as you would any.
 5. **Write the brief** to `<state>/drafts/<name>.md`:
 
 ```
@@ -104,7 +111,7 @@ NOTES: <repo quirks, people to avoid pinging, model choice>
 6. **Check for gaps.** If the ticket has no checkable acceptance criteria or no way to verify, ask the human before launching (decision D6). Otherwise show a launch card and launch:
 
 ```
-▶ abc-112 · <title> · <repo> · <model>/<effort>[ · ultracode[/<size>]]
+▶ abc-112 · <title> · <repo> · <model>/<effort>[ · ultracode[/<size>]][ · pi]
   goal: <condition>   verify: <command>   forbidden: <short list>
 ```
 
@@ -112,13 +119,13 @@ NOTES: <repo quirks, people to avoid pinging, model choice>
 
 ```
 athena spawn --repo <path> --branch <gitBranchName> --name <name> --linear <ABC-112> \
-  --title "<short title>" --brief <state>/drafts/<name>.md [--ultracode [--workflow-size <size>]] \
+  --title "<short title>" --brief <state>/drafts/<name>.md [--ultracode [--workflow-size <size>] | --agent pi] \
   --goal "<NAME> is done when: (1) each ACCEPTANCE item in the brief is shown met in this transcript, (2) <VERIFY> was run and its passing output is shown, (3) the branch is pushed and a draft PR exists with its URL printed, (4) a report is filed with athena report. If a FORBIDDEN item, a missing credential or an ambiguity the brief does not settle stops you, file a report whose status is BLOCKED. Stop after <TIMEBOX>."
 ```
 
 `athena spawn` adds the rest itself: the brief's path, that the report filed with `athena report` is the report and meets the goal whatever its status (so a BLOCKED report with a question ends the turn instead of looping), that merging, approvals, undrafting and checks the worker cannot fix are out of scope, and that SendMessage is tried once. Never add a SendMessage requirement, an outcome after DONE or a typed ATHENA-REPORT line to the condition: `athena brief check --goal` refuses all three. Each worker also runs a report hook: a turn cannot end without a report filed during it, nor DONE without VERIFY passing at its HEAD, so a worker that stops early comes back to you as a report, not silence. A worker files its report with `athena report` (docs/commands.md), never in the chat, and ends with a short plain summary: read the report in `athena status <w>`.
 
-With `--ultracode`, the spawn output and the ledger carry `ultracode: true` (and `workflow_size`), and `athena status` marks the worker `UC` (`UC:<size>`).
+With `--ultracode`, the spawn output and the ledger carry `ultracode: true` (and `workflow_size`), and `athena status` marks the worker `UC` (`UC:<size>`). With `--agent pi`, the ledger carries `agent: pi`, and `athena status`, the board and the dashboard mark it `[pi]`. Spawn says the goal in words for it and drops the SendMessage clause; keep the condition the same otherwise.
 
 `athena spawn` refuses when the main checkout is not clean and on main, or when 16 workers are live. Report the refusal and the fix; for a dirty main checkout, propose a cleanup and wait for the human to confirm (decision D11).
 

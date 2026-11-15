@@ -2,6 +2,9 @@
 
 Its exec line gets `--resume <id>` in front of Claude's own flags, and any resume it already had is dropped. Every other word, and
 every other line (the pid it records, the folder it starts in), stays as it was, byte for byte: these are its exact flags.
+
+A Pi worker's launch already names its conversation (`--session-id`, chosen at spawn), and starting it again continues that
+conversation, so its script is run as it is: Pi has no `--resume <id>`.
 """
 import shlex
 
@@ -42,5 +45,9 @@ def resumed(text: str, name: str, session: str) -> str:
     head, flags = words[:start], _without_resume(words[start:])
     if not any(word == "--name" and following == name for word, following in zip(flags, flags[1:])):
         raise NotLaunch(f"it doesn't launch --name {name}")
+    if "--session-id" in flags:  # Pi: the same launcher brings back the same conversation
+        if not any(word == "--session-id" and following == session for word, following in zip(flags, flags[1:])):
+            raise NotLaunch(f"its Pi launch is for another conversation than {session}")
+        return text
     lines[at[0]] = EXEC + " ".join(shlex.quote(word) for word in [*head, "--resume", session, *flags]) + "\n"
     return "".join(lines)

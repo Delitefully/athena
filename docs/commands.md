@@ -2,6 +2,44 @@
 
 `athena --help` lists every command, and each has `--help`. This page covers the ones whose behaviour is more than their help line.
 
+## `athena spawn --agent pi`
+
+A worker runs Claude Code unless HQ asks for Pi at spawn time:
+
+```
+athena spawn --agent pi --repo <path> --branch <branch> --name <name> --brief <file> --goal "<condition>" [--model <provider/id[:thinking]>] [--effort <level>]
+```
+
+- **Default.** `--agent` is `claude` everywhere. No config makes Pi the default, and HQ is always Claude.
+- **Model.** With no `--model`, Pi runs its own configured default (its `settings.json`, never athena's `model`). A
+  `--model` is passed to Pi's `--model` as written. `--effort` becomes Pi's `--thinking`; config `effort` is not used.
+- **Refusals.** `--ultracode` is refused: ultracode and workflows are Claude Code's. A `pi` that isn't on PATH (config
+  `rex.pi`, `ATHENA_PI`) is refused with that said. A Claude usage limit doesn't hold a Pi launch.
+- **Launch.** Pi starts in the worker's own window and worktree as `pi --name <name> --session-id <id> --approve -e
+  pi-extension/athena.ts --append-system-prompt prompts/worker-pi.md`. The conversation id is chosen at spawn and kept
+  in the ledger as `pi_session`, and the launcher's environment carries what a Claude worker's `--settings` file
+  carries: `ATHENA_STATE_DIR`, `ATHENA_BRIEF`, `ATHENA_HQ`, the gate, and this athena's `bin` first on PATH.
+  `--approve` trusts the worktree's own Pi files for that run, as spawn marks a Claude worker's folder trusted.
+- **Goal.** Pi has no `/goal`. Its goal goes to its inbox in words (`Your goal: <condition> Your brief is ...`), with
+  the same clauses on the report and scope. Instead of SendMessage, it is told its report is how HQ hears from it.
+- **The report gate.** `pi-extension/athena.ts` sends `athena hook` the events Claude Code's hooks send:
+  `session_start` is SessionStart, `before_agent_start` is UserPromptSubmit, `agent_before_settle` is Stop,
+  `session_shutdown` is SessionEnd, and a bash `tool_call` is PreToolUse. The gate's `block` at a Stop becomes one more
+  turn carrying the gate's reason, so a Pi turn can't end without a report filed during it, as a Claude's can't. A run
+  that ends with no Stop (aborted with Escape) sends an idle Notification. `rules.py` blocks the same git commands.
+- **State.** Pi reports its own working, idle, done and blocked state to Rex (OSC 7501), which `agents.state` reads as
+  it reads Claude's; a failed run (`error`) reads as idle. Pi sets its process title to `pi`, which hides its
+  `--name`, so the extension writes `run/<name>.pi.json` with its pid, and a Pi counts as its worker's only under that
+  pid. `athena status`, the board and the dashboard mark the row `[pi]`, and the watch tells its changes as it does a
+  Claude's.
+- **Messages.** `athena send <name> "<text>"` (and `nudge`, `amend`) write to `run/inbox/<name>/`. The extension reads
+  it once a second and gives each message to Pi as the human's own words, as a follow-up while it works. Nothing is
+  typed into Pi's editor. SendMessage doesn't reach Pi.
+- **Elsewhere.** Retire asks Pi to quit through the inbox, then closes its window and kills it, as for Claude. Revive
+  runs its launcher again, which brings back the same conversation (`--session-id`, no `--resume`). Doctor checks that
+  its extension said hello. `athena progress` skips it, as there is no band without Claude's task tools. Flame has none
+  of its time or tokens, as it reads Claude's transcripts. The usage-limit reader never reads its screen.
+
 ## `athena report`
 
 A worker files its report with this, in its own session, instead of typing it into the chat:

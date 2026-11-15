@@ -2,9 +2,11 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from athena.cli import UserError
@@ -16,6 +18,7 @@ RESERVED = {"dash-queue", "slack-new", "athena", "hq"}
 OLD_PLUGIN_OFF = {"athena@athena": False, "keepwarm@keepwarm": False, "keepwarm-bundle@keepwarm": False,
                   "chrome-devtools-mcp@chrome-devtools-plugins": False}
 PROMPTS = store.ROOT / "prompts"
+PI_EXTENSION = store.ROOT / "pi-extension" / "athena.ts"
 
 
 class SpawnError(UserError):
@@ -84,6 +87,67 @@ def claude_args(name, model, effort, settings, prompt_file=None) -> list:
     return args + ["--append-system-prompt-file", str(prompt_file or PROMPTS / "worker.md")]
 
 
+def pi_env(name, brief, gate=True, repo=None) -> dict:
+    """What a Pi worker runs under. Pi reads no --settings file, so what Claude's settings carry goes in its environment, and its
+    bash tool and athena's extension inherit it: the report command and the hooks see this state dir, brief and HQ. This
+    checkout's bin goes first on PATH, so the `athena report` it runs is the athena that launched it."""
+    env = claude_env(name, repo)
+    env.update(ATHENA_HQ=config.hq_name(), ATHENA_STATE_DIR=str(store.state_dir()), ATHENA_BRIEF=str(brief),
+               ATHENA_BIN=str(store.ROOT / "bin" / "athena"),
+               PATH=os.pathsep.join([str(store.ROOT / "bin"), os.environ.get("PATH") or "/usr/bin:/bin"]))
+    if os.environ.get("ATHENA_CONFIG"):
+        env["ATHENA_CONFIG"] = os.environ["ATHENA_CONFIG"]
+    if not gate:
+        env["ATHENA_GATE"] = "off"
+    if repo and config.listed("reapproval_repos", repo):
+        env["ATHENA_REAPPROVAL"] = "1"
+    return env
+
+
+def pi_args(name, model, effort, session, prompt_file=None) -> list:
+    """Pi's own default model unless one is given, passed as written. --approve trusts the worktree's own Pi files for this run,
+    as athena marks a Claude worker's folder trusted, so the launch never stops at Pi's trust prompt."""
+    args = ["--name", name, "--session-id", session, "--approve", "-e", str(PI_EXTENSION),
+            "--append-system-prompt", str(prompt_file or PROMPTS / "worker-pi.md")]
+    if model:
+        args += ["--model", model]
+    if effort:
+        args += ["--thinking", effort]
+    return args
+
+
+def pi_goal_text(condition, brief) -> str:
+    """A Pi worker's first message. Pi has no /goal and no evaluator: the report gate in athena's extension holds every turn to a
+    filed report, so the goal is said in words, with the same clauses on the report and scope."""
+    text = " ".join(condition.split())
+    if text.startswith("/goal "):
+        text = text[len("/goal "):]
+    goal = (f"Your goal: {text} Your brief is {brief}; read it first. File your report with `athena report` and end with a short "
+            f"plain summary: the report it prints as filed is the report, and the goal is met once it is filed, whatever its status "
+            f"(a BLOCKED or NEEDS_CONTEXT report with your question meets it too). Merging, approvals, undrafting and checks you "
+            f"cannot fix are out of scope. You cannot message {config.hq_name()}: your report is how it hears from you.")
+    if len(goal) > GOAL_MAX:
+        raise SpawnError(f"the goal is {len(goal)} characters with its clauses; at most {GOAL_MAX}. Move detail to the brief")
+    return goal
+
+
+def goal_for(agent, condition, brief) -> str:
+    return pi_goal_text(condition, brief) if agent == "pi" else goal_text(condition, brief)
+
+
+def _check_agent(agent, ultracode):
+    if agent not in agents.AGENTS:
+        raise SpawnError(f"no agent named {agent!r}: {', '.join(agents.AGENTS)}")
+    if agent != "pi":
+        return
+    if ultracode:
+        raise SpawnError("--agent pi can't take --ultracode: ultracode and workflows are Claude Code's, and Pi has neither. "
+                         "Launch an ultracode worker on Claude (no --agent)")
+    command = str(config.rex("pi"))
+    if not shutil.which(command.split()[0] if command.split() else command):
+        raise SpawnError(f"pi is not on PATH (rex.pi is {command!r}): install Pi, or set rex.pi to its path")
+
+
 GOAL_MAX = 3990  # the old athena's cap; typed in pieces of 200, a goal this long arrives whole, where ~800 characters at once reads as a paste and its /goal never runs
 
 
@@ -148,16 +212,19 @@ def _wait_started(backend, record, timeout):
             return "pending", now.get("msg") or "blocked at startup"
         if not now["state"] and time.monotonic() - begun > 20:
             tail = backend.screen(agents.place_of(record))[-300:].strip()
-            raise SpawnError(f"Claude did not start: {tail}")
+            raise SpawnError(f"{'Pi' if agents.agent_of(record) == 'pi' else 'Claude'} did not start: {tail}")
         time.sleep(0.4)
     return "pending", f"not ready after {timeout:.0f}s"
 
 
 def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, linear=None, title=None, model=None,
           effort=None, force=False, setup=True, ultracode=False, workflow_size=None, brief_check=True, gate=True,
-          fetch=True, timeout=120.0, system_prompt=None, force_budget=False) -> dict:
+          fetch=True, timeout=120.0, system_prompt=None, force_budget=False, agent="claude") -> dict:
     repo = Path(os.path.expanduser(str(repo))).resolve()
-    model, effort = model or config.get("model"), effort or config.get("effort")
+    agent = agent or "claude"
+    _check_agent(agent, ultracode)
+    if agent == "claude":  # Pi's own configured default model stands unless one is given
+        model, effort = model or config.get("model"), effort or config.get("effort")
     if not store.valid_name(name) or name in RESERVED:
         raise SpawnError(f"invalid worker name {name!r}: lowercase letters, digits, - and _ (max 32), not reserved")
     if config.repo_profile(repo).get("outside"):
@@ -173,7 +240,7 @@ def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, line
         raise SpawnError(f"{config.config_file()} does not parse and there is no good copy: fix it first")
     sandbox.require(SpawnError)
     limits = caps.get("limits")
-    until = limits.parked() if limits else None
+    until = limits.parked() if limits and agent == "claude" else None  # Claude's account's limit: Pi runs on its own provider
     if until and not force_budget:
         raise SpawnError(f"a usage limit holds until {time.strftime('%H:%M', time.localtime(until))}, so no launch (--force-budget goes past it)")
     missing = ledger.lost()
@@ -193,7 +260,7 @@ def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, line
                              + "\n".join(f"- {p}" for p in found) + "\n(--skip-brief-check overrides)")
         skipped = found or None
     if goal and brief_path:
-        goal_text(goal, store.path("briefs", f"{name}.md"))  # the path it is sent with: a launch never stops at its length
+        goal_for(agent, goal, store.path("briefs", f"{name}.md"))  # the path it is sent with: a launch never stops at its length
     held = budget.over(3 if ultracode else 1)
     if held and not force_budget:
         raise SpawnError("this Mac has no room for another worker: " + "; ".join(held) + " (--force-budget goes past it)")
@@ -216,6 +283,8 @@ def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, line
     record = {"repo": str(repo), "branch": branch, "path": os.path.join(os.path.realpath(path.parent), path.name),
               "linear": linear, "title": title, "model": model, "effort": effort, "backend": backend.name,
               "label": label}
+    if agent != "claude":
+        record["agent"] = agent
     if ultracode:
         record.update(ultracode=True, workflow_size=workflow_size)
     if skipped:
@@ -235,30 +304,17 @@ def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, line
         brief = store.ensure("briefs") / f"{name}.md"
         if brief_path:
             store.write_text(brief, with_preferences(Path(os.path.expanduser(str(brief_path))).read_text()))
-        settings = settings_for(name, brief, gate, ultracode, workflow_size, repo)
-        record["claude_args"] = claude_args(name, model, effort, settings, system_prompt)
-        trust = _ensure_trust(path)
-        if trust.get("error"):
-            raise SpawnError(f"could not mark {path} trusted: {trust['error']}")
-        if trust.get("skipped"):
-            record["trust_skipped"] = trust["why"]
-            ledger.append("update", name, trust_skipped=trust["why"])
-        old = store.path("workers", f"{name}.json")
-        if old.exists():
-            os.replace(old, old.with_name(f"{name}.json.prev"))
-        if progress := caps.get("progress"):  # and its band starts from nothing
-            progress.fresh(name)
-        place = agents.start(backend, name, label, path, record["claude_args"], claude_env(name, repo), repo=repo)
-        record.update(space=place.space, window=place.window, block=place.block)
-        ledger.append("update", name, space=place.space, window=place.window, block=place.block, claude_args=record["claude_args"],
-                      setup_log=record.get("setup_log"))
+        if agent == "pi":
+            _start_pi(backend, name, label, path, brief, gate, repo, model, effort, system_prompt, record)
+        else:
+            _start_claude(backend, name, label, path, brief, gate, ultracode, workflow_size, repo, model, effort, system_prompt, record)
         outcome, why = _wait_started(backend, {**record, "name": name}, timeout)
     except (SpawnError, BackendError, gitops.GitError, OSError, subprocess.SubprocessError, ValueError) as exc:  # ValueError: a brief that won't decode
         raise SpawnError(_fail(ctx, name, record, exc))
     except KeyboardInterrupt as exc:  # Ctrl-C in a long setup or start: the worker is not left live on record with its leftovers
         _fail(ctx, name, record, exc)
         raise
-    text = (goal_text(goal, brief) if goal else prompt) or ""
+    text = (goal_for(agent, goal, brief) if goal else prompt) or ""
     if outcome == "pending" and record.get("trust_skipped"):
         why = f"{why}; folder trust was not written: {record['trust_skipped']}"
     if outcome == "pending":
@@ -270,6 +326,42 @@ def spawn(ctx, repo, branch, name, brief_path=None, goal=None, prompt=None, line
         result["prompt"] = _deliver(backend, {**record, "name": name}, text)
     bus.emit("worker.spawned", name=name)
     return result
+
+
+def _start_pi(backend, name, label, path, brief, gate, repo, model, effort, system_prompt, record):
+    """No settings file, no Claude folder trust and no progress band: Pi reads none of them. Its conversation id is chosen here,
+    so revive brings back the same conversation with the same launcher."""
+    record["pi_session"] = str(uuid.uuid4())
+    record["agent_args"] = pi_args(name, model, effort, record["pi_session"], system_prompt)
+    old = store.path("workers", f"{name}.json")
+    if old.exists():
+        os.replace(old, old.with_name(f"{name}.json.prev"))
+    if progress := caps.get("progress"):  # nothing draws a band for Pi, and none is left from a worker of the same name
+        progress.fresh(name)
+    place = agents.start(backend, name, label, path, record["agent_args"], pi_env(name, brief, gate, repo), repo=repo, agent="pi")
+    record.update(space=place.space, window=place.window, block=place.block)
+    ledger.append("update", name, space=place.space, window=place.window, block=place.block, agent_args=record["agent_args"],
+                  pi_session=record["pi_session"], setup_log=record.get("setup_log"))
+
+
+def _start_claude(backend, name, label, path, brief, gate, ultracode, workflow_size, repo, model, effort, system_prompt, record):
+    settings = settings_for(name, brief, gate, ultracode, workflow_size, repo)
+    record["claude_args"] = claude_args(name, model, effort, settings, system_prompt)
+    trust = _ensure_trust(path)
+    if trust.get("error"):
+        raise SpawnError(f"could not mark {path} trusted: {trust['error']}")
+    if trust.get("skipped"):
+        record["trust_skipped"] = trust["why"]
+        ledger.append("update", name, trust_skipped=trust["why"])
+    old = store.path("workers", f"{name}.json")
+    if old.exists():
+        os.replace(old, old.with_name(f"{name}.json.prev"))
+    if progress := caps.get("progress"):  # and its band starts from nothing
+        progress.fresh(name)
+    place = agents.start(backend, name, label, path, record["claude_args"], claude_env(name, repo), repo=repo)
+    record.update(space=place.space, window=place.window, block=place.block)
+    ledger.append("update", name, space=place.space, window=place.window, block=place.block, claude_args=record["claude_args"],
+                  setup_log=record.get("setup_log"))
 
 
 def _deliver(backend, record, text) -> str:
@@ -367,7 +459,7 @@ def amend(ctx, name, condition) -> dict:
         raise SpawnError(f"no live worker named {name}")
     if not ledger.managed(worker):
         raise SpawnError(f"{name} is not on this backend; it belongs to the old athena")
-    text = goal_text(condition, store.path("briefs", f"{name}.md"))
+    text = goal_for(agents.agent_of(worker), condition, store.path("briefs", f"{name}.md"))
     with _goal_lock(name):
         ledger.append("update", name, goal_amended=condition, pending_reason="its amended goal waits for it to be ready",
                       **ledger.goal_fields("amend", text, ledger.get(name)))
@@ -376,6 +468,8 @@ def amend(ctx, name, condition) -> dict:
 
 
 def conversation(name, worker):
+    if agents.agent_of(worker) == "pi":  # chosen at spawn and on its launcher; its hooks carry no Claude session id
+        return worker.get("pi_session")
     hook = store.read_dict(store.path("workers", f"{name}.json"))
     return hook.get("session_id") or worker.get("session")
 
@@ -390,8 +484,10 @@ def _configure(p):
     p.add_argument("--prompt", help="a plain first prompt instead of a /goal")
     p.add_argument("--linear")
     p.add_argument("--title")
-    p.add_argument("--model")
-    p.add_argument("--effort")
+    p.add_argument("--agent", choices=agents.AGENTS, default="claude",
+                   help="what the worker runs: claude (the default), or pi (Pi with its own default model, e.g. DeepSeek)")
+    p.add_argument("--model", help="Claude's model; with --agent pi, passed to Pi's --model as written (else Pi's own default)")
+    p.add_argument("--effort", help="Claude's effort; with --agent pi, Pi's --thinking level")
     p.add_argument("--force", action="store_true", help="go past the soft worker cap")
     p.add_argument("--force-budget", action="store_true", help="launch even though this Mac is short of room")
     p.add_argument("--no-setup", action="store_true")
@@ -422,7 +518,7 @@ def _run(args):
     out = spawn(caps.CTX, args.repo, args.branch, args.name, args.brief, args.goal, args.prompt, args.linear, args.title,
                 args.model, args.effort, args.force, not args.no_setup, args.ultracode, args.workflow_size,
                 not args.skip_brief_check, not args.no_gate, not args.no_fetch, args.timeout,
-                force_budget=args.force_budget)
+                force_budget=args.force_budget, agent=args.agent)
     _say_trust(out)
     if args.json:
         print(json.dumps(out, indent=1))

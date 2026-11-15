@@ -203,6 +203,7 @@ class Worker:
     spawned: float = 0.0
     updated: float = 0.0
     goal_pending: bool = False
+    agent: str = "claude"  # what it runs: claude, or pi
 
 
 @dataclass
@@ -639,7 +640,8 @@ def fold_ledger(events) -> List[Worker]:
         recs[name] = rec
     return [Worker(name=n, linear=s_(recs[n], "linear"), title=s_(recs[n], "title"), repo=s_(recs[n], "repo"),
                    branch=s_(recs[n], "branch"), state=s_(recs[n], "state"), spawned=n_(recs[n], "spawned"),
-                   updated=n_(recs[n], "updated"), goal_pending=truthy(recs[n].get("goal_pending"))) for n in order]
+                   updated=n_(recs[n], "updated"), goal_pending=truthy(recs[n].get("goal_pending")),
+                   agent=s_(recs[n], "agent") or "claude") for n in order]
 
 
 def last_request(path) -> float:
