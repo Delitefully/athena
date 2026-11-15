@@ -427,15 +427,30 @@ def restart(ctx) -> list:
     world.resolve("launchctl")
     domain = _domain()
     stays = "; athena stays stopped until Start" if is_stopped() else ""
+    built = _menubar_built(ctx)  # first: a release arrives without its app built, and the restart runs that release's
     done = _launchctl("kickstart", "-k", f"{domain}/{LABEL}")
     if done.returncode == 0:
-        return [f"restarted {LABEL}{stays}"]
+        return built + [f"restarted {LABEL}{stays}"]
     if done.returncode not in NOT_LOADED:
-        return [f"failed {LABEL}: launchctl kickstart failed ({done.returncode}): {(done.stderr or done.stdout).strip()[:200]}"]
+        return built + [f"failed {LABEL}: launchctl kickstart failed ({done.returncode}): {(done.stderr or done.stdout).strip()[:200]}"]
     try:
-        return [(_bootstrap(domain, plist_path(), LABEL) or f"started {LABEL}, which was not loaded") + stays]
+        return built + [(_bootstrap(domain, plist_path(), LABEL) or f"started {LABEL}, which was not loaded") + stays]
     except UserError as exc:
-        return [f"failed {LABEL}: {exc}"]
+        return built + [f"failed {LABEL}: {exc}"]
+
+
+def _menubar_built(ctx) -> list:
+    """The menu bar app of the release that runs this, built if it is missing or stale: a release is copied without its
+    build, and the supervisor restarted onto it runs its `menubar run`, which exits clean (and stays down) without one. A
+    failed build is said; the restart goes on, as everything else still runs."""
+    menubar = ctx.cap(MENUBAR)
+    if not menubar:
+        return []
+    try:
+        built = menubar.ensure_built()
+    except UserError as exc:
+        return [f"menubar: {exc}"]
+    return [built] if built else []
 
 
 def _restart_old(ctx) -> list:
@@ -564,17 +579,16 @@ def checks(ctx):
 
 
 def _move(releases):
+    """Started, not waited for: the install may first build the menu bar app, longer than a doctor pass may last, and it
+    ends the old doctor job running this. In a session of its own, it outlives both; what it says goes to its log."""
     with releases.locked() as got:
         if not got or releases.load()["switch"]:
             raise UserError("an update is under way: the move waits for it")
-        if releases.load()["current"]:
-            done = releases.installed_command("services", "install", own_session=True)
-        else:  # run from a checkout, not an install: this tree's own command
-            done = subprocess.run([str(store.ROOT / "bin" / "athena"), "services", "install"], capture_output=True, text=True,
-                                  timeout=300, stdin=subprocess.DEVNULL, start_new_session=True)
-    if done.returncode != 0:
-        said = (done.stdout + done.stderr).strip().splitlines()
-        raise UserError(said[-1] if said else f"services install exited {done.returncode}")
+        installed = releases.load()["current"]
+    binary = releases.root() / "current/bin/athena" if installed else store.ROOT / "bin" / "athena"  # else run from a checkout
+    with open(store.ensure("logs") / "services-move.log", "ab") as log:
+        subprocess.Popen([str(binary), "services", "install"], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                         start_new_session=True)
 
 
 def _configure(p):

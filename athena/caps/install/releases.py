@@ -29,6 +29,7 @@ from pathlib import Path
 from athena.cli import UserError
 from athena.kernel import caps, store
 
+SERVICES_TIMEOUT = 1200  # `services install` and `restart` may first build the release's menu bar app (build.sh: up to 900 s)
 SHIP = ("VERSION", "bin", "athena", "prompts", "scripts", "docs", "menubar", "plugin", "worker-plugin", "pi-extension", "ARCHITECTURE.md")
 SCHEMA = 2
 REPO = "https://github.com/Delitefully/athena.git"
@@ -215,7 +216,7 @@ def restart_services(jobs) -> str:
     services = caps.get("services")  # loaded already, by installed_jobs before `current` moved
     if services is not None and services.LABEL in jobs and not has_supervisor(root() / "current"):
         return _hand_back(services)
-    done = installed_command("services", "restart", own_session=True)
+    done = installed_command("services", "restart", own_session=True, timeout=SERVICES_TIMEOUT)
     said = (done.stdout or done.stderr).strip()
     return said.splitlines()[-1] if said else "jobs restarted"
 
@@ -226,7 +227,7 @@ def _hand_back(services) -> str:
     last of all, as a caller that is its child (doctor) ends with it. An install that failed keeps the one job: its
     supervisor runs on until the next login."""
     env = {**os.environ, **{k: str(v) for k, v in services.written_env().items()}}
-    done = installed_command("services", "install", own_session=True, env=env)
+    done = installed_command("services", "install", own_session=True, env=env, timeout=SERVICES_TIMEOUT)
     lines = (done.stdout + done.stderr).strip().splitlines()
     if done.returncode != 0:
         return f"the jobs of {pointed()} did not install, so the one job stays: {lines[-1] if lines else done.returncode}"

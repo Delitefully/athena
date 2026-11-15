@@ -130,7 +130,7 @@ def _state_step(dry_run, real_world, profiles) -> list:
 
 
 def _services(action) -> str:
-    done = releases.installed_command("services", action)
+    done = releases.installed_command("services", action, timeout=releases.SERVICES_TIMEOUT)
     failed = [line for line in done.stdout.splitlines() if line.startswith("failed ")]
     if done.returncode and not failed:
         return f"  launchd jobs: skipped ({(done.stderr or done.stdout).strip()})"

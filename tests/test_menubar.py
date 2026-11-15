@@ -191,6 +191,17 @@ class InstallAndRestart(FakeLaunchd):
         self.assertEqual(services.restart(caps.CTX), ["started local.athena, which was not loaded"])
         self.assertIn("local.athena", self.loaded())
 
+    def test_restart_builds_the_menu_bar_app_first_as_a_release_arrives_without_it(self):
+        self.install()
+        order = []
+        with mock.patch.object(menubar, "ensure_built", side_effect=lambda dry_run=False: order.append("built") or "built it"), \
+                mock.patch.object(services, "_launchctl", side_effect=lambda *a: order.append(a[0]) or subprocess.CompletedProcess(a, 0, "", "")):
+            actions = services.restart(caps.CTX)
+        self.assertEqual(order, ["built", "kickstart"], "the supervisor restarted onto it runs its menubar run")
+        self.assertEqual(actions, ["built it", "restarted local.athena"])
+        with mock.patch.object(menubar, "ensure_built", side_effect=UserError("swiftc not found")):
+            self.assertEqual(services.restart(caps.CTX)[0], "menubar: swiftc not found", "said, and the restart goes on")
+
     def test_a_second_install_writes_nothing_whoever_runs_it(self):
         self.install()
         before = self._plists()

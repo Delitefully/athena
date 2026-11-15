@@ -9,6 +9,7 @@ import plistlib
 import shutil
 import subprocess
 import tarfile
+import time
 from pathlib import Path
 
 from harness import Case, ROOT, git
@@ -90,6 +91,16 @@ class OneJobUpgrade(Case):
         self.assertTrue(releases.has_supervisor(self.local / "share/athena/current"))
         return done
 
+    def moved(self, done):
+        """doctor's repair starts `services install` in a session of its own and does not wait for it: this does."""
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and (self.plists() != ["local.athena.plist"] or self.loaded() != {"local.athena"}):
+            time.sleep(0.1)
+        log = self.home / "Library/Application Support/athena/logs/services-move.log"
+        said = log.read_text() if log.exists() else ""
+        self.assertEqual(self.plists(), ["local.athena.plist"], done.stdout + done.stderr + said)
+        self.assertEqual(self.loaded(), {"local.athena"})
+
     def env_of(self, name) -> dict:
         return plistlib.loads((self.tmp / "agents" / name).read_bytes())["EnvironmentVariables"]
 
@@ -101,7 +112,7 @@ class OneJobUpgrade(Case):
         self.assertEqual(restarted, OLD_JOBS - {"local.athena.menubar"}, "onto the new code, as each was")
         self.calls.write_text("")
         done = self.athena("doctor", "--fix", "--quiet")  # the old doctor job's next run, on the new code
-        self.assertEqual(self.plists(), ["local.athena.plist"], done.stdout + done.stderr)
+        self.moved(done)
         self.assertEqual(self.loaded(), {"local.athena"})
         self.assertEqual(self.env_of("local.athena.plist")["ATHENA_HQ"], "hq-of-this-mac")
         self.calls.write_text("")
@@ -139,8 +150,7 @@ class OneJobUpgrade(Case):
 
     def test_a_rollback_to_a_release_without_the_supervisor_gets_its_jobs_back(self):
         self.update_to_this_release()
-        self.athena("doctor", "--fix", "--quiet")
-        self.assertEqual(self.loaded(), {"local.athena"})
+        self.moved(self.athena("doctor", "--fix", "--quiet"))
         self.calls.write_text("")
         done = self.athena("install", "--rollback")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
