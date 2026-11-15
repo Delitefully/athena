@@ -21,14 +21,17 @@
   .cnt{animation-name:cnt} .cnt2{opacity:0;animation-name:cnt2}
   @keyframes land{0%,8%{opacity:0;transform:translateY(-14px)}14%,44%{opacity:1;transform:none}49%,100%{opacity:0;transform:none}}
   @keyframes btn{0%,40%{fill:#1E2350}41%,44%{fill:#B8321F}}
-  @keyframes took{0%,46%{opacity:0}50%,58%{opacity:1}62%,100%{opacity:0}}
-  @keyframes done{0%,60%{opacity:0;transform:translateY(-8px)}66%,95%{opacity:1;transform:none}100%{opacity:0}}
+  @keyframes took{0%,46%{opacity:0}50%,57%{opacity:1}60%,100%{opacity:0}}
+  @keyframes done{0%,66%{opacity:0;transform:translateY(-8px)}71%,95%{opacity:1;transform:none}99%,100%{opacity:0}}
   @keyframes cur{0%,18%{opacity:0;transform:translate(70px,230px)}22%{opacity:1;transform:translate(70px,230px)}38%,44%{opacity:1;transform:translate(0,0)}52%,100%{opacity:0;transform:translate(0,0)}}
   @keyframes cnt{0%,8%{opacity:0}14%,46%{opacity:1}50%,100%{opacity:0}}
   @keyframes cnt2{0%,8%{opacity:1}14%,46%{opacity:0}50%,100%{opacity:1}}
+  .below{animation-name:below;animation-timing-function:cubic-bezier(.4,0,.2,1)}
+  @keyframes below{0%,6%{transform:translateY(-66px)}12%,60%{transform:translateY(0)}66%,100%{transform:translateY(-66px)}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
-<rect width="640" height="548" rx="14" fill="#F3EEE4"/>
+<rect width="640" height="482" rx="14" fill="#F3EEE4"/>
+<rect class="run below" y="420" width="640" height="128" rx="14" fill="#F3EEE4"/>
 
 <!-- header -->
 <g transform="translate(22 18) scale(.3)" fill="none" stroke="#B8321F" stroke-width="9" stroke-linecap="round">
@@ -68,6 +71,7 @@
     <text x="52" y="212" class="t"><tspan fill="#2E8B57">✓</tspan> Taken: rebuild overnight</text>
     <text x="52" y="232" class="s">Undo for a few seconds</text>
   </g>
+  <g class="run below">
   <path d="M22 248H618" class="rule"/>
 
   <!-- In flight -->
@@ -91,6 +95,7 @@
   <text x="22" y="484" class="serif h">Done today</text>
   <text x="22" y="512" class="s"><tspan fill="#2E8B57">✓</tspan> Sign-up typo · you merged it</text>
   <text x="22" y="534" class="s run done"><tspan fill="#2E8B57">✓</tspan> Search index · you took the rec: rebuild overnight</text>
+  </g>
 </g>
 
 <!-- cursor -->

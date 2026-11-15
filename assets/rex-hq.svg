@@ -10,45 +10,47 @@
   .txt{fill:#E9E4DD} .dim{fill:#8F8A85} .ok{fill:#7DBE8C} .add{fill:#7DBE8C} .del{fill:#E0766B} .hot{fill:#D97757}
   .a{animation-duration:18s;animation-iteration-count:infinite;animation-fill-mode:both;animation-timing-function:ease-out}
   .cover{transform-box:fill-box;transform-origin:right center;transform:scaleX(0)}
-  .wk{opacity:0}
-  /* scene 1: you ask HQ */
-  .ublk{animation-name:ublk} .ty1{animation-name:ty1} .ty2{animation-name:ty2}
-  .hq1{animation-name:hq1} .l1{animation-name:l1} .l2{animation-name:l2} .l3{animation-name:l3} .l4{animation-name:l4}
+  .wk,.inp,.tall{opacity:0}
+  /* scene 1: you type to HQ in its input box, then send */
+  .inp{animation-name:inp} .ty1{animation-name:ty1}
+  @keyframes inp{0%,2%{opacity:0}2.5%,8.4%{opacity:1}8.5%,100%{opacity:0}}
+  @keyframes ty1{0%,2.5%{transform:scaleX(1);animation-timing-function:steps(44,end)}7.5%,100%{transform:scaleX(0)}}
+  .caret{animation:blink 1s steps(1) infinite,cmove 18s infinite both}
+  @keyframes blink{50%{opacity:0}}
+  @keyframes cmove{0%,2.5%{transform:translateX(0);animation-timing-function:steps(44,end)}7.5%,8.4%{transform:translateX(345px)}8.5%,100%{transform:translateX(0)}}
+  .ublk{animation-name:ublk} .hq1{animation-name:hq1} .l1{animation-name:l1} .l2{animation-name:l2} .l3{animation-name:l3} .l4{animation-name:l4}
   .hqs{animation-name:hqs}
-  @keyframes ublk{0%,2%{opacity:0}3%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes ty1{0%,3%{transform:scaleX(1);animation-timing-function:steps(29,end)}11%,100%{transform:scaleX(0)}}
-  @keyframes ty2{0%,11%{transform:scaleX(1);animation-timing-function:steps(22,end)}17%,100%{transform:scaleX(0)}}
-  @keyframes hq1{0%,20%{opacity:0}23%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes l1{0%,26%{opacity:0}29%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes l2{0%,31%{opacity:0}34%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes l3{0%,36%{opacity:0}39%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes l4{0%,41%{opacity:0}44%,92%{opacity:1}95%,100%{opacity:0}}
-  @keyframes hqs{0%,49%{opacity:1}52%,95%{opacity:0}98%,100%{opacity:1}}
+  @keyframes ublk{0%,8.5%{opacity:0;transform:translateY(6px)}10%,90%{opacity:1;transform:none}93%,100%{opacity:0;transform:none}}
+  @keyframes hq1{0%,13%{opacity:0}15%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes l1{0%,18%{opacity:0}20%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes l2{0%,23%{opacity:0}25%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes l3{0%,28%{opacity:0}30%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes l4{0%,33%{opacity:0}35%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes hqs{0%,45%{opacity:1}48%,95%{opacity:0}98%,100%{opacity:1}}
   /* sidebar */
   .r1{animation-name:r1} .r2{animation-name:r2} .r3{animation-name:r3}
-  @keyframes r1{0%,26%{opacity:0;transform:translateX(-8px)}29%,92%{opacity:1;transform:none}96%,100%{opacity:0;transform:none}}
-  @keyframes r2{0%,31%{opacity:0;transform:translateX(-8px)}34%,92%{opacity:1;transform:none}96%,100%{opacity:0;transform:none}}
-  @keyframes r3{0%,36%{opacity:0;transform:translateX(-8px)}39%,92%{opacity:1;transform:none}96%,100%{opacity:0;transform:none}}
+  @keyframes r1{0%,18%{opacity:0;transform:translateX(-8px)}20%,90%{opacity:1;transform:none}94%,100%{opacity:0;transform:none}}
+  @keyframes r2{0%,23%{opacity:0;transform:translateX(-8px)}25%,90%{opacity:1;transform:none}94%,100%{opacity:0;transform:none}}
+  @keyframes r3{0%,28%{opacity:0;transform:translateX(-8px)}30%,90%{opacity:1;transform:none}94%,100%{opacity:0;transform:none}}
   .pill{animation-name:pill;animation-timing-function:cubic-bezier(.4,0,.2,1)}
-  @keyframes pill{0%,49%{transform:translateY(0)}54%,92%{transform:translateY(144px)}97%,100%{transform:translateY(0)}}
+  @keyframes pill{0%,45%{transform:translateY(0)}50%,90%{transform:translateY(144px)}95%,100%{transform:translateY(0)}}
   .dot{animation:pulse 1.5s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  /* scene 2: a worker gets its goal */
-  .wh{animation-name:wh} .gb{animation-name:gb} .g1{animation-name:g1} .g2{animation-name:g2} .g3{animation-name:g3}
-  .w1{animation-name:w1} .w2{animation-name:w2} .w3{animation-name:w3} .spin{animation-name:spin}
-  @keyframes wh{0%,52%{opacity:0}55%,90%{opacity:1}93%,100%{opacity:0}}
-  @keyframes gb{0%,55%{opacity:0}56%,90%{opacity:1}93%,100%{opacity:0}}
-  @keyframes g1{0%,56%{transform:scaleX(1);animation-timing-function:steps(31,end)}61%,100%{transform:scaleX(0)}}
-  @keyframes g2{0%,61%{transform:scaleX(1);animation-timing-function:steps(30,end)}65%,100%{transform:scaleX(0)}}
-  @keyframes g3{0%,65%{transform:scaleX(1);animation-timing-function:steps(38,end)}69%,100%{transform:scaleX(0)}}
-  @keyframes w1{0%,71%{opacity:0}74%,90%{opacity:1}93%,100%{opacity:0}}
-  @keyframes w2{0%,77%{opacity:0}80%,90%{opacity:1}93%,100%{opacity:0}}
-  @keyframes w3{0%,83%{opacity:0}86%,90%{opacity:1}93%,100%{opacity:0}}
-  @keyframes spin{0%,71%{opacity:0}74%,90%{opacity:1}93%,100%{opacity:0}}
+  /* scene 2: athena types the worker's goal into its input box, then sends it */
+  .wh{animation-name:wh} .tall{animation-name:tall} .g1{animation-name:g1} .g2{animation-name:g2} .g3{animation-name:g3}
+  .gb{animation-name:gb} .w1{animation-name:w1} .w2{animation-name:w2} .w3{animation-name:w3} .spin{animation-name:spin}
+  @keyframes wh{0%,48%{opacity:0}51%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes tall{0%,51%{opacity:0}52%,60.4%{opacity:1}60.5%,100%{opacity:0}}
+  @keyframes g1{0%,52.5%{transform:scaleX(1);animation-timing-function:steps(33,end)}55%,100%{transform:scaleX(0)}}
+  @keyframes g2{0%,55%{transform:scaleX(1);animation-timing-function:steps(30,end)}57.3%,100%{transform:scaleX(0)}}
+  @keyframes g3{0%,57.3%{transform:scaleX(1);animation-timing-function:steps(38,end)}60%,100%{transform:scaleX(0)}}
+  @keyframes gb{0%,60.5%{opacity:0;transform:translateY(6px)}62%,90%{opacity:1;transform:none}93%,100%{opacity:0;transform:none}}
+  @keyframes w1{0%,65%{opacity:0}67%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes w2{0%,71%{opacity:0}73%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes w3{0%,77%{opacity:0}79%,90%{opacity:1}93%,100%{opacity:0}}
+  @keyframes spin{0%,65%{opacity:0}67%,90%{opacity:1}93%,100%{opacity:0}}
   .star{transform-box:fill-box;transform-origin:center;animation:turn 3s linear infinite}
   @keyframes turn{to{transform:rotate(360deg)}}
-  .caret{animation:caret 1s steps(1) infinite}
-  @keyframes caret{50%{opacity:0}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 <defs>
@@ -99,27 +101,24 @@
 <rect x="278" y="22" width="412" height="388" rx="10" fill="#131213" stroke="#2E2C2D"/>
 <path d="M278 60H690" stroke="#2E2C2D"/>
 
-<!-- scene 1: you ask HQ -->
+<!-- scene 1: the conversation with HQ -->
 <g class="a hqs">
   <text x="296" y="46" class="ui head">athena HQ</text>
   <g class="mono">
     <g class="a ublk">
-      <rect x="292" y="76" width="384" height="52" rx="7" fill="#2A2829"/>
-      <text x="304" y="97" class="dim">›</text>
-      <text x="320" y="97" class="txt">start the sign-in fix, faster</text>
-      <text x="320" y="117" class="txt">search and CSV export</text>
-      <rect class="cover a ty1" x="318" y="84" width="232" height="18" fill="#2A2829"/>
-      <rect class="cover a ty2" x="318" y="104" width="176" height="18" fill="#2A2829"/>
+      <rect x="292" y="76" width="384" height="34" rx="7" fill="#2A2829"/>
+      <text x="304" y="98" class="dim">›</text>
+      <text x="320" y="98" class="txt">start sign-in fix, faster search, CSV export</text>
     </g>
-    <g class="a hq1"><circle cx="300" cy="152" r="3.5" fill="#D97757"/><text x="314" y="157" class="txt">On it. Three workers, in web-app:</text></g>
-    <text x="314" y="181" class="txt a l1"><tspan class="dim">⎿</tspan><tspan x="332">Sign-in fix</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
-    <text x="314" y="203" class="txt a l2"><tspan class="dim">⎿</tspan><tspan x="332">Faster search</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
-    <text x="314" y="225" class="txt a l3"><tspan class="dim">⎿</tspan><tspan x="332">CSV export</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
-    <g class="a l4"><circle cx="300" cy="256" r="3.5" fill="#D97757"/><text x="314" y="261" class="txt">I'll bring you only what needs you.</text></g>
+    <g class="a hq1"><circle cx="300" cy="136" r="3.5" fill="#D97757"/><text x="314" y="141" class="txt">On it. Three workers, in web-app:</text></g>
+    <text x="314" y="165" class="txt a l1"><tspan class="dim">⎿</tspan><tspan x="332">Sign-in fix</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
+    <text x="314" y="187" class="txt a l2"><tspan class="dim">⎿</tspan><tspan x="332">Faster search</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
+    <text x="314" y="209" class="txt a l3"><tspan class="dim">⎿</tspan><tspan x="332">CSV export</tspan><tspan x="460" class="ok">✓ goal given</tspan></text>
+    <g class="a l4"><circle cx="300" cy="240" r="3.5" fill="#D97757"/><text x="314" y="245" class="txt">I'll bring you only what needs you.</text></g>
   </g>
 </g>
 
-<!-- scene 2: a worker gets its goal -->
+<!-- scene 2: the worker's conversation -->
 <g class="mono">
   <text x="296" y="46" class="ui head wk a wh">CSV export · worker</text>
   <g class="wk a gb">
@@ -128,9 +127,6 @@
     <text x="320" y="97" class="txt"><tspan class="hot">/goal</tspan> CSV export is done when the</text>
     <text x="320" y="117" class="txt">Export button downloads a CSV,</text>
     <text x="320" y="137" class="txt">the tests pass and a draft PR is open.</text>
-    <rect class="cover a g1" x="318" y="84" width="246" height="18" fill="#2A2829"/>
-    <rect class="cover a g2" x="318" y="104" width="238" height="18" fill="#2A2829"/>
-    <rect class="cover a g3" x="318" y="124" width="300" height="18" fill="#2A2829"/>
   </g>
   <g class="wk a w1"><circle cx="300" cy="172" r="3.5" fill="#D97757"/><text x="314" y="177" class="txt">Read the brief and the ticket.</text></g>
   <g class="wk a w2"><circle cx="300" cy="200" r="3.5" fill="#D97757"/><text x="314" y="205" class="txt">Update <tspan class="dim">src/export.ts</tspan></text>
@@ -144,6 +140,24 @@
 
 <!-- input box -->
 <rect x="292" y="350" width="384" height="44" rx="8" fill="none" stroke="#3B3839"/>
-<text x="306" y="377" class="mono dim">›</text>
-<rect x="320" y="364" width="7" height="16" fill="#8F8A85" class="caret"/>
+<g class="mono">
+  <text x="306" y="377" class="dim">›</text>
+  <g class="inp a">
+    <text x="320" y="377" class="txt">start sign-in fix, faster search, CSV export</text>
+    <rect class="cover a ty1" x="318" y="364" width="348" height="18" fill="#131213"/>
+  </g>
+  <rect x="320" y="364" width="7" height="16" fill="#8F8A85" class="caret"/>
+
+  <!-- the worker's input box, grown to three lines while athena types the goal -->
+  <g class="tall a">
+    <rect x="292" y="314" width="384" height="80" rx="8" fill="#131213" stroke="#3B3839"/>
+    <text x="306" y="337" class="dim">›</text>
+    <text x="320" y="337" class="txt"><tspan class="hot">/goal</tspan> CSV export is done when the</text>
+    <text x="320" y="357" class="txt">Export button downloads a CSV,</text>
+    <text x="320" y="377" class="txt">the tests pass and a draft PR is open.</text>
+    <rect class="cover a g1" x="318" y="324" width="263" height="18" fill="#131213"/>
+    <rect class="cover a g2" x="318" y="344" width="239" height="18" fill="#131213"/>
+    <rect class="cover a g3" x="318" y="364" width="302" height="18" fill="#131213"/>
+  </g>
+</g>
 </svg>
