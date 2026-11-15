@@ -29,11 +29,10 @@ from pathlib import Path
 from athena.cli import UserError
 from athena.kernel import caps, store
 
-SHIP = ("VERSION", "bin", "athena", "athena_rex", "prompts", "scripts", "docs", "menubar", "plugin", "worker-plugin", "ARCHITECTURE.md")
+SHIP = ("VERSION", "bin", "athena", "prompts", "scripts", "docs", "menubar", "plugin", "worker-plugin", "ARCHITECTURE.md")
 SCHEMA = 2
 REPO = "https://github.com/Delitefully/athena.git"
 CHANNELS = ("release", "main")
-LEGACY_ROOT = ".local/share/athena-rex"  # where athena kept its releases while it was called athena-rex
 _GUARD_SHELL = re.compile(r'^# The guard runs here too.*?^esac\n', re.M | re.S)
 _GUARD_ACTIVE = 'return (os.environ.get("ATHENA_WORKER") or "").startswith("rex-")'
 _GUARD_PATHS = re.compile(r"^LIVE_PATHS = \(.*?^\)\n", re.M | re.S)
@@ -97,12 +96,8 @@ def _entry(value):
 
 
 def load() -> dict:
-    """The record, whole: every field present. Schema 1 (athena-rex's: release, previous, source, lab_guard) is read as 2. With
-    no record here, an athena-rex install's lends what must carry over: the lab guard's state and the checkout it came from."""
+    """The record, whole: every field present. Schema 1 (release, previous, source, lab_guard) is read as 2."""
     data = store.read_dict(record_file())
-    if not data:
-        legacy = store.read_dict(home() / LEGACY_ROOT / "install.json")
-        data = {"source": legacy.get("source"), "lab_guard": legacy.get("lab_guard")} if legacy else {}
     flat = data.get("schema") is None and isinstance(data.get("release"), str)
     switch = data.get("switch") if isinstance(data.get("switch"), dict) else None
     return {

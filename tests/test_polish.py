@@ -610,7 +610,7 @@ class Caches(Case):
 class SessionsDoorShut(Case):
     def test_a_server_that_may_not_be_named_is_said_and_raises_nothing(self):
         os.environ["ATHENA_BACKEND"] = "rex"
-        os.environ["ATHENA_REX_SERVER"] = ""
+        os.environ["ATHENA_SERVER"] = ""
         caps.CTX._backend = None
         self.addCleanup(lambda: setattr(caps.CTX, "_backend", None))
         self.assertEqual(sessions.refresh(caps.CTX)["down"], "off here")

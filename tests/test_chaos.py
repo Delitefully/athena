@@ -485,7 +485,7 @@ class StateFiles(_Chaos):
 class Rex(_Chaos):
     def _rex(self, server):
         from athena.backends.rex import Backend
-        os.environ["ATHENA_REX_SERVER"] = server
+        os.environ["ATHENA_SERVER"] = server
         config.reset()
         return Backend()
 

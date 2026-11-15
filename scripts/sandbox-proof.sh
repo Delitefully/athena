@@ -14,7 +14,7 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 ar="$here/bin/athena"
-rex_bin=${ATHENA_REX_BIN:-"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"}
+rex_bin=${ATHENA_BINARY:-"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"}
 keep=0
 [ "${1:-}" = --keep ] && keep=1
 
@@ -71,8 +71,8 @@ cfg = json.load(open(sys.argv[1]))
 cfg.setdefault("rex", {})["signal_sandbox"] = True  # opt-in: the proof turns it on for its own scratch state
 json.dump(cfg, open(sys.argv[1], "w"))
 E2
-export ATHENA_REX_SERVER="$endpoint"
-export ATHENA_REX_BIN="$rex_bin"
+export ATHENA_SERVER="$endpoint"
+export ATHENA_BINARY="$rex_bin"
 export ATHENA_HQ=proof-hq
 export ATHENA_TRUST=off
 unset ATHENA_CONFIG ATHENA_ROLE CLAUDE_CONFIG_DIR

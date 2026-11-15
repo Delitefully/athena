@@ -6,8 +6,6 @@ A clean-room athena: same job, written fresh. The old code told us what must wor
 
 ```
 bin/athena            the command; the lab guard runs here first, in shell
-bin/athena-rex        the old name, an alias that says so and runs bin/athena
-athena_rex/           the old package name: each `athena_rex.*` is the same module object as its `athena.*`, for private modules written before
 athena/cli.py         finds the capability that owns a verb and imports only that one
 athena/kernel/        names no capability
   store.py                state dir, atomic JSON, appended lines, locks

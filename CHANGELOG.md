@@ -12,8 +12,5 @@ The first release of athena on Rex, which replaces the herdr athena.
   runs, and `athena doctor` says when a newer one is out.
 - **Upgrade from the herdr athena.** `scripts/upgrade-from-herdr.py run` (with `--dry-run` to look first) moves the
   state, the jobs, the command and the plugin over, and `rollback` goes back. See `docs/upgrade-from-herdr.md`.
-- **Renamed from athena-rex.** The command, the package and the install are `athena`. `athena-rex` still works as an
-  alias that says so, private modules that import `athena_rex` still load, and installing over an athena-rex install
-  turns its command into that alias and retires its launchd jobs.
 - **Fixes.** `athena hq` run in HQ's own pane after a Rex restore no longer leaves `hq.json` naming the closed pane.
   The rest are in `docs/release-review.md`.

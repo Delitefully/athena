@@ -1,6 +1,6 @@
 # Release review: athena 1.0.0
 
-The release that renames athena-rex to athena: the rename, a clean install, `athena update`, the upgrade from the herdr
+The first release of athena on Rex: a clean install, `athena update`, the upgrade from the herdr
 athena, a user-facing README, and a full review of the code.
 Each fix below has its test in `tests/` (most in `tests/test_review.py`), and they run through `scripts/test.sh`.
 
@@ -33,7 +33,7 @@ against the code before it was fixed or parked. One of them, the `hq.json` save 
 | 17 | `scripts/test.sh:25` | Ctrl-C or TERM ran the cleanup and then carried on, so a run cut short could read as passed. INT and TERM now exit 130 and 143. | by reading |
 | 18 | `athena/caps/install` (was `install.py`) | `_installed_command` let `TimeoutExpired` escape after `current` had already been swapped. `_prune` could remove another install's half-made copy. Commands now answer as a failed run, and install, update and rollback share one lock. | `test_update`, `test_release` |
 | 20 | `scripts/upgrade-from-herdr.py` `cmd_old_hq`, `athena/caps/hq.py` `_second_fix` | The herdr server restored a pane and resumed the old herdr HQ on the same state as the new HQ. Exiting the old HQ is not enough: herdr resumes the Claude in every pane it restores. The upgrade now closes the old HQ's herdr workspace (from `hq.json`) once the old jobs are stopped. Before the state moves, the old HQ must be down. The workspace is closed only while herdr still labels it `athena`, as the herdr athena checked, since herdr reuses ids. A workspace already gone counts as closed, by herdr's error code. The step refuses inside a herdr pane, and says what to close by hand otherwise. Doctor's `hq-second` named the wrong command (`athena hq` starts these); it now says to /exit the second HQ and close its pane (in herdr, the workspace labelled athena), naming no id. | `test_upgrade.WholeRun` (old-hq), `test_review.SecondHq` |
-| 19 | `athena/caps/items.py` `NOT_HUMAN` (by the rename) | HQ's own prompts began `athena-rex doctor:`, which the "not the human's request" filter (`athena doctor`) missed, so they could be logged as the human's requests. With the rename they match. | `test_caps` (existing) |
+| 19 | `athena/caps/items.py` `NOT_HUMAN` (by the rename) | HQ's own prompts began with the command's old name, not `athena doctor:`, which the "not the human's request" filter missed, so they could be logged as the human's requests. With the rename they match. | `test_caps` (existing) |
 
 ## Parked, with why
 
@@ -71,22 +71,10 @@ Lines are as of the final commit.
 
 Kept stable: `<state>/run/<name>.sh` (same path and content, now created 0700), `workers/<name>.json`, `hq.json`
 (`session`, `space`, `window`, `block`), the ledger's place fields, and the module API (`kernel/caps.py`,
-`kernel/modules.py`). Private modules that import `athena_rex.*` get the same module objects as `athena.*`. Two changes
-touch backends only:
+`kernel/modules.py`). Two changes touch backends only:
 - `Backend.replace` is gone. Use `new_window(space, cwd, argv, window_label, block_label, focus)`, then `close_block` once
   the new place is on record (`agents.close_replaced`).
 - `Backend.has_block` keeps main's `strict=` parameter and answers; retire now asks strictly.
-
-## The old name, where it stays
-
-`git grep -n "athena-rex"` on this branch lists only these, each on purpose:
-- `bin/athena-rex`, `athena_rex/__init__.py`, `ARCHITECTURE.md:9`: the alias and the import alias.
-- `athena/caps/install/__init__.py`, `releases.py`: an athena-rex install's launcher becomes the alias, and its record's
-  lab guard and checkout carry over.
-- `athena/caps/services.py`: an athena-rex install's launchd jobs are retired (moved aside) once athena's are in.
-- `athena/kernel/modules.py`, `scripts/test.sh`: the private modules folder's old default, read when the new one is absent; `scripts/test.sh` also reads its old `ATHENA_REX_MODULES_DIR` when `ATHENA_MODULES_DIR` is unset.
-- `CHANGELOG.md`, this file: what was renamed.
-- `tests/test_release.py`: the tests of all of the above.
 
 ## Calls made in this release
 

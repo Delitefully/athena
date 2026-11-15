@@ -19,7 +19,7 @@ class Install(Case):
         os.environ["PATH"] = f"{self.local / 'bin'}:{os.environ['PATH']}"
         self.state_dir = self.home / "Library/Application Support/athena"
         self.stub("rex", "rex version 1")
-        os.environ["ATHENA_REX_BIN"] = str(self.stubs / "rex")
+        os.environ["ATHENA_BINARY"] = str(self.stubs / "rex")
 
     def run_install(self, *args):
         done = self.cli("install", *args)

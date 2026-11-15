@@ -38,16 +38,10 @@ def listed() -> list:
     return out
 
 
-LEGACY_DIR = "~/.config/athena-rex/modules"  # the default while athena was called athena-rex
-
-
 def private_dir() -> Path:
-    """config's rex.modules_dir, else the default; while the default doesn't exist, the folder an athena-rex install used, if it does."""
+    """config's rex.modules_dir, else the default."""
     named = (config.load().get("rex") or {}).get("modules_dir")
-    if named:
-        return Path(os.path.expanduser(str(named)))
-    default, legacy = (Path(os.path.expanduser(p)) for p in (config.REX_DEFAULTS["modules_dir"], LEGACY_DIR))
-    return legacy if not default.exists() and legacy.is_dir() else default
+    return Path(os.path.expanduser(str(named or config.REX_DEFAULTS["modules_dir"])))
 
 
 def _complete(folder: Path) -> bool:

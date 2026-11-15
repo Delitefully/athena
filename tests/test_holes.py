@@ -216,7 +216,7 @@ class RexServer(Case):
         fake = self.tmp / "rex"
         fake.write_text("#!/bin/sh\nexit 4\n")
         fake.chmod(0o755)
-        os.environ["ATHENA_REX_BIN"] = str(fake)
+        os.environ["ATHENA_BINARY"] = str(fake)
         config.reset()
         return rex.Backend()
 
@@ -224,7 +224,7 @@ class RexServer(Case):
         home = lab.real_home()
         for server in (f"unix://{home}/Library/Application Support/rex/server.sock", "devbox", "unix:///tmp/other.sock",
                        f"unix:///private/tmp/claude-{os.getuid()}/../../etc/s.sock", "127.0.0.1:7777"):
-            os.environ["ATHENA_REX_SERVER"] = server
+            os.environ["ATHENA_SERVER"] = server
             with self.assertRaises(world.Off, msg=server):
                 self._backend().up()
 
@@ -237,7 +237,7 @@ class RexServer(Case):
         folder = Path(tempfile.mkdtemp(prefix="o", dir=SANDBOX["SOCKETS"]))
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         (folder / world.SERVER_MARK).write_text(str(store.state_dir()))
-        os.environ["ATHENA_REX_SERVER"] = f"unix://{folder}/s.sock"
+        os.environ["ATHENA_SERVER"] = f"unix://{folder}/s.sock"
         self.assertFalse(self._backend().up())
 
     def test_ps_is_a_stub_under_test_and_records_its_calls(self):
@@ -1510,7 +1510,7 @@ class SmokeDeadline(Case):
         fake.chmod(0o755)
         begun = time.monotonic()
         out = subprocess.run([str(ROOT / "scripts" / "smoke.sh"), "--state-dir", str(self.state)], cwd=str(self.tmp), capture_output=True, text=True,
-                             env={**os.environ, "ATHENA_REX_BIN": str(fake), "SMOKE_DEADLINE": "1"}, timeout=40)
+                             env={**os.environ, "ATHENA_BINARY": str(fake), "SMOKE_DEADLINE": "1"}, timeout=40)
         self.assertLess(time.monotonic() - begun, 30)
         self.assertEqual(out.returncode, 143, out.stdout + out.stderr)
         self.assertIn("over its 1s deadline", out.stderr)
@@ -1747,7 +1747,7 @@ class SmokeInterrupted(Case):
         fake.write_text(f'#!/bin/sh\ncase "$*" in *"server start"*) touch "{started}"; sleep 2 ;; esac\nexit 0\n')
         fake.chmod(0o755)
         proc = subprocess.Popen([str(ROOT / "scripts" / "smoke.sh"), "--state-dir", str(self.state)], cwd=str(self.tmp),
-                                env={**os.environ, "ATHENA_REX_BIN": str(fake)}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                                env={**os.environ, "ATHENA_BINARY": str(fake)}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.addCleanup(proc.stdout.close)
         for _ in range(200):
             if started.exists():

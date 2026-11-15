@@ -183,7 +183,7 @@ class Door(Case):
 
     def test_no_environment_variable_opens_it(self):
         os.environ.pop("ATHENA_WORKER")
-        for key in ("ATHENA_REAL_WORLD", "REX_REAL_WORLD", "ATHENA_REX_REAL_WORLD", "real_world"):
+        for key in ("ATHENA_REAL_WORLD", "REX_REAL_WORLD", "real_world"):
             os.environ[key] = "true"
         elsewhere = self.tmp / "elsewhere.json"
         elsewhere.write_text('{"rex": {"real_world": true}}')
@@ -462,8 +462,8 @@ class Stubs(Case):
         folder = Path(tempfile.mkdtemp(prefix="o", dir=SANDBOX["SOCKETS"]))
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         (folder / world.SERVER_MARK).write_text(str(store.state_dir()))
-        os.environ["ATHENA_REX_SERVER"] = f"unix://{folder}/s.sock"
-        os.environ["ATHENA_REX_BIN"] = str(fake_rex)
+        os.environ["ATHENA_SERVER"] = f"unix://{folder}/s.sock"
+        os.environ["ATHENA_BINARY"] = str(fake_rex)
         config.reset()
         self.assertFalse(rex.Backend().up())
         with self.assertRaises(world.Off):

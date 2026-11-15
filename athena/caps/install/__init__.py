@@ -2,7 +2,6 @@
 
     ~/.local/share/athena/      the release store (releases.py): whole copies, the `current` link, install.json
     ~/.local/bin/athena         a two-line launcher through `current`
-    ~/.local/bin/athena-rex     the old name's launcher, rewritten as an alias, only where an athena-rex install left one
     <state>/profiles/<role>.json permission profiles, diffed on each install
 
 It writes nothing in ~/.claude: hooks and permissions go in each session's own --settings. State is never moved or removed here:
@@ -22,17 +21,11 @@ from athena.kernel import caps, config, lab, ledger, store, world
 
 SUMMARY = "install, update, roll back or remove athena"
 MARK = "# athena launcher, written by `athena install`."
-ALIAS_MARK = "# athena-rex: athena's old name, written by `athena install`."
-LEGACY_MARK = "# athena-rex launcher, written by `athena-rex install`."
 MIN_DISK_GB = 1
 
 
 def launcher() -> Path:
     return releases.home() / ".local/bin/athena"
-
-
-def alias() -> Path:
-    return releases.home() / ".local/bin/athena-rex"
 
 
 def refuse_in_the_lab(what):
@@ -98,19 +91,6 @@ def _write_launcher(force) -> str:
     return "written"
 
 
-def _alias_step(dry_run) -> str:
-    """athena-rex's own launcher becomes the old name's alias, through this install. Any other file of that name is left."""
-    target = alias()
-    if not (_marked(target, LEGACY_MARK) or _marked(target, ALIAS_MARK)):
-        return ""
-    wanted = _launcher_text("athena-rex", ALIAS_MARK)
-    if target.read_text() == wanted:
-        return f"= {releases.short(target)}, the old name's alias"
-    if not dry_run:
-        store.write_text(target, wanted, mode=0o755)
-    return f"~ {releases.short(target)}: now the old name's alias, through this install"
-
-
 def _on_path() -> bool:
     return str(launcher().parent) in os.environ.get("PATH", "").split(os.pathsep)
 
@@ -155,7 +135,7 @@ def _services(action) -> str:
     if done.returncode and not failed:
         return f"  launchd jobs: skipped ({(done.stderr or done.stdout).strip()})"
     return "\n".join(f"  {line}" for line in done.stdout.splitlines()
-                     if line.startswith(("wrote", "unchanged", "remove", "retired", "failed ")) or " was still loaded" in line) or "  none"
+                     if line.startswith(("wrote", "unchanged", "remove", "failed ")) or " was still loaded" in line) or "  none"
 
 
 def _source():
@@ -207,7 +187,7 @@ def _install(dry_run, force, services, real_world, guard_out) -> int:
         print(f"  {'=' if same else '+'} release {name} in {releases.short(releases.root() / 'releases')}"
               + (f" (now {was['release']})" if was and not same else ""))
         print(f"  {'=' if _marked(launcher(), MARK) else '+'} {releases.short(launcher())}")
-        for line in [_alias_step(True), *_state_step(True, real_world, profiles)]:
+        for line in _state_step(True, real_world, profiles):
             if line:
                 print(f"  {line}")
         return 0
@@ -220,7 +200,7 @@ def _install(dry_run, force, services, real_world, guard_out) -> int:
     releases.save({**record, "current": made, "previous": previous, "source": str(source) if source else record["source"],
                    "lab_guard": "out" if guard_out else "on"})
     releases.prune(made, previous)
-    for line in [_alias_step(False), *_state_step(False, real_world, profiles)]:
+    for line in _state_step(False, real_world, profiles):
         if line:
             print(f"  {line}")
     if services:
@@ -245,8 +225,6 @@ def check() -> int:
     rows = [(releases.exists(current) and releases.pointed() == current["release"], "release",
              f"{current['version']} ({current['release']})" if current else "none: run install")]
     rows.append((_marked(launcher(), MARK), "launcher", releases.short(launcher())))
-    if alias().exists():
-        rows.append((_marked(alias(), ALIAS_MARK), "old name", f"{releases.short(alias())}" + ("" if _marked(alias(), ALIAS_MARK) else ": not ours, or not yet an alias: run install")))
     rows.append((_on_path(), "PATH", "has it" if _on_path() else f"add {releases.short(launcher().parent)} to PATH"))
     if current:
         done = releases.installed_command("--version")
@@ -322,13 +300,13 @@ def _uninstall(dry_run, force) -> int:
         jobs = _jobs_left()
         if jobs:
             raise UserError(f"these launchd jobs are still there, and would crash-loop on a missing program: {', '.join(jobs)}. Nothing else was removed.")
-    for target, mark in ((launcher(), MARK), (alias(), ALIAS_MARK)):
-        if _marked(target, mark):
-            if not dry_run:
-                target.unlink()
-            print(f"  {verb} {releases.short(target)}")
-        elif target.exists() and target == launcher():
-            print(f"  left {releases.short(target)}: it isn't ours")
+    target = launcher()
+    if _marked(target, MARK):
+        if not dry_run:
+            target.unlink()
+        print(f"  {verb} {releases.short(target)}")
+    elif target.exists():
+        print(f"  left {releases.short(target)}: it isn't ours")
     if releases.root().is_dir():
         if not dry_run:
             shutil.rmtree(releases.root())

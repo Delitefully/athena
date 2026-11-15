@@ -234,7 +234,7 @@ class QuitAndStart(FakeLaunchd):
         caps.CTX.backend.create("hq", str(self.tmp), ["true"])
         before = caps.CTX.backend.spaces()
         for server in ("", f"unix:///private/tmp/claude-{UID}/ar-menubar/s.sock"):
-            out = self.cli("services", "stop", env={"ATHENA_REX_SERVER": server})
+            out = self.cli("services", "stop", env={"ATHENA_SERVER": server})
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertTrue(caps.CTX.backend.up())
             self.assertEqual(caps.CTX.backend.spaces(), before)

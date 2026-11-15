@@ -5,7 +5,7 @@ repo=$(cd "${1:?usage: scripts/measure.sh <checkout> [state dir]}" && pwd -P)
 state=${2:-$(mktemp -d "${TMPDIR:-/tmp}/ar-measure.XXXXXX")/state}
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 /usr/bin/python3 "$here/scripts/scratch-state.py" "$state" --port 2894 >/dev/null || exit 1
-exec env ATHENA_STATE_DIR="$state" ATHENA_WORKER=rex-measure ATHENA_HQ=measure-hq ATHENA_REX_SERVER= /usr/bin/python3 -I - "$repo/bin/athena" "$state" <<'PY'
+exec env ATHENA_STATE_DIR="$state" ATHENA_WORKER=rex-measure ATHENA_HQ=measure-hq ATHENA_SERVER= /usr/bin/python3 -I - "$repo/bin/athena" "$state" <<'PY'
 import json, os, statistics, subprocess, sys, time
 binary, state = sys.argv[1:3]
 stop = json.dumps({"hook_event_name": "Stop", "cwd": state, "last_assistant_message": 'ok\nATHENA-REPORT {"status":"BLOCKED","concerns":["m"]}'})

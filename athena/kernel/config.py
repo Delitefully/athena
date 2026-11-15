@@ -49,7 +49,7 @@ REX_DEFAULTS = {
     "repos": {},
     "scratchpads": f"/private/tmp/claude-{os.getuid()}",
 }
-REX_ENV = {"backend": "ATHENA_BACKEND", "binary": "ATHENA_REX_BIN", "server": "ATHENA_REX_SERVER",
+REX_ENV = {"backend": "ATHENA_BACKEND", "binary": "ATHENA_BINARY", "server": "ATHENA_SERVER",
            "dash_port": "ATHENA_DASH_PORT", "max_workers": "ATHENA_MAX_WORKERS", "claude": "ATHENA_CLAUDE",
            "scratchpads": "ATHENA_SCRATCHPADS"}
 
