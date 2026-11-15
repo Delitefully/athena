@@ -1,7 +1,8 @@
 """The revive module's tests, run by scripts/test.sh with its harness: an isolated HOME and state dir, the fake backend, the world
 door shut. Each test loads the shipped module (athena/modules/revive) from the config list. Rex's instance and its panes'
-foreground processes come from a FakeRex handed in place of the module's adapter; the panes, their labels and what is typed into them are the fake backend's. Launch scripts are written by athena's own
-agents.launcher with spawn's and hq's own flags, so the flags asserted are the ones athena really launches with.
+foreground processes come from a FakeRex handed in place of the module's adapter; the panes, their labels and what is typed
+into them are the fake backend's. Launch scripts are written by athena's own agents.launcher with spawn's and hq's own flags,
+so the flags asserted are the ones athena really launches with.
 """
 import argparse
 import contextlib
