@@ -47,9 +47,10 @@ keep running.
 | `athena/backends/` | Where programs run: `rex.py` drives Rex; `fake.py` is the tests' stand-in. |
 | `athena/caps/` | The capabilities: each command, check, background job and watch source is one file or package here. |
 | `athena/modules/` | Optional modules shipped with athena (`clamshell`, `revive`), loaded like capabilities when on. |
-| `prompts/` | `hq.md` and `worker.md`, appended to HQ's and each worker's system prompt. |
+| `prompts/` | `hq.md` and `worker.md`, appended to HQ's and each worker's system prompt; `worker-pi.md`, a Pi worker's. |
 | `plugin/` | The plugin HQ loads: the `athena` skill (`plugin/skills/athena/SKILL.md`, HQ's procedures) and `never-ask.md`. |
 | `worker-plugin/` | The plugin each worker loads: a Claude Code mod that draws the worker's progress band. |
+| `pi-extension/` | `athena.ts`, the Pi extension a Pi worker loads with `-e`: its hooks, report gate and inbox. |
 | `menubar/` | The menu bar app, in Swift, built on the Mac by `menubar/build.sh`. |
 | `scripts/` | `test.sh` (the only way to run the tests), `smoke.sh` and `chaos-rex.py` (runs against a private Rex server), `scratch-state.py` (a sanitized copy of a state dir), `measure.sh` (timings of the hot paths), among others. |
 | `tests/` | The unit and contract tests, run in a sandbox with an isolated HOME and the fake backend. |
@@ -75,9 +76,9 @@ The kernel (`athena/kernel/`):
 | `store.py` | The state dir (`~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`): atomic JSON writes, appended lines that a torn write can't merge, `flock` locks (most under `locks/`; `ask.lock` and `doctor.lock` at the top of the state dir), and the trash, so nothing is deleted outright. |
 | `ledger.py` | `ledger.jsonl`, the append-only record of every worker, and the state machines read from it: `LIFECYCLE`, `phase`, and the goal's moves (`GOAL_MOVES`). It also keeps a snapshot of the live workers in `run/ledger-live.json` and restores from it. |
 | `bus.py` | `events.jsonl`: any process emits an event, readers follow it by byte offset. It rotates at 4 MiB, and `emit` never raises. |
-| `config.py` | `config.json` in the state dir. Top-level keys (`model`, `effort`, `hq_model`, `hq_rotate_tokens`, `human_merge_repos`, Slack and CI keys, ...) and a `rex` block for the rest (`binary`, `server`, `caps`, `modules`, `dash_port`, `max_workers`, ...). A file that doesn't parse falls back to the last good copy, `run/config.good.json`. |
+| `config.py` | `config.json` in the state dir. Top-level keys (`model`, `effort`, `hq_model`, `hq_rotate_tokens`, `human_merge_repos`, Slack and CI keys, ...) and a `rex` block for the rest (`binary`, `server`, `caps`, `modules`, `dash_port`, `max_workers`, `claude` and `pi`, the two agents' commands, ...). A file that doesn't parse falls back to the last good copy, `run/config.good.json`. |
 | `backend.py` | The session backend interface: create a session or window, read a screen, type, press a key, close, label, follow events. |
-| `agents.py` | A Claude in a place, independent of the backend: start it from a launcher, read what state it is in, type to it safely, make it exit, kill it. |
+| `agents.py` | A Claude (or a Pi) in a place, independent of the backend: start it from a launcher, read what state it is in, type to it safely (a Pi: post to its inbox), make it exit, kill it. |
 | `gitops.py` | Git for what guards a launch and a removal: preflight, worktrees, unsaved work, backup refs under `refs/athena-backup/`, git-ignored work. Reads take no optional locks. |
 | `budget.py` | The machine budget checked before a launch: free memory, free disk, load. |
 | `caps.py` | The capability contract, discovery and loading. |
@@ -199,6 +200,15 @@ it changes anything, and then builds the worker in order:
 
 A launch that fails after the worktree exists kills its Claude, closes its window and removes the worktree.
 
+**A Pi worker.** `athena spawn --agent pi` runs Pi instead of Claude Code; Claude stays the default, and HQ is always
+Claude. Spawn refuses `--ultracode` with it, and a `pi` (config `rex.pi`) that isn't on PATH. Pi runs its own default
+model unless `--model` is given, which is passed as written. It gets no settings file, no Claude folder trust and no
+worker plugin. Its launcher carries in its environment what Claude's `--settings` carries, and Pi starts with
+`--session-id` (chosen at spawn, the ledger's `pi_session`), `-e pi-extension/athena.ts` and `prompts/worker-pi.md`.
+The extension (below) is its hooks. Its goal, and every later message, goes through its inbox in words, as Pi has no
+`/goal`. [docs/commands.md](docs/commands.md) has the details, and what a Pi worker lacks next to a Claude one:
+Claude's permission classifier, the goal evaluator, subagents, the progress band, SendMessage and flame's figures.
+
 **The launcher.** `agents.start` writes `run/<name>.sh` (mode 0700), which writes its own pid to `run/<name>.pid`, `cd`s
 into the worktree and `exec`s Claude with its environment. Rex runs that script directly in the new block.
 
@@ -274,6 +284,12 @@ times in a row (the count resets after five quiet minutes); the next refusal giv
 `idle-unreported`, which wakes HQ. When nothing was filed, an
 `ATHENA-REPORT {json}` line at the end of the worker's last message is read as its report.
 
+**A Pi worker's hooks.** Pi reads no `--settings`, so `pi-extension/athena.ts` runs `bin/athena hook` itself with the same
+events: `session_start` as SessionStart, `before_agent_start` as UserPromptSubmit, `agent_before_settle` as Stop (a `block`
+becomes one more turn with the gate's reason), `session_shutdown` as SessionEnd, a bash `tool_call` as PreToolUse, and an
+idle Notification when a run ends with no Stop. `next_state`, the gate and the rules are the same code. It also reads the
+worker's inbox, `run/inbox/<name>/`, once a second: a message goes to Pi as the human's words, and a quit ends it.
+
 **The transcript as a second source.** When a Stop event carries no last message, the hook reads it from the end of
 Claude's own transcript, and `athena status` rebuilds a last report the same way when a status file is missing. Its
 format is Claude's, so anything unexpected is simply no report.
@@ -297,7 +313,9 @@ false` turns that off).
 
 **Status** (`athena/caps/status.py`). `athena status` reads the ledger, the status files, the pid files and `ps` (one
 call for every worker), with no backend call unless `--live`, so it answers in milliseconds. A Claude whose pid is gone reads as `exited`. A `ps` that can't
-answer raises `Unknown`, which never reads as gone.
+answer raises `Unknown`, which never reads as gone. Pi sets its process title to `pi`, hiding its `--name`, so a Pi
+counts as its worker's only under the pid its extension wrote to `run/<name>.pi.json`. Pi reports its own state to Rex
+(OSC 7501), read through `program_status` as Claude's is.
 
 ## The watch and its notices
 
@@ -466,8 +484,8 @@ those in `athena/caps/`, plus a menu bar entry. Public modules live in `athena/m
 The two public modules:
 
 - **revive** (on by default): when the Rex server restarts, every pane comes back as a plain shell. Revive brings HQ
-  back first, then each live worker, in its own pane, on its own conversation (`--resume`), with the flags it was
-  started with, and tells a worker that was mid-turn to carry on. `athena revive` shows what a restart now would bring
+  back first, then each live worker, in its own pane, on its own conversation (`--resume`; a Pi worker's launcher
+  already names its `--session-id`), with the flags it was started with, and tells a worker that was mid-turn to carry on. `athena revive` shows what a restart now would bring
   back. It records each server instance it handled in `revive.json`.
 - **clamshell** (off by default): whether the Mac stays awake with its lid closed. It decides from AC power, the lid and
   doctor's last pass in `health.json` (`decide`, a pure function), and runs `caffeinate` while a worker works on AC
@@ -518,7 +536,7 @@ each run asks the world what is left, so a retire that was killed is finished by
    refuses the retire. `--force` saves it first: changes, untracked files included, as a `-wip` backup ref, and
    git-ignored work copied to `trash/`, up to `rex.ignored_copy_max_mb` (2 GB). A save that fails stops the retire.
 2. **Marked.** The ledger records where the work went (`retire_kept`) and that the worker is retiring.
-3. **Stopped.** Claude is asked to `/exit`, then its block is closed, then it is killed; whatever else it left running
+3. **Stopped.** Claude is asked to `/exit` (a Pi, to quit through its inbox), then its block is closed, then it is killed; whatever else it left running
    on its terminal is stopped too, listed before the stop.
 4. **Removed.** `git worktree remove`. It adds `--force` only once the changes are saved as a `-wip` ref, or on a
    `retire --force` that needs it, so git still refuses a dirty tree nobody saved.
@@ -583,7 +601,7 @@ The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. 
 | `service-rex.json`, `services-stopped.json` | `services` | installed jobs, and Quit's mark |
 | `board-rex.json` | `board` | where the board's block is |
 | `modules.json`, `revive.json` | `modules`, revive | modules switched off; Rex instances handled |
-| `run/` | many | runtime state: launchers and pids, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json` |
+| `run/` | many | runtime state: launchers and pids, a Pi worker's `<name>.pi.json` and `inbox/<name>/`, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json` |
 | `flame/index.sqlite` | `flame index` | the Flame page's index |
 | `scratch/<owner>/<name>/` | `athena scratch new` | disposable work with an owner and a ttl |
 | `locks/`, `ask.lock`, `doctor.lock` | `store.locked` | `flock` files |

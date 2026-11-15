@@ -100,6 +100,7 @@ FORBIDDEN: anything outside this worktree; any push.
 NOTES: no PR here. Skip anything in your rules about PRs, review threads and CI.
 BRIEF
 
+shown() { sed -e "s#$here#<checkout>#g" -e "s#$HOME#~#g" -E -e "s#'PATH=[^']*'#PATH=<checkout>/bin:...#"; } # no home paths in what it prints
 field() { # python expression over r, the worker's status row
 	"$ar" status pi-a --json --live | /usr/bin/python3 -c "import json,sys; r=json.load(sys.stdin)[0]; print($1)"
 }
@@ -112,7 +113,6 @@ say "\$ athena spawn --agent pi --repo proj --branch t/pi-proof --name pi-a --br
 "$ar" spawn --agent pi --repo "$root/proj" --branch t/pi-proof --name pi-a --brief "$root/brief.md" --no-fetch --force \
 	--goal "hello.txt holds the line 'hello from pi', is committed, VERIFY passes, and a DONE report is filed." >"$root/spawn.out" 2>&1
 shown <"$root/spawn.out"
-shown() { sed -e "s#$here#<checkout>#g" -e "s#$HOME#~#g" -E -e "s#'PATH=[^']*'#PATH=<checkout>/bin:...#"; } # no home paths in what it prints
 say "its launcher: $(grep '^exec ' "$state/run/pi-a.sh" | shown)"
 check "Pi was launched in the worker's window, with athena's extension and the Pi worker prompt" \
 	grep -q -- " pi --name pi-a --session-id .* --approve -e .*/pi-extension/athena.ts --append-system-prompt .*/prompts/worker-pi.md$" "$state/run/pi-a.sh"
@@ -135,6 +135,14 @@ check "the watch told its report" grep -q '"pi-a report DONE"' "$root/watch.out"
 say "\$ athena send pi-a \"...\""
 "$ar" send pi-a "HQ here, checking that messages reach you: file your report again, with the same status, verify and lines as before plus one more: --concern proof-message. Then end your turn."
 check "pi-a got HQ's message and filed again" wait_for 180 concern_has proof-message
+"$ar" status pi-a | head -1
+
+gated() { grep -q '"worker.gate", "name": "pi-a"' "$state/events.jsonl" 2>/dev/null || grep -q '"worker.gate".*"pi-a"' "$state/events.jsonl" 2>/dev/null; }
+say "\$ athena send pi-a \"... end this turn without a report ...\""
+"$ar" send pi-a "HQ here, testing athena's report gate: reply with just the word ok and end this turn without running athena report. When athena sends the turn back, file your report again as before (same status, verify and lines), then end your turn."
+check "the gate sent back a Pi turn that ended with no report" wait_for 120 gated
+check "and the worker filed its report again" wait_for 180 report_is DONE
+say "the gate's events: $(grep '"worker.gate"' "$state/events.jsonl" | cut -c1-160)"
 "$ar" status pi-a | head -1
 
 say "\$ athena retire pi-a --force"
