@@ -137,7 +137,7 @@ say "\$ athena send pi-a \"...\""
 check "pi-a got HQ's message and filed again" wait_for 180 concern_has proof-message
 "$ar" status pi-a | head -1
 
-gated() { grep -q '"worker.gate", "name": "pi-a"' "$state/events.jsonl" 2>/dev/null || grep -q '"worker.gate".*"pi-a"' "$state/events.jsonl" 2>/dev/null; }
+gated() { grep '"topic": "worker.gate"' "$state/events.jsonl" 2>/dev/null | grep -q '"name": "pi-a"'; }
 say "\$ athena send pi-a \"... end this turn without a report ...\""
 "$ar" send pi-a "HQ here, testing athena's report gate: reply with just the word ok and end this turn without running athena report. When athena sends the turn back, file your report again as before (same status, verify and lines), then end your turn."
 check "the gate sent back a Pi turn that ended with no report" wait_for 120 gated
