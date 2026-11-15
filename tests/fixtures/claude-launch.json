@@ -1,0 +1,163 @@
+{
+ "claude_args": [
+  "--name",
+  "a",
+  "--model",
+  "opus",
+  "--effort",
+  "high",
+  "--settings",
+  "<tmp>/state/settings/a.json",
+  "--plugin-dir",
+  "<root>/worker-plugin",
+  "--append-system-prompt-file",
+  "<root>/prompts/worker.md"
+ ],
+ "launcher": "#!/bin/sh\necho $$ > <tmp>/state/run/a.pid\ncd <tmp>/wt/main/a || exit 111\nexec env ATHENA_WORKER=a true --name a --model opus --effort high --settings <tmp>/state/settings/a.json --plugin-dir <root>/worker-plugin --append-system-prompt-file <root>/prompts/worker.md\n",
+ "settings": {
+  "crossSessionInbound": "accept",
+  "enabledPlugins": {
+   "athena@athena": false,
+   "chrome-devtools-mcp@chrome-devtools-plugins": false,
+   "keepwarm-bundle@keepwarm": false,
+   "keepwarm@keepwarm": false
+  },
+  "env": {
+   "ATHENA_BRIEF": "<tmp>/state/briefs/a.md",
+   "ATHENA_HQ": "athena",
+   "ATHENA_STATE_DIR": "<tmp>/state",
+   "ATHENA_WORKER": "a",
+   "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+  },
+  "hooks": {
+   "Notification": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "PostToolUse": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 5,
+       "type": "command"
+      }
+     ],
+     "matcher": "TodoWrite|TaskCreate|TaskUpdate"
+    }
+   ],
+   "PreToolUse": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 5,
+       "type": "command"
+      }
+     ],
+     "matcher": "Bash"
+    }
+   ],
+   "SessionEnd": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "SessionStart": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "Stop": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "StopFailure": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "SubagentStop": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ],
+   "UserPromptSubmit": [
+    {
+     "hooks": [
+      {
+       "command": "\"<root>/bin/athena\" hook",
+       "timeout": 10,
+       "type": "command"
+      }
+     ]
+    }
+   ]
+  },
+  "permissions": {
+   "allow": [
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(git branch:*)",
+    "Bash(git fetch:*)",
+    "Bash(gh pr view:*)",
+    "Bash(gh pr diff:*)",
+    "Bash(gh pr checks:*)",
+    "Bash(gh pr list:*)",
+    "Bash(gh run view:*)",
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+    "Bash(git rebase:*)",
+    "Bash(gh pr create:*)",
+    "Bash(athena heavy:*)",
+    "Bash(athena whoami:*)",
+    "Bash(athena report:*)",
+    "Bash(aws sso login:*)",
+    "Bash(docker run --rm:*)"
+   ],
+   "deny": []
+  },
+  "remoteControlAtStartup": false
+ }
+}
