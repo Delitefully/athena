@@ -167,3 +167,38 @@ class OneJobUpgrade(Case):
         self.assertEqual(self.loaded(), OLD_JOBS, "and forward again by update, which moves nothing before doctor does")
         self.assertEqual(self.athena("services", "install").returncode, 0)  # doctor's repair, run here past its hourly backoff
         self.assertEqual(self.loaded(), {"local.athena"})
+
+    def cut_off(self, back_to):
+        """A switch on record, as an update killed between its swap and its verdict leaves it: from `back_to` to what runs."""
+        record = releases.load()
+        releases.save({**record, "switch": {"from": back_to, "to": record["current"], "since": time.time()}})
+
+    def test_recover_from_a_cut_off_update_lands_on_the_layout_of_the_release_it_goes_back_to(self):
+        self.update_to_this_release()
+        self.moved(self.athena("doctor", "--fix", "--quiet"))
+        self.cut_off(self.record()["previous"])  # back to 1.0.0, which runs a job per service
+        self.calls.write_text("")
+        self.athena("doctor", "--fix", "--quiet")  # doctor's `update` repair recovers the switch
+        record = self.record()
+        self.assertIsNone(record["switch"])
+        self.assertEqual(record["current"]["version"], "1.0.0")
+        self.assertEqual(self.athena("--version").stdout.strip(), "athena 1.0.0")
+        self.assertEqual(self.plists(), sorted(f"{j}.plist" for j in OLD_JOBS))
+        self.assertEqual(self.loaded(), OLD_JOBS, "doctor, watch, dash and the menu bar, as 1.0.0 runs them")
+
+    def test_recover_between_two_supervisor_releases_restarts_the_one_job_onto_the_code_it_goes_back_to(self):
+        self.update_to_this_release()
+        self.moved(self.athena("doctor", "--fix", "--quiet"))
+        self.release("1.2.0", ROOT)
+        done = self.athena("update", "--repo", str(self.published))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.record()["current"]["version"], "1.2.0")
+        self.cut_off(self.record()["previous"])  # back to 1.1.0, which has the supervisor too
+        self.calls.write_text("")
+        done = self.athena("install", "--rollback")  # an install or rollback recovers a switch on record first
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.athena("--version").stdout.strip(), "athena 1.1.0")
+        self.assertEqual(self.launchctl_calls(), [f"kickstart -k gui/{os.getuid()}/local.athena"],
+                         "the supervisor and every child restart onto 1.1.0's code")
+        self.assertEqual(self.plists(), ["local.athena.plist"])
+        self.assertEqual(self.loaded(), {"local.athena"})
