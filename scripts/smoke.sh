@@ -11,7 +11,7 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 ar="$here/bin/athena"
-rex_bin=${ATHENA_REX_BIN:-"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"}
+rex_bin=${ATHENA_BINARY:-"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"}
 keep=0
 given_state=""
 given_server=""
@@ -127,8 +127,8 @@ cfg = json.load(open(sys.argv[1]))
 cfg.setdefault("rex", {})["signal_sandbox"] = True  # opt-in; smoke proves it on its own workers
 json.dump(cfg, open(sys.argv[1], "w"))
 E2
-export ATHENA_REX_SERVER="$endpoint"
-export ATHENA_REX_BIN="$rex_bin"
+export ATHENA_SERVER="$endpoint"
+export ATHENA_BINARY="$rex_bin"
 export ATHENA_HQ=smoke-hq
 unset ATHENA_CONFIG ATHENA_ROLE ATHENA_TRUST CLAUDE_CONFIG_DIR
 

@@ -1,11 +1,11 @@
 # Writing a module
 
-A module is an optional feature: off unless config lists it, and once loaded a capability like those in
-`athena/caps/`, with an entry in the menu bar. Public modules live in `athena/modules/<name>/` (clamshell). Private
+A module is an optional feature: off unless config lists it or its manifest says it is on by default (revive), and once loaded a capability like those in
+`athena/caps/`, with an entry in the menu bar. Public modules live in `athena/modules/<name>/` (clamshell, revive). Private
 ones live in your own folder, its own git repo, outside this one: `rex.modules_dir`, default `~/.config/athena/modules/`.
 
 ```
-<name>/manifest.json   {"name": "<name>", "title": "Shown in the menu"}
+<name>/manifest.json   {"name": "<name>", "title": "Shown in the menu"}; a public one may add "default": true
 <name>/__init__.py     the hooks below; other files beside it import relatively (from . import card)
 <name>/tests/          optional: scripts/test.sh runs a private folder's tests with the same harness
 ```
@@ -39,6 +39,26 @@ athena modules --json              the menu bar's list: one object per listed mo
 
 Each object is `{"name", "title", "public", "loaded", "state": "on|off|error", "detail", "actions"}`. `loaded` means its code
 imported. `state` is `off` when toggled off (kept in the state dir's `modules.json`), and `error` when it won't load or its
-status isn't ok. Doctor names a listed module that won't load. With `rex.modules: []`, the default, no module code is imported.
+status isn't ok. Doctor names a listed module that won't load. A public module whose manifest has `"default": true` is listed after the config's own, whatever `rex.modules` says,
+until it is turned off. With `rex.modules: []` and each such module off, no module code is imported.
+
+## Revive, on by default
+
+After the Rex server restarts (a reboot, a crash, `rex server stop`), Rex brings back every session, window and pane, but each
+pane comes back as a plain shell: the Claude athena ran there is gone. Revive brings HQ and each live worker back in its own pane,
+on its own conversation, with the flags athena launched it with. Panes come back one at a time, HQ first; HQ is then sent its
+session start, and a worker that was mid-turn is told to carry on. A retired, retiring, failed or closed-by-human worker, a pane
+running anything but a shell, or one with no conversation on record is left alone, with its reason. The Rex server running
+when revive is first seen is adopted, not acted on: only a restart after that is revived.
+
+```
+athena revive                      the dry run: what a restart now would bring back, what it would skip and why
+athena revive --json
+athena doctor                      its line: the last restart handled, and any pane that didn't come back
+```
+
+It keeps `<state>/revive.json`. It is on whatever `rex.modules` lists, with no need to name it there. To turn it off,
+`athena modules unload revive` or the menu's toggle (`athena modules action revive toggle`): it stays listed, off, across
+restarts, until `athena modules load revive` or the toggle turns it back on.
 
 Next candidates to move out of the core into private modules: the #open-prs extras and HQ skip-perms.

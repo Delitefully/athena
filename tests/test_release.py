@@ -1,33 +1,14 @@
-"""The release: athena's old name keeps working and says so."""
+"""The release: HQ's record across a restore, and a clean install."""
 import json
 import os
 import shutil
 import subprocess
 from unittest import mock
 
-from harness import BIN, ROOT, Case, store
+from harness import ROOT, Case, store
 
 from athena.caps import hq
 from athena.kernel import caps
-
-
-class OldName(Case):
-    def test_the_old_command_runs_athena_and_says_so_in_one_line(self):
-        new = self.cli("doctor", "--json")
-        old = subprocess.run([str(BIN.with_name("athena-rex")), "doctor", "--json"], capture_output=True, text=True, timeout=60)
-        self.assertEqual(old.returncode, new.returncode, old.stderr)
-        self.assertEqual(old.stdout.splitlines()[0], new.stdout.splitlines()[0])
-        self.assertEqual(old.stderr.splitlines()[0], "athena-rex is now athena: this alias goes in a later release")
-        self.assertNotIn("athena-rex", new.stderr)
-
-    def test_the_old_package_name_is_the_same_modules_not_copies(self):
-        import athena.caps.hooks
-        import athena.kernel.store
-        from athena_rex.caps import hooks
-        from athena_rex.kernel import store
-        self.assertIs(store, athena.kernel.store, "one copy of each module, and of its state")
-        self.assertIs(hooks, athena.caps.hooks)
-        self.assertEqual(store.__spec__.name, "athena.kernel.store", "the alias leaves the real module's own spec")
 
 
 class HqRecord(Case):
@@ -72,7 +53,7 @@ class _Checkout(Case):
         os.environ.pop("ATHENA_STATE_DIR", None)
         os.environ["PATH"] = f"{self.local / 'bin'}:{os.environ['PATH']}"
         self.stub("rex", "rex version 1")
-        os.environ["ATHENA_REX_BIN"] = str(self.stubs / "rex")
+        os.environ["ATHENA_BINARY"] = str(self.stubs / "rex")
         self.state_dir = self.home / "Library/Application Support/athena"
         self.checkout = self.tmp / "athena"
         for name in subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True, check=True).stdout.split("\0"):
@@ -112,7 +93,9 @@ class InstallFromACleanCheckout(_Checkout):
         self.assertEqual((version.returncode, version.stdout.strip()), (0, f"athena {(ROOT / 'VERSION').read_text().strip()}"))
         doctor = self.athena("doctor", "--json")
         self.assertIn("update", json.loads(doctor.stdout)["checks"], doctor.stderr)
-        self.assertFalse((self.local / "bin/athena-rex").exists(), "a new user gets no old name")
+        listed = self.athena("modules", "--json")
+        self.assertIn({"name": "revive", "loaded": True, "public": True, "state": "on"},
+                      [{k: m[k] for k in ("name", "loaded", "public", "state")} for m in json.loads(listed.stdout)], "shipped, on by default")
         before = self.snapshot()
         again = self.install("--services")
         self.assertIn("= release", again)
@@ -126,45 +109,3 @@ class InstallFromACleanCheckout(_Checkout):
         self.assertEqual(list((self.tmp / "agents").glob("*.plist")), [])
         self.assertEqual((self.state_dir / "ledger.jsonl").read_text(), "{}\n", "the state dir stays")
         self.assertTrue((self.state_dir / "config.json").exists())
-
-
-class FromAthenaRex(_Checkout):
-    """This Mac's way over: an athena-rex install, its launcher, its record and its launchd jobs, become athena's. Its state is
-    not new, so install leaves the door as it is: shut here, so the guard-out copy can't reach the real world."""
-
-    def setUp(self):
-        super().setUp()
-        self.state_dir.mkdir(parents=True)
-        (self.state_dir / "ledger.jsonl").write_text("")
-        old_root = self.local / "share/athena-rex"
-        old_root.mkdir(parents=True)
-        (old_root / "install.json").write_text(json.dumps({"version": 1, "release": "0123456789ab-live", "previous": None,
-                                                           "source": str(self.checkout), "lab_guard": "out", "ts": 1}))
-        (self.local / "bin").mkdir(parents=True)
-        self.old_launcher = self.local / "bin/athena-rex"
-        self.old_launcher.write_text(f'#!/bin/sh\n# athena-rex launcher, written by `athena-rex install`.\nexec "{old_root}/current/bin/athena-rex" "$@"\n')
-        self.old_launcher.chmod(0o755)
-        agents = self.tmp / "agents"
-        agents.mkdir()
-        (agents / "athena-rex.doctor.plist").write_text("<plist/>")
-
-    def test_the_old_name_becomes_an_alias_its_jobs_are_retired_and_the_guard_stays_out(self):
-        out = self.install("--services")
-        self.assertIn("now the old name's alias", out)
-        record = json.loads((self.local / "share/athena/install.json").read_text())
-        self.assertEqual(record["lab_guard"], "out", "carried from the athena-rex install's record")
-        self.assertTrue(record["current"]["release"].endswith("-live"))
-        old = self.athena("doctor", "--json", command="athena-rex")
-        new = self.athena("doctor", "--json")
-        self.assertEqual(old.returncode, new.returncode, old.stderr)
-        self.assertEqual(json.loads(old.stdout)["checks"].keys(), json.loads(new.stdout)["checks"].keys())
-        self.assertIn("athena-rex is now athena", old.stderr.splitlines()[0])
-        self.assertIn(f"{self.local}/share/athena/current/bin/athena-rex", self.old_launcher.read_text())
-        self.assertFalse((self.tmp / "agents/athena-rex.doctor.plist").exists())
-        self.assertTrue((self.tmp / "LaunchAgents.athena-rex-old/athena-rex.doctor.plist").exists(), "moved aside, not deleted")
-        self.assertIn(f"launchctl bootout gui/{os.getuid()}/athena-rex.doctor", self.world_calls())
-        self.assertTrue((self.tmp / "agents/local.athena.doctor.plist").exists())
-        self.assertTrue((self.local / "share/athena-rex").is_dir(), "left: running Claudes' hooks name it")
-        gone = self.athena("install", "--uninstall")
-        self.assertEqual(gone.returncode, 0, gone.stdout + gone.stderr)
-        self.assertFalse(self.old_launcher.exists(), "the alias is ours, so it goes too")

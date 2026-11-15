@@ -54,12 +54,7 @@ profile="(version 1)
 
 printf '%s\n' "$profile" >"$run/profile.sb"
 # A private modules folder's own tests run too (tests/test_private_modules.py); the folder is only read.
-# ATHENA_REX_MODULES_DIR and ~/.config/athena-rex/modules: the names while athena was called athena-rex; kernel/modules.py reads the folder too.
-private_modules=${ATHENA_MODULES_DIR:-${ATHENA_REX_MODULES_DIR:-}}
-if [ -z "$private_modules" ]; then
-	private_modules=$home/.config/athena/modules
-	[ -e "$private_modules" ] || private_modules=$home/.config/athena-rex/modules
-fi
+private_modules=${ATHENA_MODULES_DIR:-$home/.config/athena/modules}
 [ -d "$private_modules" ] || private_modules=
 env -u ATHENA_STATE_DIR -u ATHENA_WORKER -u ATHENA_BRIEF -u ATHENA_HQ TMPDIR="$run" ATHENA_TEST_MODULES_DIR="$private_modules" \
 	ATHENA_SANDBOX_PROBE_WRITE="$probe_write" ATHENA_SANDBOX_PROBE_EXEC="$probe_exec" ATHENA_SANDBOX_OUTSIDER="$outsider" \

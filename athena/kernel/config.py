@@ -37,8 +37,8 @@ REX_DEFAULTS = {
     "modules": [],
     "modules_dir": "~/.config/athena/modules",
     "dash_port": 2843,
-    "max_workers": 4,
-    "hard_cap": 8,
+    "max_workers": 16,
+    "hard_cap": 16,
     "claude": "claude",
     "scratch_ttl_days": 14,
     "bots": [],
@@ -49,7 +49,7 @@ REX_DEFAULTS = {
     "repos": {},
     "scratchpads": f"/private/tmp/claude-{os.getuid()}",
 }
-REX_ENV = {"backend": "ATHENA_BACKEND", "binary": "ATHENA_REX_BIN", "server": "ATHENA_REX_SERVER",
+REX_ENV = {"backend": "ATHENA_BACKEND", "binary": "ATHENA_BINARY", "server": "ATHENA_SERVER",
            "dash_port": "ATHENA_DASH_PORT", "max_workers": "ATHENA_MAX_WORKERS", "claude": "ATHENA_CLAUDE",
            "scratchpads": "ATHENA_SCRATCHPADS"}
 

@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 from athena.kernel import lab  # noqa: E402
 
-REX = os.environ.get("ATHENA_REX_BIN") or "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
+REX = os.environ.get("ATHENA_BINARY") or "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
 AR = str(HERE / "bin" / "athena")
 HAIKU = "claude-haiku-5-5"
 CLAUDE_ENV = ("HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "TERM")
@@ -62,7 +62,7 @@ class Run:
         return ok
 
     def env(self, **extra):
-        out = {**os.environ, "ATHENA_STATE_DIR": str(self.state), "ATHENA_REX_SERVER": self.endpoint, "ATHENA_REX_BIN": REX,
+        out = {**os.environ, "ATHENA_STATE_DIR": str(self.state), "ATHENA_SERVER": self.endpoint, "ATHENA_BINARY": REX,
                "ATHENA_HQ": "chaos-hq", "ATHENA_CLAUDE": str(self.root / "bin" / "claude"), "ATHENA_TRUST": "off",
                "ATHENA_DOCTOR_GRACE": "0", **extra}
         for key in ("ATHENA_CONFIG", "ATHENA_ROLE", "CLAUDE_CONFIG_DIR", *[k for k in out if k.startswith("HERDR_")]):
@@ -235,8 +235,8 @@ def r1_r6_x2_m2(run):
     server_row = found["checks"].get("server") or {}
     run.check("R1", "doctor says the server is down, and with the door shut it starts none", server_row.get("ok") is False, found)
     run.check("R1", "no server came up by itself", run.rx("whoami", "--json").returncode == 4)
-    run.check("R2", "a call with no endpoint is refused and reaches nothing", run.ar("status", "--live", ATHENA_REX_SERVER="").returncode == 0
-              and run.ar("spawn", "--repo", str(run.repo), "--branch", "t/x", "--name", "x", "--no-fetch", ATHENA_REX_SERVER="").returncode != 0)
+    run.check("R2", "a call with no endpoint is refused and reaches nothing", run.ar("status", "--live", ATHENA_SERVER="").returncode == 0
+              and run.ar("spawn", "--repo", str(run.repo), "--branch", "t/x", "--name", "x", "--no-fetch", ATHENA_SERVER="").returncode != 0)
     hook = json.dumps({"hook_event_name": "Stop", "last_assistant_message": 'gap\nATHENA-REPORT {"status":"BLOCKED","concerns":["in the gap"]}', "cwd": str(run.state)})
     subprocess.run([AR, "hook"], input=hook, text=True, env=run.env(ATHENA_WORKER="rex-ra", ATHENA_GATE="off"), check=True)
     with open(run.state / "ledger.jsonl", "a") as f:
@@ -285,7 +285,7 @@ def r4(run):
     long_dir = run.root / ("x" * 100)
     long_dir.mkdir()
     (long_dir / ".athena-server-owner").write_text(str(run.state))
-    out = run.ar("doctor", "--json", ATHENA_REX_SERVER=f"unix://{long_dir}/s.sock")
+    out = run.ar("doctor", "--json", ATHENA_SERVER=f"unix://{long_dir}/s.sock")
     row = (json.loads(out.stdout)["checks"].get("server") or {}) if out.stdout.strip() else {}
     run.check("R4", "a path past macOS's limit says so", "104" in row.get("detail", ""), row or out.stderr)
     shutil.rmtree(long_dir)

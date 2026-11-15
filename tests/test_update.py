@@ -21,7 +21,7 @@ class Update(Case):
         os.environ["PATH"] = f"{self.local / 'bin'}:{os.environ['PATH']}"
         os.environ["ATHENA_UPDATE_WAIT"] = "2"
         self.stub("rex", "rex version 1")
-        os.environ["ATHENA_REX_BIN"] = str(self.stubs / "rex")
+        os.environ["ATHENA_BINARY"] = str(self.stubs / "rex")
         self.published = self.tmp / "published"
         shutil.copytree(ROOT, self.published, ignore=shutil.ignore_patterns(".git", "tests", "__pycache__", "build"))
         git(self.published.parent, "init", "-q", "-b", "main", str(self.published))

@@ -6,8 +6,6 @@ A clean-room athena: same job, written fresh. The old code told us what must wor
 
 ```
 bin/athena            the command; the lab guard runs here first, in shell
-bin/athena-rex        the old name, an alias that says so and runs bin/athena
-athena_rex/           the old package name: each `athena_rex.*` is the same module object as its `athena.*`, for private modules written before
 athena/cli.py         finds the capability that owns a verb and imports only that one
 athena/kernel/        names no capability
   store.py                state dir, atomic JSON, appended lines, locks
@@ -25,7 +23,7 @@ athena/kernel/        names no capability
   lab.py                  the overnight lab's guard on the state dir; out of an installed copy only by `install --lab-guard-out`, never out of a checkout
 athena/backends/      rex.py (the one that matters), fake.py (tests)
 athena/caps/          the capabilities, one file or directory each
-athena/modules/       public optional modules, off unless config lists them (clamshell); docs/modules.md
+athena/modules/       public optional modules, loaded when config lists them (clamshell) or on by default by manifest (revive); docs/modules.md
 prompts/              hq.md, worker.md
 scripts/              smoke.sh (VERIFY), test.sh (the only way to run tests), scratch-state.py, chaos-rex.py (the real-process chaos cases), measure.sh (the hot paths, the same way each time), upgrade-from-herdr.py (docs/upgrade-from-herdr.md's steps)
 tests/                contracts and things that broke, in an isolated HOME, inside a sandbox
@@ -43,7 +41,7 @@ A capability is a module or package in `athena/caps/`. It has `SUMMARY` and `com
 | `on_event(ctx, event)` | watch lines | the watch loop, per new bus event |
 
 `config.json`'s `rex.caps` lists which capabilities load; with no list, everything found loads. Optional modules are separate:
-`rex.modules` lists them (default none), from `athena/modules/` or the private `rex.modules_dir`, and once loaded they are
+`rex.modules` lists them (default none; a manifest's `"default": true` lists a public one too, until turned off), from `athena/modules/` or the private `rex.modules_dir`, and once loaded they are
 capabilities like these, plus a menu entry (docs/modules.md). A capability reaches another only through `ctx.cap(name)`, which is `None` when it is absent. So leaving a module out of the list, or deleting its file, changes nothing else. A test checks that the kernel imports no capability.
 
 The backend interface (`kernel/backend.py`) is 14 methods: start a program in a new space, replace a dead one, read a screen, type, press, close. A backend knows nothing about Claude; `agents.py` does.
@@ -74,6 +72,7 @@ The backend interface (`kernel/backend.py`) is 14 methods: start a program in a 
 | `board.py` | `caps/board.py` | a read-only live panel, see decisions |
 | `dash.py`, `dash/*.go`, `page.html` | `caps/dash/` | Python standard library |
 | `local/clamshell` | `modules/clamshell/` | a public module, off by default; decision and caffeinate; the root daemon stays the actuator |
+| none | `modules/revive/` | a public module, on by default; brings HQ and workers back after a Rex restart |
 | `hq.md`, `worker.md` | `prompts/` | |
 | `init.py` | `caps/install.py` | see decision 31 |
 | none | `caps/workspaces.py`, `caps/limits.py`, `caps/heavy.py`, `kernel/budget.py`, `kernel/bus.py`, `caps/sessions.py`, `caps/profiles.py`, `caps/permissions.py`, `caps/rules.py`, `caps/disk.py`, `caps/flame/` | new |

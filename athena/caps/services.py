@@ -24,7 +24,7 @@ PREFIX = "local.athena"  # not "athena.": that is the herdr athena's, whose jobs
 WATCHDOG = "doctor"
 MENUBAR = "menubar"
 STOPPED = "services-stopped.json"
-CARRIED = ("ATHENA_STATE_DIR", "ATHENA_CONFIG", "ATHENA_HQ", "ATHENA_DASH_PORT", "ATHENA_REX_SERVER", "ATHENA_REX_BIN")
+CARRIED = ("ATHENA_STATE_DIR", "ATHENA_CONFIG", "ATHENA_HQ", "ATHENA_DASH_PORT", "ATHENA_SERVER", "ATHENA_BINARY")
 
 
 def agents_dir() -> Path:
@@ -66,7 +66,7 @@ def label(service) -> str:
 def _defaults() -> dict:
     """What each carried variable means unset: one set to this says nothing, so it is left out of the plist."""
     return {"ATHENA_HQ": "athena", "ATHENA_DASH_PORT": str(config.REX_DEFAULTS["dash_port"]),
-            "ATHENA_REX_BIN": str(config.REX_DEFAULTS["binary"]), "ATHENA_CONFIG": str(store.state_dir() / "config.json")}
+            "ATHENA_BINARY": str(config.REX_DEFAULTS["binary"]), "ATHENA_CONFIG": str(store.state_dir() / "config.json")}
 
 
 def _written_env(target) -> dict:
@@ -103,10 +103,6 @@ def plist_for(service) -> dict:
 
 
 NOT_LOADED = (0, 3, 113)  # launchctl's words for a job that wasn't loaded, as a bootout of one is no failure
-
-
-LEGACY_PREFIX = "athena-rex"  # the jobs' labels while athena was called athena-rex
-LEGACY_ASIDE = "LaunchAgents.athena-rex-old"
 
 
 def _launchctl(*args):
@@ -180,28 +176,7 @@ def install(ctx, dry_run=False) -> list:
                 actions.append(kept)
         except (UserError, OSError) as exc:
             actions.append(f"failed {plist['Label']}: {exc}")
-    if not any(a.startswith("failed ") for a in actions):
-        actions += _retire_legacy(domain, dry_run)
     store.write_json(store.path("service-rex.json"), {"jobs": [s.name for s in wanted(ctx)]})
-    return actions
-
-
-def _retire_legacy(domain, dry_run) -> list:
-    """An athena-rex install's jobs, once this install's are all in: booted out and their files moved aside (not deleted), or
-    the old release's doctor and watch would run beside the new ones on the same state."""
-    actions = []
-    for target in sorted(agents_dir().glob(f"{LEGACY_PREFIX}.*.plist")):
-        aside = agents_dir().parent / LEGACY_ASIDE / target.name
-        if dry_run:
-            actions.append(f"retire {target.stem}: move {target} to {aside}")
-            continue
-        try:
-            _checked("bootout", f"{domain}/{target.stem}", ok=NOT_LOADED)
-            aside.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(target, aside)
-            actions.append(f"retired {target.stem}: its file is in {aside.parent}")
-        except (UserError, OSError) as exc:
-            actions.append(f"failed {target.stem}: {exc}")
     return actions
 
 

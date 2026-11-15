@@ -15,7 +15,7 @@ Nothing in the kernel names a capability. Which ones load comes from config (`re
 can be left out of the list, or its file deleted, and nothing else changes: other capabilities reach it only through
 `ctx.cap(name)`, which returns None when it is absent.
 
-Optional modules (kernel/modules.py, `rex.modules`, default none) are capabilities too once loaded and on: they come after
+Optional modules (kernel/modules.py, `rex.modules` and default-on public ones) are capabilities too once loaded and on: they come after
 the core in every list here, so a module's verb never shadows a core one.
 """
 import importlib
