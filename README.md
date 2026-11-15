@@ -5,6 +5,11 @@
 
 **A chief of staff that runs your Claude Code workers.**
 
+> [!NOTE]
+> athena currently supports only macOS, Rex (in closed beta) and Claude Code.
+
+**[Install](#install)** · [Getting started](#getting-started) · [Features](#features) · [Requirements](#requirements) · [Read more](#read-more)
+
 Athena is one Claude Code session that's active 24/7. It remembers everything, wakes itself up when needed, and delegates all work aggressively to its sub workers. Tasks are handed down to top level Claude Code workers, which athena creates, monitors and cleans up when they're done. It makes sure they don't get stuck, answers their questions and pings you only when you're really needed.
 
 <p align="center">
@@ -14,9 +19,9 @@ Athena is one Claude Code session that's active 24/7. It remembers everything, w
 ## What athena is
 
 - **It sits on top of Rex**\
-  Rex is the terminal app athena works in. athena opens a chat of its own there, called **athena HQ**: your chief of staff.
+  athena opens a chat of its own there, called **athena HQ**: your chief of staff.
 - **You talk to HQ**\
-  Give it a Linear ticket, a question or a chore, in plain words. HQ manages every other worker.
+  Give it a Linear ticket, a question or a chore. HQ gets it done.
 - **HQ delegates**\
   Each task gets a worker: a Claude Code session with its own `/goal`, git worktree and Rex window. HQ watches it and answers its questions.
 - **HQ runs the whole ticket**\
