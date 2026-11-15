@@ -74,56 +74,29 @@ brings HQ and every worker back in their own windows, on their own conversations
 
 ## Features
 
-<table>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/never-ask.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Never ask.</strong> athena does routine steps itself: rebases, CI reruns, cleanup, restarts. Security, money, scope, merges and anything one-way still come to you, with a recommendation.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/monitors.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Slack and GitHub monitors.</strong> Once Slack is connected, athena watches your DMs and the channels you pick. It also watches CI on main, reviews on every pull request and AI reviewers' threads. Something new wakes HQ; routine noise does not.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/dashboard.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Dashboard, items and decisions.</strong> Every request becomes a named item you can follow. A low-stakes decision can take HQ's recommendation on its own if you don't object, and you can undo it.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/restore.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Restore after a Rex restart.</strong> When Rex restarts, athena brings HQ and every worker back on their own conversations. It ships with athena and is on by default.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/review.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Fresh-eyes code review.</strong> Each finished pull request is read by a reviewer that did not write it. It blocks only on real problems: bugs, missed requirements, scope creep.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/merge.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Merge preparation.</strong> HQ gets each pull request rebased, green and its threads answered, then tells you it is ready. It merges only on your go.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/rotate.svg" alt="" width="40"></td>
-    <td valign="top"><strong>HQ rotation with a handoff.</strong> When HQ's conversation grows long, it writes a handoff and starts fresh from it. The workers keep running through it.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/doctor.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Doctor repairs itself.</strong> <code>athena doctor</code> checks every part athena needs. In the background it runs on its own and restarts whatever stopped.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/report.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Workers always report.</strong> A worker that stops without filing a report is sent back to file one, and HQ hears if it still doesn't. It can't call work done unless its checks pass on its latest commit.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/guard.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Guard rails.</strong> Rules a machine can check, such as never force-pushing or pushing to main, are enforced before a command runs. Not just written in a prompt.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/menubar.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Menu bar.</strong> A knot in the menu bar shows at a glance whether athena is working, idle or needs you, and starts or quits it.</td>
-  </tr>
-  <tr>
-    <td width="56" valign="top"><img src="assets/icons/modules.svg" alt="" width="40"></td>
-    <td valign="top"><strong>Modules.</strong> Optional features you load with <code>athena modules</code> and switch on and off from the menu bar, such as keeping the Mac awake with its lid closed. You can write your own.</td>
-  </tr>
-</table>
+<img src="assets/icons/never-ask.svg" alt="" width="22" align="texttop"> **Never ask.** athena does routine steps itself: rebases, CI reruns, cleanup, restarts. Security, money, scope, merges and anything one-way still come to you, with a recommendation.
+
+<img src="assets/icons/monitors.svg" alt="" width="22" align="texttop"> **Slack and GitHub monitors.** Once Slack is connected, athena watches your DMs and the channels you pick. It also watches CI on main, reviews on every pull request and AI reviewers' threads. Something new wakes HQ; routine noise does not.
+
+<img src="assets/icons/dashboard.svg" alt="" width="22" align="texttop"> **Dashboard, items and decisions.** Every request becomes a named item you can follow. A low-stakes decision can take HQ's recommendation on its own if you don't object, and you can undo it.
+
+<img src="assets/icons/restore.svg" alt="" width="22" align="texttop"> **Restore after a Rex restart.** When Rex restarts, athena brings HQ and every worker back on their own conversations. It ships with athena and is on by default.
+
+<img src="assets/icons/review.svg" alt="" width="22" align="texttop"> **Fresh-eyes code review.** Each finished pull request is read by a reviewer that did not write it. It blocks only on real problems: bugs, missed requirements, scope creep.
+
+<img src="assets/icons/merge.svg" alt="" width="22" align="texttop"> **Merge preparation.** HQ gets each pull request rebased, green and its threads answered, then tells you it is ready. It merges only on your go.
+
+<img src="assets/icons/rotate.svg" alt="" width="22" align="texttop"> **HQ rotation with a handoff.** When HQ's conversation grows long, it writes a handoff and starts fresh from it. The workers keep running through it.
+
+<img src="assets/icons/doctor.svg" alt="" width="22" align="texttop"> **Doctor repairs itself.** `athena doctor` checks every part athena needs. In the background it runs on its own and restarts whatever stopped.
+
+<img src="assets/icons/report.svg" alt="" width="22" align="texttop"> **Workers always report.** A worker that stops without filing a report is sent back to file one, and HQ hears if it still doesn't. It can't call work done unless its checks pass on its latest commit.
+
+<img src="assets/icons/guard.svg" alt="" width="22" align="texttop"> **Guard rails.** Rules a machine can check, such as never force-pushing or pushing to main, are enforced before a command runs. Not just written in a prompt.
+
+<img src="assets/icons/menubar.svg" alt="" width="22" align="texttop"> **Menu bar.** A knot in the menu bar shows at a glance whether athena is working, idle or needs you, and starts or quits it.
+
+<img src="assets/icons/modules.svg" alt="" width="22" align="texttop"> **Modules.** Optional features you load with `athena modules` and switch on and off from the menu bar, such as keeping the Mac awake with its lid closed. You can write your own.
 
 Also in the box:
 
