@@ -53,6 +53,9 @@ def on(wait=5.0) -> dict:
         return running
     if healthz():
         raise UserError(f"port {port()} answers for another state dir; set ATHENA_DASH_PORT")
+    held = caps.get("services")
+    if held and not held.is_stopped() and held.ask_restart("dash"):  # the supervisor's own dash, never a second one beside it
+        return _answers(wait, f"the supervisor's dashboard did not answer in {wait:.0f}s; see {store.path('logs', 'service-dash.log')}")
     binary = store.ROOT / "bin" / "athena"
     log = store.ensure("logs") / "dash.log"
     with open(log, "a") as out:
@@ -70,6 +73,16 @@ def on(wait=5.0) -> dict:
             raise UserError(f"the dashboard exited at once; see {log}")
         time.sleep(0.1)
     raise UserError(f"the dashboard did not answer in {wait:.0f}s; see {log}")
+
+
+def _answers(wait, why) -> dict:
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        running = ours()
+        if running:
+            return running
+        time.sleep(0.1)
+    raise UserError(why)
 
 
 def off() -> bool:

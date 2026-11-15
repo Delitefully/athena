@@ -182,12 +182,12 @@ def checkout_commit(tree):
     return head.stdout.strip() if head.returncode == 0 and changed.returncode == 0 and not changed.stdout.strip() else None
 
 
-def installed_command(*argv, timeout=120, own_session=False):
+def installed_command(*argv, timeout=120, own_session=False, env=None):
     """The installed copy, run as itself. A copy that hangs or won't start answers as a failed run, never a traceback. In its
     own session it outlives a kill of this process's group, as launchd's restart of the job running this does."""
     try:
         return subprocess.run([str(root() / "current/bin/athena"), *argv], capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL, start_new_session=own_session)
+                              stdin=subprocess.DEVNULL, start_new_session=own_session, env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")
 
@@ -196,19 +196,43 @@ def installed_jobs() -> list:
     """athena's own launchd jobs, by label. Asked before `current` moves, and handed to restart_services: this process puts the
     `current` link on its path, so an import after the swap would load the other release's code into it."""
     services = caps.get("services")
-    return sorted(p.stem for p in services.agents_dir().glob(f"{services.PREFIX}.*.plist")) if services else []
+    return sorted(p.stem for p in services.installed_plists()) if services else []
+
+
+def has_supervisor(tree) -> bool:
+    """Whether the release in `tree` runs its services under one launchd job (`local.athena`, `athena services run`), or
+    knows only the earlier layout, one job per service."""
+    return (Path(tree) / "athena/kernel/supervisor.py").is_file()
 
 
 def restart_services(jobs) -> str:
     """athena's own launchd `jobs` onto the release `current` names, through that release's own command; nothing is imported
-    here. Last in whatever calls it, after the record is saved: run from the doctor job, the restart ends the very process
-    that asked for it, and launchd takes that job's process group with it. So the restart runs in a session of its own, and
-    goes on to the watch and the dash."""
+    here. Last in whatever calls it, after the record is saved: run from a child of the job (doctor), the restart ends the
+    very process that asked for it, and launchd takes that job's process group with it. So the restart runs in a session of
+    its own. A release without the supervisor can't run the one job: it gets back the layout it knows first."""
     if not jobs:
         return "no launchd jobs to restart"
+    services = caps.get("services")  # loaded already, by installed_jobs before `current` moved
+    if services is not None and services.LABEL in jobs and not has_supervisor(root() / "current"):
+        return _hand_back(services)
     done = installed_command("services", "restart", own_session=True)
     said = (done.stdout or done.stderr).strip()
     return said.splitlines()[-1] if said else "jobs restarted"
+
+
+def _hand_back(services) -> str:
+    """To a release that runs one launchd job per service: its own `services install` writes and loads them, carrying the
+    one job's environment, as its plists read only the caller's and their own; then the one job's file goes, and the job
+    last of all, as a caller that is its child (doctor) ends with it. An install that failed keeps the one job: its
+    supervisor runs on until the next login."""
+    env = {**os.environ, **{k: str(v) for k, v in services.written_env().items()}}
+    done = installed_command("services", "install", own_session=True, env=env)
+    lines = (done.stdout + done.stderr).strip().splitlines()
+    if done.returncode != 0:
+        return f"the jobs of {pointed()} did not install, so the one job stays: {lines[-1] if lines else done.returncode}"
+    services.plist_path().unlink(missing_ok=True)
+    services._launchctl("bootout", f"gui/{os.getuid()}/{services.LABEL}")
+    return f"back to one launchd job per service, as {pointed()} runs them"
 
 
 def exists(entry) -> bool:

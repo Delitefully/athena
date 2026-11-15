@@ -274,7 +274,7 @@ def _still_running() -> list:
 
 def _jobs_left() -> list:
     services = caps.get("services")
-    return sorted(p.name for p in services.agents_dir().glob(f"{services.PREFIX}.*.plist")) if services else []
+    return sorted(p.name for p in services.installed_plists()) if services else []
 
 
 def uninstall(dry_run=False, force=False) -> int:

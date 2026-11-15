@@ -714,6 +714,11 @@ def beat_age(now=None):
 
 
 def _start_detached():
+    """Doctor's repair. While the supervisor runs the watch, it is asked to restart its own now, never raced with a second
+    copy that would hold the lock and outlive a restart onto new code; only with none running is one started here."""
+    held = caps.get("services")
+    if held and held.ask_restart("watch"):
+        return
     log = store.ensure("logs") / "watch.log"
     binary = store.ROOT / "bin" / "athena"
     with open(log, "a") as out:
