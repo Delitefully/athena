@@ -352,7 +352,8 @@ round in five minutes.
   on a thread of its own, so a slow GitHub never holds up the loop.
 - **Beyond the workers' PRs** (`follow.py`), every two minutes on its own thread: stacked PR chains (`stack.json`,
   set with `athena stack`), retired workers' open PRs for two weeks, PRs asking the human for a review (for the
-  dashboard), failed CI on each repo's default branch (one incident per workflow, in `ci-failed.json`), main moving
+  dashboard), failed CI on each repo's default branch on our own commits (one incident per workflow, in `ci-failed.json`;
+  `is_ours` decides, and other people's commits and scheduled runs only reach the suppressed log), main moving
   (config `watch_main_moved`), and AI reviewers' threads on every followed PR.
 - **Slack** (`slack.py`), at most once a minute: new messages for the human in their DMs and watched channels, as
   `slack-new <id> <n>`, counting only what the human hasn't read. The token comes from the Keychain, through the door

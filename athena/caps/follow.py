@@ -4,7 +4,8 @@ GitHub never holds up the watch's loop; its lines go out on the next loop after 
 
 Lines, as the old athena wrote them:
     stack <owner/repo>#<n>: <before> -> <after>         a stacked PR's state, base, draft and mergeability changed
-    <repo> main ci failed <workflow> <run-id>[ (attempt <n>)]   one incident per workflow, told once (ci-failed.json)
+    <repo> main ci failed <workflow> <run-id>[ (attempt <n>)]   one incident per workflow, told once (ci-failed.json), and only for
+                                                         a run on our own commit (`is_ours`); any other goes to the suppressed log
     <repo> main ci recovered <workflow>                  routine: the incident closed
     <repo> main moved <old>..<new>                       told by config watch_main_moved: never, conflicts (default), active, always
     <w> bot threads +<n> #<pr>                           new unresolved review threads a bot started on a live worker's PR
@@ -29,6 +30,8 @@ CI_PASSED = ("success",)
 MAIN_MOVED = ("never", "conflicts", "active", "always")
 REVIEW_CAP = 10
 BOT_REMIND = 1800
+OURS_KEEP = 2000
+_SHA = re.compile(r"[0-9a-f]{7,40}")
 _SLUG = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 
@@ -130,11 +133,12 @@ def _age(created) -> float:
 
 def completed_runs(prs, slug, branch):
     rows = _gh_json(prs, "run", "list", "-R", slug, "--branch", branch, "--status", "completed", "--limit", "100", "--json",
-                    "databaseId,attempt,event,workflowName,createdAt,conclusion")
+                    "databaseId,attempt,event,headSha,workflowName,createdAt,conclusion")
     if not isinstance(rows, list):
         return None
     return [{"id": r["databaseId"], "attempt": r["attempt"] if isinstance(r.get("attempt"), int) else 1,
-             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt"), "conclusion": str(r.get("conclusion") or "").lower()}
+             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt"), "conclusion": str(r.get("conclusion") or "").lower(),
+             "event": str(r.get("event") or ""), "sha": str(r.get("headSha") or "")}
             for r in rows if isinstance(r, dict) and isinstance(r.get("databaseId"), int)
             and not str(r.get("event") or "").startswith("pull_request")]
 
@@ -182,13 +186,144 @@ def _ask_default_branch(prs, slug, entry=""):
     return ((found or {}).get("defaultBranchRef") or {}).get("name") if isinstance(found, dict) else None
 
 
+_ME = {}  # the gh user's login and verified emails, asked once; a failed ask is never kept
+_OURS = {}  # (slug, sha) -> whether that commit is ours; only a decided answer is kept
+_GONE = set()  # (slug, sha) GitHub has no such commit for: not ours, and said so in the log
+_EMAILS = set()  # the human's own commit emails: gh's verified ones and git's user.email in the followed checkouts
+
+
+def _gh_api(prs, *args, answers=()):
+    """(what `gh api` answered, whether GitHub said there is no such thing): a 404 or 422 is an answer (and any of `answers` in the
+    error), any other error is not."""
+    try:
+        return json.loads(prs.gh("api", *args) or "null"), False
+    except prs.GhError as exc:
+        return None, any(code in str(exc) for code in ("HTTP 404", "HTTP 422", "Not Found", "No commit found", *answers))
+    except ValueError:
+        return None, False
+
+
+def gh_login(prs):
+    if "login" not in _ME:
+        found = _gh_json(prs, "api", "user", "--jq", "{login: .login}")
+        login = found.get("login") if isinstance(found, dict) else None
+        if not isinstance(login, str) or not login:
+            return None
+        _ME["login"] = login
+    return _ME["login"]
+
+
+def our_emails(prs, targets) -> set:
+    """The emails the human commits as: the gh user's verified ones (asked once; a token without the scope has none) and git's
+    user.email in each followed repo's checkout, lower-cased. A push under an email GitHub links to no login is still ours."""
+    if "emails" not in _ME:
+        found, missing = _gh_api(prs, "user/emails", "--jq", "[.[] | select(.verified) | .email]", answers=("scope",))
+        if isinstance(found, list) or missing:  # a token without the user scope has no emails, and is not asked again
+            _ME["emails"] = {e.lower() for e in found or [] if isinstance(e, str)}
+    out = set(_ME.get("emails") or ())
+    for entry, _ in targets:
+        if entry.startswith("/") and os.path.isdir(entry):
+            try:
+                email = gitops.git(entry, "config", "--get", "user.email", check=False, timeout=10)
+            except Exception:
+                continue
+            if "@" in email:
+                out.add(email.strip().lower())
+    return out
+
+
+def worker_branches() -> set:
+    """Every branch an athena worker has had: the ledger's, retired workers' included, and the retired workers' history."""
+    found = {e.get("branch") for e in ledger.events()} | {e.get("branch") for e in store.read_lines(store.path("history.jsonl"))}
+    return {b for b in found if isinstance(b, str) and b}
+
+
+def is_ours(prs, slug, sha):
+    """Whether a commit on a repo's default branch is ours: the gh user authored or committed it, under their login or one of the human's
+    emails (`our_emails`), or it is the merge of a PR the gh user opened or an athena worker's branch. None when GitHub can't say, so
+    the next fetch asks again; an answer is kept per sha, and a commit GitHub has none of (404) is not ours, kept as well."""
+    if not _SHA.fullmatch(sha or ""):
+        return False
+    key = (slug.lower(), sha)
+    if key in _OURS:
+        return _OURS[key]
+    me = gh_login(prs)
+    if not me:
+        return None
+    commit, missing = _gh_api(prs, f"repos/{slug}/commits/{sha}", "--jq", "{author: .author.login, committer: .committer.login, "
+                              "author_email: .commit.author.email, committer_email: .commit.committer.email}")
+    if missing:
+        _GONE.add(key)
+        return _keep(key, False)
+    if not isinstance(commit, dict):
+        return None
+    ours = (me.lower() in {str(commit.get(k) or "").lower() for k in ("author", "committer")}
+            or bool(_EMAILS & {str(commit.get(k) or "").lower() for k in ("author_email", "committer_email")}))
+    if not ours:
+        pulls, missing = _gh_api(prs, f"repos/{slug}/commits/{sha}/pulls", "--jq",
+                                 "[.[] | {user: .user.login, branch: .head.ref, merged: .merge_commit_sha}]")
+        if missing:
+            pulls = []
+        if not isinstance(pulls, list):
+            return None
+        branches = worker_branches()
+        ours = any(isinstance(p, dict) and p.get("merged") == sha and (str(p.get("user") or "").lower() == me.lower() or p.get("branch") in branches)
+                   for p in pulls)  # only the PR this commit merged: a PR that merely contains it is not
+    return _keep(key, ours)
+
+
+def _keep(key, ours):
+    if len(_OURS) >= OURS_KEEP:
+        _OURS.clear()
+        _GONE.clear()
+    _OURS[key] = ours
+    return ours
+
+
+def run_is_ours(prs, slug, run):
+    """(ours, why not) for a failed main-CI run, or None when GitHub can't say yet. A scheduled run is never ours, a dispatched one is
+    when the gh user dispatched it, any other when its head commit is ours."""
+    if run.get("event") == "schedule":
+        return False, "not our commit: a scheduled run"
+    if run.get("event") == "workflow_dispatch":
+        me = gh_login(prs)
+        found, missing = _gh_api(prs, f"repos/{slug}/actions/runs/{run['id']}", "--jq", "{actor: .triggering_actor.login}") if me else (None, False)
+        if missing:
+            return False, "not our commit: GitHub has no such run"
+        if not isinstance(found, dict):
+            return None
+        ours = str(found.get("actor") or "").lower() == me.lower()
+        return ours, "" if ours else "not our commit: dispatched by someone else"
+    ours = is_ours(prs, slug, run.get("sha"))
+    if ours is None:
+        return None
+    if (slug.lower(), run.get("sha")) in _GONE:
+        return False, "not our commit: GitHub has no such commit"
+    return ours, "" if ours else "not our commit"
+
+
+def _opening_run(prs, slug, runs, run_id):
+    """An incident's opening run, from this fetch's runs or, aged out of them, from GitHub."""
+    for r in runs:
+        if r["id"] == run_id:
+            return r
+    found, missing = _gh_api(prs, f"repos/{slug}/actions/runs/{run_id}", "--jq", "{event: .event, sha: .head_sha}")
+    if missing:  # gone from GitHub: its commit can't be ours, so the incident closes instead of asking every fetch
+        return {"id": run_id, "event": "", "sha": ""}
+    return {"id": run_id, "event": str(found.get("event") or ""), "sha": str(found.get("sha") or "")} if isinstance(found, dict) else None
+
+
 def ci_failures(prs, targets, suppress) -> list:
     """One incident per failing workflow on each repo's default branch, as the old athena keeps them in ci-failed.json: the first
     failed run opens it and is told; more failures while it is open are counted, not told; a rerun of the opening run that fails again
-    is told with its attempt; the newest run passing closes it (`recovered`). A repo seen for the first time records, tells nothing."""
+    is told with its attempt; the newest run passing closes it (`recovered`). A repo seen for the first time records, tells nothing.
+    Only a run on our own commit counts (`run_is_ours`): any other is logged as suppressed, opens nothing, and an open incident that
+    turns out not to be ours is closed without a word, so the lights, which read ci-failed.json, drop its red."""
     from athena.caps.watch import safe_workflow
     seen = store.read_dict(_ci_file())
     lines, changed = [], False
+    _EMAILS.clear()
+    _EMAILS.update(our_emails(prs, targets) if targets else ())
     for entry, slug in targets:
         branch = _default_branch(prs, entry, slug)
         runs = completed_runs(prs, slug, branch) if branch else None
@@ -203,23 +338,45 @@ def ci_failures(prs, targets, suppress) -> list:
         for r in runs:
             newest.setdefault(safe_workflow(r["workflow"]), r)
         failed = [r for r in runs if r["conclusion"] in CI_FAILED]
-        if first:
-            seen[key] = {"runs": [f"{r['id']}.{r['attempt']}" for r in failed][:CI_KEEP],
-                         "incidents": {wf: {"run": r["id"], "opened": r.get("created"), "runs": 1}
-                                       for wf, r in newest.items() if r["conclusion"] in CI_FAILED}}
+        if first:  # told nothing; a run GitHub can't say about yet opens its incident unconfirmed, and the next fetch asks again
+            opened = {}
+            for wf, r in newest.items():
+                verdict = run_is_ours(prs, slug, r) if r["conclusion"] in CI_FAILED else (False,)
+                if verdict is None or verdict[0]:
+                    opened[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1, **({"ours": True} if verdict else {})}
+            seen[key] = {"runs": [f"{r['id']}.{r['attempt']}" for r in failed][:CI_KEEP], "incidents": opened}
             changed = True
             continue
+        for wf, open_ in list(incidents.items()):
+            if open_.get("ours"):
+                continue
+            opening = _opening_run(prs, slug, runs, open_.get("run"))
+            verdict = run_is_ours(prs, slug, opening) if opening else None
+            if verdict is None:
+                continue
+            changed = True
+            if verdict[0]:
+                open_["ours"] = True
+            else:
+                del incidents[wf]
+                suppress(f"{name} main ci failed {wf} {open_.get('run')}", f"{verdict[1]}: its open incident closed")
         for r in reversed(failed):
             run_key = f"{r['id']}.{r['attempt']}"
             if run_key in known_runs:
                 continue
-            known_runs.append(run_key)
-            changed = True
             wf = safe_workflow(r["workflow"])
             line = f"{name} main ci failed {wf} {r['id']}"
+            verdict = run_is_ours(prs, slug, r)
+            if verdict is None:  # GitHub can't say yet: the next fetch asks again
+                continue
+            known_runs.append(run_key)
+            changed = True
+            if not verdict[0]:
+                suppress(line, verdict[1])
+                continue
             open_ = incidents.get(wf)
             if open_ is None:
-                incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1}
+                incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1, "ours": True}
                 if _age(r["created"]) <= CI_FRESH:
                     lines.append(line)
             elif r["id"] == open_.get("run") and r["attempt"] > 1:

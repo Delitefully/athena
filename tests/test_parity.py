@@ -14,7 +14,7 @@ from unittest import mock
 from harness import Case, ROOT, spawn_record, store
 
 from athena.caps import hq, items
-from athena.kernel import agents, caps
+from athena.kernel import agents, caps, ledger
 
 ATHENA_WORKER_RULES = [
     "## Before DONE", "**Self-review.**", "Wait for the PR's required checks to finish",
@@ -205,11 +205,17 @@ class ItemFlags(Case):
 class Follow(Case):
     """Gaps 4 and 6: stack lines, the CI doorbell, main moved, retired workers' PRs and review requests, as the old watch told them."""
 
-    def gh(self, pr=None, runs=None, search=None, branch="main", ci=True):
-        """A stand-in for prs.gh, answering by what it is asked."""
+    def gh(self, pr=None, runs=None, search=None, branch="main", ci=True, api=None):
+        """A stand-in for prs.gh, answering by what it is asked. `api` answers `gh api <path>` by its path; each ask is in self.asked."""
         from athena.caps import prs
+        api = {"user": {"login": "me"}, **(api or {})}
 
         def answer(*args):
+            self.asked.append(args)
+            if args[:1] == ("api",) and args[1] in api:
+                if isinstance(api[args[1]], Exception):
+                    raise api[args[1]]
+                return json.dumps(api[args[1]])
             if args[:2] == ("pr", "view"):
                 return json.dumps(pr) if pr else ""
             if args[:2] == ("run", "list"):
@@ -231,9 +237,13 @@ class Follow(Case):
         self.follow = follow
         self.lines = []
         self.suppressed = []
+        self.asked = []
+        follow._ME.clear()
+        follow._OURS.clear()
 
     def fetch(self, rows=(), pr_of=None):
-        found, lines = self.follow.fetch(caps.CTX, list(rows), pr_of or {}, self.follow.known(), lambda t, w="": self.suppressed.append(t))
+        found, lines = self.follow.fetch(caps.CTX, list(rows), pr_of or {}, self.follow.known(),
+                                         lambda t, w="": self.suppressed.append(f"{t} ({w})" if w else t))
         store.write_json(store.path("run", "follow.json"), found)
         return [(line.text, line.kind) for line in lines]
 
@@ -265,16 +275,184 @@ class Follow(Case):
         self.write_config(ci_repos=["o/r"])
         now = datetime_now()
         runs = lambda *rows: json.dumps([{"databaseId": i, "attempt": a, "event": "push", "workflowName": "CI build", "createdAt": now,
-                                          "conclusion": c} for i, a, c in rows])
+                                          "conclusion": c, "headSha": f"{i:07x}"} for i, a, c in rows])
+        ours = {f"repos/o/r/commits/{i:07x}": {"author": "me", "committer": "web-flow"} for i in range(1, 5)}
         for answer, want in ((runs((1, 1, "success")), []),
                              (runs((2, 1, "failure"), (1, 1, "success")), ["r main ci failed CI-build 2"]),
                              (runs((3, 1, "failure"), (2, 1, "failure")), []),
                              (runs((2, 2, "failure"), (3, 1, "failure")), ["r main ci failed CI-build 2 (attempt 2)"]),
                              (runs((4, 1, "success"), (2, 2, "failure")), ["r main ci recovered CI-build"])):
-            with self.gh(runs=answer):
+            with self.gh(runs=answer, api=ours):
                 self.assertEqual([t for t, _ in self.fetch()], want)
         self.assertTrue(any("CI incident open since run 2" in s or "main ci failed CI-build 3" in s for s in self.suppressed))
         self.assertIn("o/r", json.loads(store.path("ci-failed.json").read_text()))
+
+    def _ci(self, *rows, api=None):
+        """One fetch of o/r's main CI: rows are (run id, event, head sha, conclusion). What it told, and ci-failed.json's incidents."""
+        self.write_config(ci_repos=["o/r"])
+        now = datetime_now()
+        answer = json.dumps([{"databaseId": i, "attempt": 1, "event": e, "workflowName": "CI build", "createdAt": now, "conclusion": c,
+                              "headSha": sha} for i, e, sha, c in rows])
+        with self.gh(runs=answer, api=api):
+            told = [t for t, _ in self.fetch()]
+        return told, json.loads(store.path("ci-failed.json").read_text())["o/r"]["incidents"]
+
+    OTHER = {"author": "someone", "committer": "web-flow"}
+
+    def test_a_scheduled_run_failing_on_main_rings_nothing_even_on_our_commit(self):
+        mine = {"repos/o/r/commits/aaaaaaa": {"author": "me", "committer": "me"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=mine)
+        told, incidents = self._ci((2, "schedule", "aaaaaaa", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertIn("r main ci failed CI-build 2 (not our commit: a scheduled run)", self.suppressed)
+
+    def test_another_persons_merge_failing_on_main_rings_nothing(self):
+        other = {"repos/o/r/commits/bbbbbbb": self.OTHER, "repos/o/r/commits/bbbbbbb/pulls": [{"user": "someone", "branch": "their-fix"}]}
+        self._ci((1, "push", "aaaaaaa", "success"), api=other)
+        told, incidents = self._ci((2, "push", "bbbbbbb", "failure"), (1, "push", "aaaaaaa", "success"), api=other)
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertIn("r main ci failed CI-build 2 (not our commit)", self.suppressed)
+
+    def test_a_run_not_ours_is_in_the_watchs_suppressed_log(self):
+        from athena.caps import watch
+        other = {"repos/o/r/commits/bbbbbbb": self.OTHER, "repos/o/r/commits/bbbbbbb/pulls": []}
+        self._ci((1, "push", "aaaaaaa", "success"), api=other)
+        answer = json.dumps([{"databaseId": 2, "attempt": 1, "event": "push", "workflowName": "CI build", "createdAt": datetime_now(),
+                              "conclusion": "failure", "headSha": "bbbbbbb"}])
+        with self.gh(runs=answer, api=other):
+            _, lines = self.follow.fetch(caps.CTX, [], {}, self.follow.known(), watch.suppress)
+        self.assertEqual(lines, [])
+        self.assertIn("r main ci failed CI-build 2 (not our commit)", store.path("logs", "watch-suppressed.log").read_text())
+
+    def test_our_authored_commit_failing_on_main_rings_with_its_rerun_and_recovery(self):
+        mine = {"repos/o/r/commits/ccccccc": {"author": "someone", "committer": "me"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=mine)
+        told, incidents = self._ci((2, "push", "ccccccc", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self.assertEqual(told, ["r main ci failed CI-build 2"])
+        self.assertEqual(incidents["CI-build"]["run"], 2)
+        self.write_config(ci_repos=["o/r"])
+        rerun = json.dumps([{"databaseId": 2, "attempt": 2, "event": "push", "workflowName": "CI build", "createdAt": datetime_now(),
+                             "conclusion": "failure", "headSha": "ccccccc"}])
+        with self.gh(runs=rerun, api=mine):
+            self.assertEqual([t for t, _ in self.fetch()], ["r main ci failed CI-build 2 (attempt 2)"])
+        told, incidents = self._ci((3, "push", "ccccccc", "success"), api=mine)
+        self.assertEqual((told, incidents), (["r main ci recovered CI-build"], {}))
+
+    def test_the_merge_of_an_athena_workers_branch_rings_retired_workers_included(self):
+        store.append_line(store.path("history.jsonl"), {"ts": time.time(), "name": "gone", "repo": "/x/r", "branch": "athena/old-fix"})
+        merged = {"repos/o/r/commits/ddddddd": self.OTHER, "repos/o/r/commits/ddddddd/pulls": [{"user": "someone", "branch": "athena/old-fix", "merged": "ddddddd"}]}
+        self._ci((1, "push", "aaaaaaa", "success"), api=merged)
+        told, incidents = self._ci((2, "push", "ddddddd", "failure"), (1, "push", "aaaaaaa", "success"), api=merged)
+        self.assertEqual(told, ["r main ci failed CI-build 2"])
+        self.assertIn("CI-build", incidents)
+
+    def test_a_live_workers_branch_merge_rings_and_a_pr_that_only_contains_the_commit_does_not(self):
+        ledger.append("spawn", "w1", repo="/x/r", branch="athena/live-fix", path="/p")
+        api = {"repos/o/r/commits/ddddddd": self.OTHER, "repos/o/r/commits/ddddddd/pulls": [{"user": "someone", "branch": "athena/live-fix",
+                                                                                             "merged": "ddddddd"}],
+               "repos/o/r/commits/bbbbbbb": self.OTHER, "repos/o/r/commits/bbbbbbb/pulls": [{"user": "me", "branch": "release",
+                                                                                             "merged": "9999999"}]}
+        self._ci((1, "push", "aaaaaaa", "success"), api=api)
+        told, _ = self._ci((2, "push", "bbbbbbb", "failure"), (1, "push", "aaaaaaa", "success"), api=api)
+        self.assertEqual(told, [])
+        told, _ = self._ci((3, "push", "ddddddd", "failure"), (2, "push", "bbbbbbb", "failure"), api=api)
+        self.assertEqual(told, ["r main ci failed CI-build 3"])
+
+    def test_a_dispatch_by_someone_else_rings_nothing_and_ours_rings(self):
+        api = {"repos/o/r/actions/runs/2": {"actor": "someone"}, "repos/o/r/actions/runs/3": {"actor": "me"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=api)
+        told, _ = self._ci((2, "workflow_dispatch", "aaaaaaa", "failure"), (1, "push", "aaaaaaa", "success"), api=api)
+        self.assertEqual(told, [])
+        told, _ = self._ci((3, "workflow_dispatch", "aaaaaaa", "failure"), (2, "workflow_dispatch", "aaaaaaa", "failure"), api=api)
+        self.assertEqual(told, ["r main ci failed CI-build 3"])
+
+    def test_a_sha_asked_about_once_is_not_asked_again(self):
+        mine = {"repos/o/r/commits/eeeeeee": {"author": "me", "committer": "me"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=mine)
+        self._ci((2, "push", "eeeeeee", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self._ci((3, "push", "eeeeeee", "failure"), (2, "push", "eeeeeee", "failure"), api=mine)
+        commits = [a for a in self.asked if a[:2] == ("api", "repos/o/r/commits/eeeeeee")]
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "user")]), 1)
+
+    def test_a_repo_seen_first_while_github_cant_say_keeps_its_failure_red_and_asks_again(self):
+        self.write_config(ci_repos=["o/r"])
+        told, incidents = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"))
+        self.assertEqual(told, [], "a repo seen for the first time tells nothing")
+        self.assertEqual(incidents["CI-build"]["run"], 2, "but the lights stay red until GitHub says")
+        self.assertNotIn("ours", incidents["CI-build"])
+        mine = {"repos/o/r/commits/fffffff": {"author": None, "committer": None}, "repos/o/r/commits/fffffff/pulls": []}
+        told, incidents = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self.assertEqual(incidents, {}, "asked again, and not ours: it closes")
+        self._ci((3, "push", "aaaaaaa", "failure"), api={})
+        mine = {"repos/o/r/commits/aaaaaaa": {"author": "me"}}
+        told, incidents = self._ci((3, "push", "aaaaaaa", "failure"), api=mine)
+        self.assertEqual(told, ["r main ci failed CI-build 3"])
+
+    def test_a_first_sight_failure_that_is_ours_opens_confirmed(self):
+        mine = {"repos/o/r/commits/aaaaaaa": {"author": "me"}}
+        told, incidents = self._ci((2, "push", "aaaaaaa", "failure"), api=mine)
+        self.assertEqual((told, incidents["CI-build"]["ours"]), ([], True))
+
+    def test_a_push_under_one_of_the_humans_emails_with_no_linked_login_is_ours(self):
+        api = {"user/emails": ["Me@Example.com", "other@example.com"],
+               "repos/o/r/commits/abcdef1": {"author": None, "committer": None, "author_email": "me@example.com",
+                                             "committer_email": "me@example.com"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=api)
+        told, _ = self._ci((2, "push", "abcdef1", "failure"), (1, "push", "aaaaaaa", "success"), api=api)
+        self.assertEqual(told, ["r main ci failed CI-build 2"])
+
+    def test_git_user_email_in_a_followed_checkout_counts_as_the_humans(self):
+        from athena.caps import prs
+        from harness import git
+        repo = self.repo()
+        git(repo, "config", "user.email", "git@delite.dev")
+        with self.gh(api={"user/emails": prs.GhError('gh: This API operation needs the "user" scope.')}):
+            self.assertIn("git@delite.dev", self.follow.our_emails(prs, [(str(repo), "o/r"), ("o/x", "o/x")]))
+            self.follow.our_emails(prs, [])
+        self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "user/emails")]), 1, "a 404 is an answer, asked once")
+
+    def test_a_commit_github_has_none_of_is_not_ours_and_not_asked_again(self):
+        from athena.caps import prs
+        gone = {"repos/o/r/commits/0badbad": prs.GhError("gh: No commit found for SHA: 0badbad (HTTP 422)")}
+        self._ci((1, "push", "aaaaaaa", "success"), api=gone)
+        told, incidents = self._ci((2, "push", "0badbad", "failure"), (1, "push", "aaaaaaa", "success"), api=gone)
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertIn("r main ci failed CI-build 2 (not our commit: GitHub has no such commit)", self.suppressed)
+        self._ci((3, "push", "0badbad", "failure"), (2, "push", "0badbad", "failure"), api=gone)
+        self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "repos/o/r/commits/0badbad")]), 1)
+
+    def test_an_open_incident_whose_run_is_gone_from_github_closes(self):
+        from athena.caps import prs
+        store.write_json(store.path("ci-failed.json"), {"o/r": {"runs": ["9.1"], "incidents": {
+            "Old": {"run": 9, "opened": "2026-11-14T00:00:00Z", "runs": 1}}}})
+        told, incidents = self._ci((1, "push", "aaaaaaa", "success"), api={"repos/o/r/actions/runs/9": prs.GhError("HTTP 404: Not Found")})
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertTrue(any("main ci failed Old 9 (not our commit" in s for s in self.suppressed))
+
+    def test_github_unable_to_say_records_nothing_and_the_next_fetch_asks_again(self):
+        self._ci((1, "push", "aaaaaaa", "success"))
+        told, incidents = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"))
+        self.assertEqual((told, incidents), ([], {}))
+        mine = {"repos/o/r/commits/fffffff": {"author": "me", "committer": "me"}}
+        told, _ = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self.assertEqual(told, ["r main ci failed CI-build 2"])
+
+    def test_an_open_incident_that_is_not_ours_closes_on_the_next_fetch(self):
+        store.write_json(store.path("ci-failed.json"), {"o/r": {"runs": ["9.1", "7.1"], "incidents": {
+            "Dependabot-triage": {"run": 9, "opened": "2026-11-14T00:00:00Z", "runs": 3},
+            "CI-build": {"run": 7, "opened": "2026-11-14T00:00:00Z", "runs": 1}}}})
+        api = {"repos/o/r/actions/runs/9": {"event": "schedule", "sha": "aaaaaaa"},
+               "repos/o/r/commits/1234567": {"author": "me", "committer": "me"}}
+        self.write_config(ci_repos=["o/r"])
+        answer = json.dumps([{"databaseId": 7, "attempt": 1, "event": "push", "workflowName": "CI build", "createdAt": datetime_now(),
+                              "conclusion": "failure", "headSha": "1234567"}])
+        with self.gh(runs=answer, api=api):
+            self.assertEqual(self.fetch(), [])
+        incidents = json.loads(store.path("ci-failed.json").read_text())["o/r"]["incidents"]
+        self.assertEqual(sorted(incidents), ["CI-build"])
+        self.assertTrue(incidents["CI-build"]["ours"])
+        self.assertIn("r main ci failed Dependabot-triage 9 (not our commit: a scheduled run: its open incident closed)", self.suppressed)
 
     def test_main_moved_is_quiet_by_default_and_told_under_always(self):
         repo = self.repo()
