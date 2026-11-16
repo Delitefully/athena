@@ -220,11 +220,12 @@ def is_ours(prs, slug, sha):
         return None
     ours = me.lower() in {str(commit.get(k) or "").lower() for k in ("author", "committer")}
     if not ours:
-        pulls = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}/pulls", "--jq", "[.[] | {user: .user.login, branch: .head.ref}]")
+        pulls = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}/pulls", "--jq", "[.[] | {user: .user.login, branch: .head.ref, merged: .merge_commit_sha}]")
         if not isinstance(pulls, list):
             return None
         branches = worker_branches()
-        ours = any(isinstance(p, dict) and (str(p.get("user") or "").lower() == me.lower() or p.get("branch") in branches) for p in pulls)
+        ours = any(isinstance(p, dict) and p.get("merged") == sha and (str(p.get("user") or "").lower() == me.lower() or p.get("branch") in branches)
+                   for p in pulls)  # only the PR this commit merged: a PR that merely contains it is not
     if len(_OURS) >= OURS_KEEP:
         _OURS.clear()
     _OURS[key] = ours

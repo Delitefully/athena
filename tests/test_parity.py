@@ -14,7 +14,7 @@ from unittest import mock
 from harness import Case, ROOT, spawn_record, store
 
 from athena.caps import hq, items
-from athena.kernel import agents, caps
+from athena.kernel import agents, caps, ledger
 
 ATHENA_WORKER_RULES = [
     "## Before DONE", "**Self-review.**", "Wait for the PR's required checks to finish",
@@ -338,11 +338,23 @@ class Follow(Case):
 
     def test_the_merge_of_an_athena_workers_branch_rings_retired_workers_included(self):
         store.append_line(store.path("history.jsonl"), {"ts": time.time(), "name": "gone", "repo": "/x/r", "branch": "athena/old-fix"})
-        merged = {"repos/o/r/commits/ddddddd": self.OTHER, "repos/o/r/commits/ddddddd/pulls": [{"user": "someone", "branch": "athena/old-fix"}]}
+        merged = {"repos/o/r/commits/ddddddd": self.OTHER, "repos/o/r/commits/ddddddd/pulls": [{"user": "someone", "branch": "athena/old-fix", "merged": "ddddddd"}]}
         self._ci((1, "push", "aaaaaaa", "success"), api=merged)
         told, incidents = self._ci((2, "push", "ddddddd", "failure"), (1, "push", "aaaaaaa", "success"), api=merged)
         self.assertEqual(told, ["r main ci failed CI-build 2"])
         self.assertIn("CI-build", incidents)
+
+    def test_a_live_workers_branch_merge_rings_and_a_pr_that_only_contains_the_commit_does_not(self):
+        ledger.append("spawn", "w1", repo="/x/r", branch="athena/live-fix", path="/p")
+        api = {"repos/o/r/commits/ddddddd": self.OTHER, "repos/o/r/commits/ddddddd/pulls": [{"user": "someone", "branch": "athena/live-fix",
+                                                                                             "merged": "ddddddd"}],
+               "repos/o/r/commits/bbbbbbb": self.OTHER, "repos/o/r/commits/bbbbbbb/pulls": [{"user": "me", "branch": "release",
+                                                                                             "merged": "9999999"}]}
+        self._ci((1, "push", "aaaaaaa", "success"), api=api)
+        told, _ = self._ci((2, "push", "bbbbbbb", "failure"), (1, "push", "aaaaaaa", "success"), api=api)
+        self.assertEqual(told, [])
+        told, _ = self._ci((3, "push", "ddddddd", "failure"), (2, "push", "bbbbbbb", "failure"), api=api)
+        self.assertEqual(told, ["r main ci failed CI-build 3"])
 
     def test_a_dispatch_by_someone_else_rings_nothing_and_ours_rings(self):
         api = {"repos/o/r/actions/runs/2": {"actor": "someone"}, "repos/o/r/actions/runs/3": {"actor": "me"}}
