@@ -4,7 +4,8 @@ GitHub never holds up the watch's loop; its lines go out on the next loop after 
 
 Lines, as the old athena wrote them:
     stack <owner/repo>#<n>: <before> -> <after>         a stacked PR's state, base, draft and mergeability changed
-    <repo> main ci failed <workflow> <run-id>[ (attempt <n>)]   one incident per workflow, told once (ci-failed.json)
+    <repo> main ci failed <workflow> <run-id>[ (attempt <n>)]   one incident per workflow, told once (ci-failed.json), and only for
+                                                         a run on our own commit (`is_ours`); any other goes to the suppressed log
     <repo> main ci recovered <workflow>                  routine: the incident closed
     <repo> main moved <old>..<new>                       told by config watch_main_moved: never, conflicts (default), active, always
     <w> bot threads +<n> #<pr>                           new unresolved review threads a bot started on a live worker's PR
@@ -29,6 +30,8 @@ CI_PASSED = ("success",)
 MAIN_MOVED = ("never", "conflicts", "active", "always")
 REVIEW_CAP = 10
 BOT_REMIND = 1800
+OURS_KEEP = 2000
+_SHA = re.compile(r"[0-9a-f]{7,40}")
 _SLUG = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
 _PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 
@@ -130,11 +133,12 @@ def _age(created) -> float:
 
 def completed_runs(prs, slug, branch):
     rows = _gh_json(prs, "run", "list", "-R", slug, "--branch", branch, "--status", "completed", "--limit", "100", "--json",
-                    "databaseId,attempt,event,workflowName,createdAt,conclusion")
+                    "databaseId,attempt,event,headSha,workflowName,createdAt,conclusion")
     if not isinstance(rows, list):
         return None
     return [{"id": r["databaseId"], "attempt": r["attempt"] if isinstance(r.get("attempt"), int) else 1,
-             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt"), "conclusion": str(r.get("conclusion") or "").lower()}
+             "workflow": str(r.get("workflowName") or ""), "created": r.get("createdAt"), "conclusion": str(r.get("conclusion") or "").lower(),
+             "event": str(r.get("event") or ""), "sha": str(r.get("headSha") or "")}
             for r in rows if isinstance(r, dict) and isinstance(r.get("databaseId"), int)
             and not str(r.get("event") or "").startswith("pull_request")]
 
@@ -182,10 +186,82 @@ def _ask_default_branch(prs, slug, entry=""):
     return ((found or {}).get("defaultBranchRef") or {}).get("name") if isinstance(found, dict) else None
 
 
+_ME = {}  # the gh user's login, asked once; a failed ask is never kept
+_OURS = {}  # (slug, sha) -> whether that commit is ours; only a decided answer is kept
+
+
+def gh_login(prs):
+    if "login" not in _ME:
+        found = _gh_json(prs, "api", "user", "--jq", "{login: .login}")
+        login = found.get("login") if isinstance(found, dict) else None
+        if not isinstance(login, str) or not login:
+            return None
+        _ME["login"] = login
+    return _ME["login"]
+
+
+def worker_branches() -> set:
+    """Every branch an athena worker has had: the ledger's, retired workers' included, and the retired workers' history."""
+    found = {e.get("branch") for e in ledger.events()} | {e.get("branch") for e in store.read_lines(store.path("history.jsonl"))}
+    return {b for b in found if isinstance(b, str) and b}
+
+
+def is_ours(prs, slug, sha):
+    """Whether a commit on a repo's default branch is ours: the gh user authored or committed it, or it is the merge of a PR the gh user
+    opened or an athena worker's branch. None when GitHub can't say, so the next fetch asks again; an answer is kept per sha."""
+    if not _SHA.fullmatch(sha or ""):
+        return False
+    key = (slug.lower(), sha)
+    if key in _OURS:
+        return _OURS[key]
+    me = gh_login(prs)
+    commit = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}", "--jq", "{author: .author.login, committer: .committer.login}") if me else None
+    if not isinstance(commit, dict):
+        return None
+    ours = me.lower() in {str(commit.get(k) or "").lower() for k in ("author", "committer")}
+    if not ours:
+        pulls = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}/pulls", "--jq", "[.[] | {user: .user.login, branch: .head.ref}]")
+        if not isinstance(pulls, list):
+            return None
+        branches = worker_branches()
+        ours = any(isinstance(p, dict) and (str(p.get("user") or "").lower() == me.lower() or p.get("branch") in branches) for p in pulls)
+    if len(_OURS) >= OURS_KEEP:
+        _OURS.clear()
+    _OURS[key] = ours
+    return ours
+
+
+def run_is_ours(prs, slug, run):
+    """(ours, why not) for a failed main-CI run, or None when GitHub can't say yet. A scheduled run is never ours, a dispatched one is
+    when the gh user dispatched it, any other when its head commit is ours."""
+    if run.get("event") == "schedule":
+        return False, "not our commit: a scheduled run"
+    if run.get("event") == "workflow_dispatch":
+        me = gh_login(prs)
+        found = _gh_json(prs, "api", f"repos/{slug}/actions/runs/{run['id']}", "--jq", "{actor: .triggering_actor.login}") if me else None
+        if not isinstance(found, dict):
+            return None
+        ours = str(found.get("actor") or "").lower() == me.lower()
+        return ours, "" if ours else "not our commit: dispatched by someone else"
+    ours = is_ours(prs, slug, run.get("sha"))
+    return None if ours is None else (ours, "" if ours else "not our commit")
+
+
+def _opening_run(prs, slug, runs, run_id):
+    """An incident's opening run, from this fetch's runs or, aged out of them, from GitHub."""
+    for r in runs:
+        if r["id"] == run_id:
+            return r
+    found = _gh_json(prs, "api", f"repos/{slug}/actions/runs/{run_id}", "--jq", "{event: .event, sha: .head_sha}")
+    return {"id": run_id, "event": str(found.get("event") or ""), "sha": str(found.get("sha") or "")} if isinstance(found, dict) else None
+
+
 def ci_failures(prs, targets, suppress) -> list:
     """One incident per failing workflow on each repo's default branch, as the old athena keeps them in ci-failed.json: the first
     failed run opens it and is told; more failures while it is open are counted, not told; a rerun of the opening run that fails again
-    is told with its attempt; the newest run passing closes it (`recovered`). A repo seen for the first time records, tells nothing."""
+    is told with its attempt; the newest run passing closes it (`recovered`). A repo seen for the first time records, tells nothing.
+    Only a run on our own commit counts (`run_is_ours`): any other is logged as suppressed, opens nothing, and an open incident that
+    turns out not to be ours is closed without a word, so the lights, which read ci-failed.json, drop its red."""
     from athena.caps.watch import safe_workflow
     seen = store.read_dict(_ci_file())
     lines, changed = [], False
@@ -205,21 +281,41 @@ def ci_failures(prs, targets, suppress) -> list:
         failed = [r for r in runs if r["conclusion"] in CI_FAILED]
         if first:
             seen[key] = {"runs": [f"{r['id']}.{r['attempt']}" for r in failed][:CI_KEEP],
-                         "incidents": {wf: {"run": r["id"], "opened": r.get("created"), "runs": 1}
-                                       for wf, r in newest.items() if r["conclusion"] in CI_FAILED}}
+                         "incidents": {wf: {"run": r["id"], "opened": r.get("created"), "runs": 1, "ours": True}
+                                       for wf, r in newest.items() if r["conclusion"] in CI_FAILED
+                                       and (run_is_ours(prs, slug, r) or (False,))[0]}}
             changed = True
             continue
+        for wf, open_ in list(incidents.items()):
+            if open_.get("ours"):
+                continue
+            opening = _opening_run(prs, slug, runs, open_.get("run"))
+            verdict = run_is_ours(prs, slug, opening) if opening else None
+            if verdict is None:
+                continue
+            changed = True
+            if verdict[0]:
+                open_["ours"] = True
+            else:
+                del incidents[wf]
+                suppress(f"{name} main ci failed {wf} {open_.get('run')}", f"{verdict[1]}: its open incident closed")
         for r in reversed(failed):
             run_key = f"{r['id']}.{r['attempt']}"
             if run_key in known_runs:
                 continue
-            known_runs.append(run_key)
-            changed = True
             wf = safe_workflow(r["workflow"])
             line = f"{name} main ci failed {wf} {r['id']}"
+            verdict = run_is_ours(prs, slug, r)
+            if verdict is None:  # GitHub can't say yet: the next fetch asks again
+                continue
+            known_runs.append(run_key)
+            changed = True
+            if not verdict[0]:
+                suppress(line, verdict[1])
+                continue
             open_ = incidents.get(wf)
             if open_ is None:
-                incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1}
+                incidents[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1, "ours": True}
                 if _age(r["created"]) <= CI_FRESH:
                     lines.append(line)
             elif r["id"] == open_.get("run") and r["attempt"] > 1:

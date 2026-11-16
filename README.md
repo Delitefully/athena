@@ -83,7 +83,7 @@ brings HQ and every worker back in their own windows, on their own conversations
 athena does routine steps itself: rebases, CI reruns, cleanup, restarts. Security, money, scope, merges and anything one-way still come to you, with a recommendation.
 
 <img src="assets/icons/monitors.svg" alt="" width="22" align="texttop"> **Slack and GitHub monitors**\
-Once Slack is connected, athena watches your DMs and the channels you pick. It also watches CI on main, reviews on every pull request and AI reviewers' threads. Something new wakes HQ; routine noise does not.
+Once Slack is connected, athena watches your DMs and the channels you pick. It also watches CI on main for failures on your own commits, reviews on every pull request and AI reviewers' threads. Something new wakes HQ; routine noise does not.
 
 <img src="assets/icons/dashboard.svg" alt="" width="22" align="texttop"> **Dashboard, items and decisions**\
 Every request becomes a named item you can follow. A low-stakes decision can take HQ's recommendation on its own if you don't object, and you can undo it.

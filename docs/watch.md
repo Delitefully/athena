@@ -1,9 +1,9 @@
 # The watch
 
 `athena watch` is the long-running loop that turns state changes into lines and wakes HQ for the ones that matter
-(`athena/caps/watch.py`; HQ's side is the line table in `plugin/skills/athena/SKILL.md` §3). This page covers three things:
-acting when the human closes a worker's window in Rex, the AI reviewers' threads on followed PRs, and how the Slack doorbell reads a
-conversation.
+(`athena/caps/watch.py`; HQ's side is the line table in `plugin/skills/athena/SKILL.md` §3). This page covers four things:
+acting when the human closes a worker's window in Rex, the AI reviewers' threads on followed PRs, the CI doorbell on main, and how
+the Slack doorbell reads a conversation.
 
 ## A worker's window closed in Rex
 
@@ -79,6 +79,19 @@ Lines, as wakes:
 
 Each line carries the new thread ids as its key, so two new threads within ten minutes both ring. A bot's top-level comment or review
 body alone is still not sent: the quiet line `<w> bot comments #<n>` goes to `logs/watch-suppressed.log` with its reason.
+
+## The CI doorbell on main: only our own commits
+
+`<repo> main ci failed <workflow> <run-id>` covers the repos with a live worker plus config `ci_repos`
+(`athena/caps/follow.py`), and it counts a failed run on a repo's default branch only when the run is ours (`is_ours`). That means
+the run's head commit was authored or committed by the human's GitHub account (`gh api user`), or it is the merge of a PR that
+account opened or that came from an athena worker's branch (any branch in the ledger or in retired workers' history). A scheduled
+run is never ours, and a dispatched run is ours only when that account dispatched it. Everything else, other people's merges and
+pushes included, opens no incident in `ci-failed.json`, does not turn the lights red (they read those incidents), and goes to
+`logs/watch-suppressed.log` with the reason `not our commit`. An incident already open for a run that is not ours is closed on the
+next fetch, without a `recovered` line. Each commit is asked about once, and the answer is kept for that sha. When GitHub can't
+say, nothing is recorded and the next fetch asks again. There is no setting to watch every failure on main again: that was the old
+default, removed as a bad one.
 
 ## How the Slack doorbell reads a conversation
 
