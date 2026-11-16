@@ -516,9 +516,30 @@ def wake_text(lines, at=None) -> str:
     return f"athena watch {at or time.strftime('%H:%M')}: " + " · ".join(shown)
 
 
-def wake_hq(ctx, lines, wait_box=0.0) -> bool:
+_DM = re.compile(f"^{_SLACK}$")
+
+
+def hold(lines) -> list:
+    """Lines a wake could not be typed for, held from this loop on: each is logged once as held, and a DM's or group DM's `slack-new`
+    is urgent, so it goes into HQ's inbox at once, for HQ to see mid-turn. Returns the texts put in the inbox, which the wake that
+    types them later leaves out of it."""
+    inboxed = []
+    for line in lines:
+        suppress(line.text, "HQ busy, held")
+        found = _DM.match(line.text)
+        if found and found[3]:
+            try:
+                store.append_line(_inbox(), {"ts": time.time(), "line": line.text})
+                inboxed.append(line.text)
+            except OSError as exc:
+                suppress(line.text, f"not in the inbox: {exc}")
+    return inboxed
+
+
+def wake_hq(ctx, lines, wait_box=0.0, inboxed=()) -> bool:
     """Type the wake into HQ only when it is idle, never mid-turn, and its box is empty; False keeps the lines for next time. The lines
-    were rebuilt from the allowlist (`safe`) where they were made, as the old athena's mod rebuilt them."""
+    were rebuilt from the allowlist (`safe`) where they were made, as the old athena's mod rebuilt them. A line `hold` already put in
+    the inbox is typed but not put there again."""
     hq = store.read_dict(store.path("hq.json"))
     if not hq.get("block"):
         return False
@@ -529,7 +550,11 @@ def wake_hq(ctx, lines, wait_box=0.0) -> bool:
         agents.send(ctx.backend, record, wake_text(lines), wait_box=wait_box)
     except Exception:
         return False
+    inboxed = list(inboxed)
     for line in lines:
+        if line.text in inboxed:
+            inboxed.remove(line.text)
+            continue
         try:
             store.append_line(_inbox(), {"ts": time.time(), "line": line.text})
         except OSError as exc:
@@ -649,6 +674,7 @@ def _loop(ctx, args):
     dedupe = Dedupe(state.get("told"))
     offset = int(state.get("offset") if "offset" in state else bus.end())
     held = [Line(**line) for line in state.get("held") or []]
+    inboxed = [t for t in state.get("inboxed") or [] if isinstance(t, str)]
     closes = Closes(ctx.backend)
     with store.locked("locks/watch.lock", blocking=False) as got, _following(closes, got and not args.once):
         if not got:
@@ -672,13 +698,16 @@ def _loop(ctx, args):
             for line in told:
                 _emit(line, args.tagged)
             if args.wake:
-                held += [line for line in told if line.kind == "wake"]
-                if held and wake_hq(ctx, held):
-                    held = []
+                new = [line for line in told if line.kind == "wake"]
+                held += new
+                if held and wake_hq(ctx, held, inboxed=inboxed):
+                    held, inboxed = [], []
+                elif new:
+                    inboxed += hold(new)
             prev = cur
             _remember(store.path("run", "watch-state.json"), {
                 "offset": offset, "told": dedupe.told, "snapshot": cur, "beat": time.time(), "pid": os.getpid(),
-                "held": [line._asdict() for line in held]})
+                "held": [line._asdict() for line in held], "inboxed": inboxed})
             closes.told()
             if args.once:
                 return 0

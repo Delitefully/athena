@@ -544,6 +544,41 @@ class Inbox(Case):
             self.assertFalse(watch.wake_hq(caps.CTX, [watch.Line("x", "wake")]))
         self.assertEqual(watch.read_inbox(), [])
 
+    def _loop(self, told, hq_state):
+        """One pass of the watch with --wake: `told` is what the step found, HQ in `hq_state`. What was typed into HQ."""
+        store.write_json(store.path("hq.json"), {"space": "s", "block": "b"})
+        with mock.patch.object(watch, "step", return_value=({}, 0, told)), \
+                mock.patch.object(agents, "state", return_value={"state": hq_state}), mock.patch.object(agents, "send") as typed:
+            watch.run(mock.Mock(once=True, tagged=True, wake=True, interval=0))
+        return [c.args[2] for c in typed.call_args_list]
+
+    def _held_log(self) -> list:
+        log = store.path("logs", "watch-suppressed.log")
+        return [line for line in (log.read_text().splitlines() if log.exists() else []) if line.endswith("(HQ busy, held)")]
+
+    def test_a_line_held_while_hq_is_busy_is_logged_once(self):
+        self.assertEqual(self._loop([watch.Line("w1 report DONE", "wake")], "working"), [])
+        self.assertEqual(self._loop([], "working"), [])
+        self.assertEqual(len(self._held_log()), 1)
+        self.assertIn("w1 report DONE (HQ busy, held)", self._held_log()[0])
+        self.assertEqual(watch.read_inbox(), [], "an ordinary held line waits for the wake")
+        typed = self._loop([], "idle")
+        self.assertEqual(len(typed), 1)
+        self.assertIn("w1 report DONE", typed[0])
+        self.assertEqual(watch.read_inbox(), ["w1 report DONE"])
+
+    def test_a_held_dm_goes_into_the_inbox_at_once_and_is_typed_later_without_a_second_entry(self):
+        dm = "slack-new D0CEPR8CFN3 1 dm thread 1794799536.166879"
+        channel = "slack-new C0123456 2"
+        self._loop([watch.Line(dm, "wake"), watch.Line(channel, "wake")], "working")
+        self.assertEqual(watch.read_inbox(), [dm], "HQ sees the DM mid-turn; a channel waits")
+        self.assertEqual(len(self._held_log()), 2)
+        typed = self._loop([], "idle")
+        self.assertEqual(len(typed), 1)
+        self.assertIn(dm, typed[0])
+        self.assertEqual(watch.read_inbox(), [channel])
+        self.assertEqual(store.read_json(store.path("run", "watch-state.json"))["inboxed"], [])
+
     def test_the_command_prints_them_with_a_word_on_what_they_are(self):
         store.append_line(store.path("run", "inbox.jsonl"), {"ts": 1, "line": "w report DONE"})
         done = self.cli("watch", "--inbox")

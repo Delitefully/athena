@@ -1,9 +1,9 @@
 # The watch
 
 `athena watch` is the long-running loop that turns state changes into lines and wakes HQ for the ones that matter
-(`athena/caps/watch.py`; HQ's side is the line table in `plugin/skills/athena/SKILL.md` §3). This page covers four things:
-acting when the human closes a worker's window in Rex, the AI reviewers' threads on followed PRs, the CI doorbell on main, and how
-the Slack doorbell reads a conversation.
+(`athena/caps/watch.py`; HQ's side is the line table in `plugin/skills/athena/SKILL.md` §3). This page covers
+acting when the human closes a worker's window in Rex, the AI reviewers' threads on followed PRs, the CI doorbell on main, lines
+held while HQ is busy, and how the Slack doorbell reads a conversation.
 
 ## A worker's window closed in Rex
 
@@ -92,6 +92,13 @@ pushes included, opens no incident in `ci-failed.json`, does not turn the lights
 next fetch, without a `recovered` line. Each commit is asked about once, and the answer is kept for that sha. When GitHub can't
 say, nothing is recorded and the next fetch asks again. There is no setting to watch every failure on main again: that was the old
 default, removed as a bad one.
+
+## When HQ is busy
+
+A wake is typed into HQ only when it is idle with an empty input box. Until then its lines are held, in `run/watch-state.json`,
+across restarts too, and each held line is logged once to `logs/watch-suppressed.log` as `HQ busy, held`. A held `slack-new` for a
+DM or group DM is urgent: it goes into HQ's inbox (`athena watch --inbox`) at once, so HQ can see it mid-turn. It is still typed
+when HQ goes idle, and not written to the inbox a second time.
 
 ## How the Slack doorbell reads a conversation
 
