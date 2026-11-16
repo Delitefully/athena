@@ -84,13 +84,16 @@ body alone is still not sent: the quiet line `<w> bot comments #<n>` goes to `lo
 
 `<repo> main ci failed <workflow> <run-id>` covers the repos with a live worker plus config `ci_repos`
 (`athena/caps/follow.py`), and it counts a failed run on a repo's default branch only when the run is ours (`is_ours`). That means
-the run's head commit was authored or committed by the human's GitHub account (`gh api user`), or it is the merge of a PR that
+the run's head commit was authored or committed by the human's GitHub account (`gh api user`) or under one of their emails (the
+account's verified emails, and git's `user.email` in each followed checkout, so a push under an email GitHub links to no login
+counts), or it is the merge of a PR that
 account opened or that came from an athena worker's branch (any branch in the ledger or in retired workers' history). A scheduled
 run is never ours, and a dispatched run is ours only when that account dispatched it. Everything else, other people's merges and
 pushes included, opens no incident in `ci-failed.json`, does not turn the lights red (they read those incidents), and goes to
 `logs/watch-suppressed.log` with the reason `not our commit`. An incident already open for a run that is not ours is closed on the
 next fetch, without a `recovered` line. Each commit is asked about once, and the answer is kept for that sha. When GitHub can't
-say, nothing is recorded and the next fetch asks again. There is no setting to watch every failure on main again: that was the old
+say, nothing is recorded and the next fetch asks again. On a repo's first sight, the failure's incident opens unconfirmed, so it
+stays red until GitHub says. A commit or run GitHub has none of (404) is not ours, and is logged once. There is no setting to watch every failure on main again: that was the old
 default, removed as a bad one.
 
 ## When HQ is busy

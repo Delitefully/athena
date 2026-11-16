@@ -186,8 +186,21 @@ def _ask_default_branch(prs, slug, entry=""):
     return ((found or {}).get("defaultBranchRef") or {}).get("name") if isinstance(found, dict) else None
 
 
-_ME = {}  # the gh user's login, asked once; a failed ask is never kept
+_ME = {}  # the gh user's login and verified emails, asked once; a failed ask is never kept
 _OURS = {}  # (slug, sha) -> whether that commit is ours; only a decided answer is kept
+_GONE = set()  # (slug, sha) GitHub has no such commit for: not ours, and said so in the log
+_EMAILS = set()  # the human's own commit emails: gh's verified ones and git's user.email in the followed checkouts
+
+
+def _gh_api(prs, *args, answers=()):
+    """(what `gh api` answered, whether GitHub said there is no such thing): a 404 or 422 is an answer (and any of `answers` in the
+    error), any other error is not."""
+    try:
+        return json.loads(prs.gh("api", *args) or "null"), False
+    except prs.GhError as exc:
+        return None, any(code in str(exc) for code in ("HTTP 404", "HTTP 422", "Not Found", "No commit found", *answers))
+    except ValueError:
+        return None, False
 
 
 def gh_login(prs):
@@ -200,6 +213,25 @@ def gh_login(prs):
     return _ME["login"]
 
 
+def our_emails(prs, targets) -> set:
+    """The emails the human commits as: the gh user's verified ones (asked once; a token without the scope has none) and git's
+    user.email in each followed repo's checkout, lower-cased. A push under an email GitHub links to no login is still ours."""
+    if "emails" not in _ME:
+        found, missing = _gh_api(prs, "user/emails", "--jq", "[.[] | select(.verified) | .email]", answers=("scope",))
+        if isinstance(found, list) or missing:  # a token without the user scope has no emails, and is not asked again
+            _ME["emails"] = {e.lower() for e in found or [] if isinstance(e, str)}
+    out = set(_ME.get("emails") or ())
+    for entry, _ in targets:
+        if entry.startswith("/") and os.path.isdir(entry):
+            try:
+                email = gitops.git(entry, "config", "--get", "user.email", check=False, timeout=10)
+            except Exception:
+                continue
+            if "@" in email:
+                out.add(email.strip().lower())
+    return out
+
+
 def worker_branches() -> set:
     """Every branch an athena worker has had: the ledger's, retired workers' included, and the retired workers' history."""
     found = {e.get("branch") for e in ledger.events()} | {e.get("branch") for e in store.read_lines(store.path("history.jsonl"))}
@@ -207,27 +239,43 @@ def worker_branches() -> set:
 
 
 def is_ours(prs, slug, sha):
-    """Whether a commit on a repo's default branch is ours: the gh user authored or committed it, or it is the merge of a PR the gh user
-    opened or an athena worker's branch. None when GitHub can't say, so the next fetch asks again; an answer is kept per sha."""
+    """Whether a commit on a repo's default branch is ours: the gh user authored or committed it, under their login or one of the human's
+    emails (`our_emails`), or it is the merge of a PR the gh user opened or an athena worker's branch. None when GitHub can't say, so
+    the next fetch asks again; an answer is kept per sha, and a commit GitHub has none of (404) is not ours, kept as well."""
     if not _SHA.fullmatch(sha or ""):
         return False
     key = (slug.lower(), sha)
     if key in _OURS:
         return _OURS[key]
     me = gh_login(prs)
-    commit = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}", "--jq", "{author: .author.login, committer: .committer.login}") if me else None
+    if not me:
+        return None
+    commit, missing = _gh_api(prs, f"repos/{slug}/commits/{sha}", "--jq", "{author: .author.login, committer: .committer.login, "
+                              "author_email: .commit.author.email, committer_email: .commit.committer.email}")
+    if missing:
+        _GONE.add(key)
+        return _keep(key, False)
     if not isinstance(commit, dict):
         return None
-    ours = me.lower() in {str(commit.get(k) or "").lower() for k in ("author", "committer")}
+    ours = (me.lower() in {str(commit.get(k) or "").lower() for k in ("author", "committer")}
+            or bool(_EMAILS & {str(commit.get(k) or "").lower() for k in ("author_email", "committer_email")}))
     if not ours:
-        pulls = _gh_json(prs, "api", f"repos/{slug}/commits/{sha}/pulls", "--jq", "[.[] | {user: .user.login, branch: .head.ref, merged: .merge_commit_sha}]")
+        pulls, missing = _gh_api(prs, f"repos/{slug}/commits/{sha}/pulls", "--jq",
+                                 "[.[] | {user: .user.login, branch: .head.ref, merged: .merge_commit_sha}]")
+        if missing:
+            pulls = []
         if not isinstance(pulls, list):
             return None
         branches = worker_branches()
         ours = any(isinstance(p, dict) and p.get("merged") == sha and (str(p.get("user") or "").lower() == me.lower() or p.get("branch") in branches)
                    for p in pulls)  # only the PR this commit merged: a PR that merely contains it is not
+    return _keep(key, ours)
+
+
+def _keep(key, ours):
     if len(_OURS) >= OURS_KEEP:
         _OURS.clear()
+        _GONE.clear()
     _OURS[key] = ours
     return ours
 
@@ -239,13 +287,19 @@ def run_is_ours(prs, slug, run):
         return False, "not our commit: a scheduled run"
     if run.get("event") == "workflow_dispatch":
         me = gh_login(prs)
-        found = _gh_json(prs, "api", f"repos/{slug}/actions/runs/{run['id']}", "--jq", "{actor: .triggering_actor.login}") if me else None
+        found, missing = _gh_api(prs, f"repos/{slug}/actions/runs/{run['id']}", "--jq", "{actor: .triggering_actor.login}") if me else (None, False)
+        if missing:
+            return False, "not our commit: GitHub has no such run"
         if not isinstance(found, dict):
             return None
         ours = str(found.get("actor") or "").lower() == me.lower()
         return ours, "" if ours else "not our commit: dispatched by someone else"
     ours = is_ours(prs, slug, run.get("sha"))
-    return None if ours is None else (ours, "" if ours else "not our commit")
+    if ours is None:
+        return None
+    if (slug.lower(), run.get("sha")) in _GONE:
+        return False, "not our commit: GitHub has no such commit"
+    return ours, "" if ours else "not our commit"
 
 
 def _opening_run(prs, slug, runs, run_id):
@@ -253,7 +307,9 @@ def _opening_run(prs, slug, runs, run_id):
     for r in runs:
         if r["id"] == run_id:
             return r
-    found = _gh_json(prs, "api", f"repos/{slug}/actions/runs/{run_id}", "--jq", "{event: .event, sha: .head_sha}")
+    found, missing = _gh_api(prs, f"repos/{slug}/actions/runs/{run_id}", "--jq", "{event: .event, sha: .head_sha}")
+    if missing:  # gone from GitHub: its commit can't be ours, so the incident closes instead of asking every fetch
+        return {"id": run_id, "event": "", "sha": ""}
     return {"id": run_id, "event": str(found.get("event") or ""), "sha": str(found.get("sha") or "")} if isinstance(found, dict) else None
 
 
@@ -266,6 +322,8 @@ def ci_failures(prs, targets, suppress) -> list:
     from athena.caps.watch import safe_workflow
     seen = store.read_dict(_ci_file())
     lines, changed = [], False
+    _EMAILS.clear()
+    _EMAILS.update(our_emails(prs, targets) if targets else ())
     for entry, slug in targets:
         branch = _default_branch(prs, entry, slug)
         runs = completed_runs(prs, slug, branch) if branch else None
@@ -280,11 +338,13 @@ def ci_failures(prs, targets, suppress) -> list:
         for r in runs:
             newest.setdefault(safe_workflow(r["workflow"]), r)
         failed = [r for r in runs if r["conclusion"] in CI_FAILED]
-        if first:
-            seen[key] = {"runs": [f"{r['id']}.{r['attempt']}" for r in failed][:CI_KEEP],
-                         "incidents": {wf: {"run": r["id"], "opened": r.get("created"), "runs": 1, "ours": True}
-                                       for wf, r in newest.items() if r["conclusion"] in CI_FAILED
-                                       and (run_is_ours(prs, slug, r) or (False,))[0]}}
+        if first:  # told nothing; a run GitHub can't say about yet opens its incident unconfirmed, and the next fetch asks again
+            opened = {}
+            for wf, r in newest.items():
+                verdict = run_is_ours(prs, slug, r) if r["conclusion"] in CI_FAILED else (False,)
+                if verdict is None or verdict[0]:
+                    opened[wf] = {"run": r["id"], "opened": r.get("created"), "runs": 1, **({"ours": True} if verdict else {})}
+            seen[key] = {"runs": [f"{r['id']}.{r['attempt']}" for r in failed][:CI_KEEP], "incidents": opened}
             changed = True
             continue
         for wf, open_ in list(incidents.items()):

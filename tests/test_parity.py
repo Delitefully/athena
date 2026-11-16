@@ -213,6 +213,8 @@ class Follow(Case):
         def answer(*args):
             self.asked.append(args)
             if args[:1] == ("api",) and args[1] in api:
+                if isinstance(api[args[1]], Exception):
+                    raise api[args[1]]
                 return json.dumps(api[args[1]])
             if args[:2] == ("pr", "view"):
                 return json.dumps(pr) if pr else ""
@@ -372,6 +374,61 @@ class Follow(Case):
         commits = [a for a in self.asked if a[:2] == ("api", "repos/o/r/commits/eeeeeee")]
         self.assertEqual(len(commits), 1)
         self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "user")]), 1)
+
+    def test_a_repo_seen_first_while_github_cant_say_keeps_its_failure_red_and_asks_again(self):
+        self.write_config(ci_repos=["o/r"])
+        told, incidents = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"))
+        self.assertEqual(told, [], "a repo seen for the first time tells nothing")
+        self.assertEqual(incidents["CI-build"]["run"], 2, "but the lights stay red until GitHub says")
+        self.assertNotIn("ours", incidents["CI-build"])
+        mine = {"repos/o/r/commits/fffffff": {"author": None, "committer": None}, "repos/o/r/commits/fffffff/pulls": []}
+        told, incidents = self._ci((2, "push", "fffffff", "failure"), (1, "push", "aaaaaaa", "success"), api=mine)
+        self.assertEqual(incidents, {}, "asked again, and not ours: it closes")
+        self._ci((3, "push", "aaaaaaa", "failure"), api={})
+        mine = {"repos/o/r/commits/aaaaaaa": {"author": "me"}}
+        told, incidents = self._ci((3, "push", "aaaaaaa", "failure"), api=mine)
+        self.assertEqual(told, ["r main ci failed CI-build 3"])
+
+    def test_a_first_sight_failure_that_is_ours_opens_confirmed(self):
+        mine = {"repos/o/r/commits/aaaaaaa": {"author": "me"}}
+        told, incidents = self._ci((2, "push", "aaaaaaa", "failure"), api=mine)
+        self.assertEqual((told, incidents["CI-build"]["ours"]), ([], True))
+
+    def test_a_push_under_one_of_the_humans_emails_with_no_linked_login_is_ours(self):
+        api = {"user/emails": ["Me@Example.com", "other@example.com"],
+               "repos/o/r/commits/abcdef1": {"author": None, "committer": None, "author_email": "me@example.com",
+                                             "committer_email": "me@example.com"}}
+        self._ci((1, "push", "aaaaaaa", "success"), api=api)
+        told, _ = self._ci((2, "push", "abcdef1", "failure"), (1, "push", "aaaaaaa", "success"), api=api)
+        self.assertEqual(told, ["r main ci failed CI-build 2"])
+
+    def test_git_user_email_in_a_followed_checkout_counts_as_the_humans(self):
+        from athena.caps import prs
+        from harness import git
+        repo = self.repo()
+        git(repo, "config", "user.email", "git@delite.dev")
+        with self.gh(api={"user/emails": prs.GhError('gh: This API operation needs the "user" scope.')}):
+            self.assertIn("git@delite.dev", self.follow.our_emails(prs, [(str(repo), "o/r"), ("o/x", "o/x")]))
+            self.follow.our_emails(prs, [])
+        self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "user/emails")]), 1, "a 404 is an answer, asked once")
+
+    def test_a_commit_github_has_none_of_is_not_ours_and_not_asked_again(self):
+        from athena.caps import prs
+        gone = {"repos/o/r/commits/0badbad": prs.GhError("gh: No commit found for SHA: 0badbad (HTTP 422)")}
+        self._ci((1, "push", "aaaaaaa", "success"), api=gone)
+        told, incidents = self._ci((2, "push", "0badbad", "failure"), (1, "push", "aaaaaaa", "success"), api=gone)
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertIn("r main ci failed CI-build 2 (not our commit: GitHub has no such commit)", self.suppressed)
+        self._ci((3, "push", "0badbad", "failure"), (2, "push", "0badbad", "failure"), api=gone)
+        self.assertEqual(len([a for a in self.asked if a[:2] == ("api", "repos/o/r/commits/0badbad")]), 1)
+
+    def test_an_open_incident_whose_run_is_gone_from_github_closes(self):
+        from athena.caps import prs
+        store.write_json(store.path("ci-failed.json"), {"o/r": {"runs": ["9.1"], "incidents": {
+            "Old": {"run": 9, "opened": "2026-11-14T00:00:00Z", "runs": 1}}}})
+        told, incidents = self._ci((1, "push", "aaaaaaa", "success"), api={"repos/o/r/actions/runs/9": prs.GhError("HTTP 404: Not Found")})
+        self.assertEqual((told, incidents), ([], {}))
+        self.assertTrue(any("main ci failed Old 9 (not our commit" in s for s in self.suppressed))
 
     def test_github_unable_to_say_records_nothing_and_the_next_fetch_asks_again(self):
         self._ci((1, "push", "aaaaaaa", "success"))
