@@ -19,7 +19,7 @@ Names are lowercase letters, digits, `-` and `_`. A name found in both places is
 | `SUMMARY`, `commands()` | `{verb: caps.Command}`: its CLI; a module never shadows a core verb |
 | `checks(ctx)` | `[caps.Check]`: its doctor line |
 | `tick(ctx, now)`, `on_event(ctx, e)` | watch lines; the watch is the long-running process modules run in |
-| `services(ctx)` | launchd jobs, as for a capability |
+| `services(ctx)` | `[caps.Service]`: background services, run as children of athena's one launchd job like a capability's; Quit athena leaves them running. One added or removed is picked up at the next `services install` or restart |
 | `start(ctx)`, `stop(ctx)` | on load or turn on, on unload or turn off. Quick and idempotent: they run in the short `modules` command, not in the watch |
 | `status(ctx)` | `(ok, "one short line")`: the menu's state (`on`, or `error` when not ok) and detail |
 | `actions(ctx)`, `action(ctx, id)` | `[{"id", "label"}]` and running one: menu items beyond `toggle`, which every module has |

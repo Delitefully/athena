@@ -6,12 +6,14 @@ import os
 import plistlib
 import shutil
 import subprocess
+import time
 import types
 import zlib
 from unittest import mock
 from pathlib import Path
 
 from harness import BIN, Case, ROOT
+from supervised import Supervised, fake
 
 from athena.caps import dash, doctor, menubar, services, watch
 from athena.cli import UserError
@@ -51,12 +53,18 @@ exit 0
 
 
 def beacon_module():
-    """A loaded module as the modules loader leaves it: a capability marked MODULE, with a launchd job of its own."""
+    """A loaded module as the modules loader leaves it: a capability marked MODULE, with a service of its own."""
     return types.SimpleNamespace(__name__="athena_modules.beacon", MODULE="beacon",
                                  services=lambda ctx: [caps.Service("beacon", ["beacon", "run"])])
 
 
-class FakeLaunchd(Case):
+def old_plist(name, env):
+    """A job of the layout before the one job, as that release wrote it."""
+    return {"Label": f"local.athena.{name}", "ProgramArguments": ["/old/bin/athena", name], "EnvironmentVariables": env,
+            "RunAtLoad": True, "ProcessType": "Background"}
+
+
+class FakeLaunchd(Supervised):
     def setUp(self):
         super().setUp()
         script = self.stubs / "launchctl"
@@ -74,6 +82,9 @@ class FakeLaunchd(Case):
     def launchctl_calls(self) -> list:
         return [c[len("launchctl "):] for c in self.world_calls() if c.startswith("launchctl ")]
 
+    def plists(self) -> list:
+        return sorted(p.name for p in Path(os.environ["ATHENA_LAUNCH_AGENTS"]).glob("*.plist"))
+
     def with_beacon(self):
         real = caps.loaded
         caps.loaded = lambda: [*real(), beacon_module()]
@@ -82,52 +93,132 @@ class FakeLaunchd(Case):
     def install(self):
         self.with_beacon()
         services.install(caps.CTX)
-        self.assertEqual(self.loaded(), {f"local.athena.{n}" for n in (*CORE, "menubar", "beacon")})
+        self.assertEqual(self.loaded(), {"local.athena"})
         self.calls.write_text("")
+
+    def supervise(self):
+        """The one job's supervisor, as `services run` makes it from every service, module jobs included, each a fake
+        child named for it; on a thread of this test, holding the supervisor's lock as the real one does."""
+        held = self.supervisor([fake(s.name, s.every, s.keep_alive, s.interactive) for s in services.wanted(caps.CTX)], lock=True)
+        self.stepping(held)
+        self.wait_for(lambda: services.children() and all(r["state"] == "running" for r in services.children().values()),
+                      message="the fakes came up")
+        self.starts()
+        return held
+
+    def running(self) -> set:
+        tags = {pid: tag for tag, pid, *_ in self.starts()}
+        return {tags.get(pid, pid) for pid in self.alive()}
 
 
 class InstallAndRestart(FakeLaunchd):
-    """Found live: a bootstrap of a job still loaded aborted install before the menu bar's plist; restart kickstarted a job that
-    wasn't loaded; and each plist write shows the human a Background Activity notice."""
+    """Found live: a bootstrap of a job still loaded aborted install; restart kickstarted a job that wasn't loaded; and each
+    plist write shows the human a Background Activity notice, five of them when there was a job per service."""
 
     def _plists(self) -> dict:
         return {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in Path(os.environ["ATHENA_LAUNCH_AGENTS"]).glob("*.plist")}
 
-    def test_a_job_still_loaded_is_fine_and_one_failing_stops_no_other(self):
+    def test_one_plist_runs_every_service_module_jobs_included(self):
+        self.with_beacon()
+        actions = services.install(caps.CTX)
+        self.assertEqual(self.plists(), ["local.athena.plist"], actions)
+        plist = plistlib.loads((self.tmp / "agents" / "local.athena.plist").read_bytes())
+        self.assertEqual((plist["Label"], plist["ProgramArguments"][1:]), ("local.athena", ["services", "run"]))
+        self.assertEqual((plist["KeepAlive"], plist["RunAtLoad"], plist["ProcessType"]), (True, True, "Interactive"))
+        self.assertEqual(plist["StandardOutPath"], str(store.path("logs", "services.log")))
+        self.assertEqual(self.loaded(), {"local.athena"})
+        ran = store.read_dict(store.path("service-rex.json"))["jobs"]
+        self.assertEqual(sorted(ran), ["beacon", "dash", "doctor", "menubar", "watch"])
+
+    def test_a_dry_run_on_a_clean_install_prints_exactly_one_plist_labelled_local_athena(self):
+        done = self.cli("services", "install", "--dry-run")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.count("<?xml"), 1, done.stdout)
+        self.assertEqual(done.stdout.count("<key>Label</key>"), 1)
+        self.assertIn("<key>Label</key>\n\t<string>local.athena</string>", done.stdout)
+        self.assertEqual([line for line in done.stdout.splitlines() if line.startswith("write ")],
+                         [f"write {self.tmp / 'agents' / 'local.athena.plist'}"])
+        self.assertEqual(self.plists(), [], "a dry run writes nothing")
+        self.assertEqual(self.launchctl_calls(), [])
+
+    def test_install_moves_the_layout_before_it_to_the_one_job_and_a_second_run_changes_nothing(self):
+        agents = self.tmp / "agents"
+        agents.mkdir()
+        env = {"ATHENA_STATE_DIR": str(self.state), "ATHENA_HQ": "hq-two", "PATH": "/old/path:/usr/bin:/bin"}
+        names = ("doctor", "watch", "dash", "menubar", "beacon")
+        for name in names:
+            (agents / f"local.athena.{name}.plist").write_bytes(plistlib.dumps(old_plist(name, env)))
+        Path(f"{self.calls}.launchd").write_text("".join(f"local.athena.{n}\n" for n in names))
+        self.with_beacon()
+        actions = services.install(caps.CTX)
+        self.assertEqual(self.plists(), ["local.athena.plist"], actions)
+        self.assertEqual(self.loaded(), {"local.athena"})
+        calls = self.launchctl_calls()
+        booted = [c.split("/")[-1] for c in calls if c.startswith("bootout ") and c != f"bootout gui/{UID}/local.athena"]
+        self.assertEqual(sorted(booted), sorted(f"local.athena.{n}" for n in names))
+        self.assertGreater(calls.index(f"bootout gui/{UID}/local.athena.doctor"),
+                           calls.index(f"bootstrap gui/{UID} {agents / 'local.athena.plist'}"),
+                           "the old doctor goes last: a move cut short is finished by its next run")
+        written = plistlib.loads((agents / "local.athena.plist").read_bytes())["EnvironmentVariables"]
+        self.assertEqual((written["ATHENA_HQ"], written["PATH"]), ("hq-two", "/old/path:/usr/bin:/bin"), "the old jobs' environment is kept")
+        before = self._plists()
+        self.calls.write_text("")
+        again = services.install(caps.CTX)
+        self.assertEqual(self._plists(), before, "not a byte, not a touch")
+        self.assertEqual([c for c in self.launchctl_calls() if c.split()[0] in ("bootstrap", "bootout", "kickstart")], [], again)
+
+    def test_a_bootstrap_that_fails_during_the_move_keeps_the_old_doctor_and_the_next_install_finishes(self):
+        agents = self.tmp / "agents"
+        agents.mkdir()
+        names = ("doctor", "watch", "dash", "menubar")
+        for name in names:
+            (agents / f"local.athena.{name}.plist").write_bytes(plistlib.dumps(old_plist(name, {})))
+        Path(f"{self.calls}.launchd").write_text("".join(f"local.athena.{n}\n" for n in names))
+        Path(f"{self.calls}.broken").write_text("local.athena\n")  # the one job's bootstrap fails, this once
+        actions = services.install(caps.CTX)
+        self.assertTrue(any(a.startswith("failed local.athena:") for a in actions), actions)
+        self.assertEqual(self.plists(), ["local.athena.doctor.plist", "local.athena.plist"], "the old doctor stays to try again")
+        self.assertEqual(self.loaded(), {"local.athena.doctor"})
+        Path(f"{self.calls}.broken").write_text("")
+        again = services.install(caps.CTX)  # the old doctor's next repair: the plist is the same, but not loaded
+        self.assertIn("started local.athena, which was not loaded", again)
+        self.assertEqual(self.plists(), ["local.athena.plist"])
+        self.assertEqual(self.loaded(), {"local.athena"})
+
+    def test_a_job_still_loaded_is_kept_and_a_failure_is_said(self):
         self.install()
-        Path(f"{self.calls}.sticky").write_text("local.athena.doctor\n")
-        Path(f"{self.calls}.broken").write_text("local.athena.dash\n")
-        os.environ["ATHENA_HQ"] = "someone-else"  # every plist changes, so each is written and loaded again
+        Path(f"{self.calls}.sticky").write_text("local.athena\n")
+        os.environ["ATHENA_HQ"] = "someone-else"  # the plist changes, so it is written and loaded again
         self.addCleanup(os.environ.pop, "ATHENA_HQ", None)
         with mock.patch.object(services.time, "sleep"):
             actions = services.install(caps.CTX)
-        text = "\n".join(actions)
-        self.assertIn("local.athena.doctor was still loaded", text)
-        self.assertIn("failed local.athena.dash", text)
-        for name in ("watch", "menubar", "beacon"):
-            self.assertIn(f"wrote {Path(os.environ['ATHENA_LAUNCH_AGENTS']) / f'local.athena.{name}.plist'}", text, name)
-        self.assertIn("local.athena.menubar", self.loaded())
-        done = self.cli("services", "install")
-        self.assertEqual(done.returncode, 0, "the CLI says a failure, by its exit code too, only when there is one")
-
-    def test_a_failure_is_said_and_the_command_exits_nonzero(self):
-        self.install()
-        Path(f"{self.calls}.broken").write_text("local.athena.dash\n")
-        os.environ["ATHENA_HQ"] = "someone-else"
-        self.addCleanup(os.environ.pop, "ATHENA_HQ", None)
+        self.assertIn("local.athena was still loaded", "\n".join(actions))
+        Path(f"{self.calls}.sticky").write_text("")
+        Path(f"{self.calls}.broken").write_text("local.athena\n")
+        os.environ["ATHENA_HQ"] = "someone-else-again"
         done = self.cli("services", "install")
         self.assertEqual(done.returncode, 1)
-        self.assertIn("failed local.athena.dash", done.stdout)
-        self.assertIn("local.athena.watch.plist", done.stdout, "the others still went in")
+        self.assertIn("failed local.athena", done.stdout)
 
-    def test_restart_loads_a_job_that_was_not_loaded(self):
+    def test_restart_kickstarts_the_one_job_and_loads_it_when_it_was_not_loaded(self):
         self.install()
-        self.assertEqual(self.cli("services", "start").returncode, 0)
-        Path(f"{self.calls}.launchd").write_text("local.athena.dash\nlocal.athena.watch\n")
-        actions = services.restart(caps.CTX)
-        self.assertIn("started local.athena.doctor, which was not loaded", actions)
-        self.assertIn("local.athena.doctor", self.loaded())
-        self.assertIn("restarted local.athena.watch", actions)
+        self.assertEqual(self.cli("services", "restart").returncode, 0)
+        self.assertEqual(self.launchctl_calls(), [f"kickstart -k gui/{UID}/local.athena"],
+                         "one call: once launchd has it, a caller that is the supervisor's child may die and it still happens")
+        Path(f"{self.calls}.launchd").write_text("")
+        self.assertEqual(services.restart(caps.CTX), ["started local.athena, which was not loaded"])
+        self.assertIn("local.athena", self.loaded())
+
+    def test_restart_builds_the_menu_bar_app_first_as_a_release_arrives_without_it(self):
+        self.install()
+        order = []
+        with mock.patch.object(menubar, "ensure_built", side_effect=lambda dry_run=False: order.append("built") or "built it"), \
+                mock.patch.object(services, "_launchctl", side_effect=lambda *a: order.append(a[0]) or subprocess.CompletedProcess(a, 0, "", "")):
+            actions = services.restart(caps.CTX)
+        self.assertEqual(order, ["built", "kickstart"], "the supervisor restarted onto it runs its menubar run")
+        self.assertEqual(actions, ["built it", "restarted local.athena"])
+        with mock.patch.object(menubar, "ensure_built", side_effect=UserError("swiftc not found")):
+            self.assertEqual(services.restart(caps.CTX)[0], "menubar: swiftc not found", "said, and the restart goes on")
 
     def test_a_second_install_writes_nothing_whoever_runs_it(self):
         self.install()
@@ -139,21 +230,58 @@ class InstallAndRestart(FakeLaunchd):
         actions = services.install(caps.CTX)
         self.assertEqual(self._plists(), before, "not a byte, not a touch")
         self.assertTrue(all(a.startswith("unchanged ") for a in actions if "plist" in a), actions)
-        self.assertEqual([c for c in self.launchctl_calls() if c.split()[0] in ("bootstrap", "bootout")], [])
+        self.assertEqual([c for c in self.launchctl_calls() if c.split()[0] in ("bootstrap", "bootout", "kickstart")], [])
+
+    def test_a_module_added_or_removed_is_picked_up_at_the_next_install(self):
+        real = caps.loaded
+        services.install(caps.CTX)
+        self.calls.write_text("")
+        self.with_beacon()
+        self.assertIn("restarted local.athena: its services changed", services.install(caps.CTX))
+        changes = [c for c in self.launchctl_calls() if not c.startswith("print ")]
+        self.assertEqual(changes, [f"kickstart -k gui/{UID}/local.athena"], "the plist is the same; the supervisor reads them as it starts")
+        self.calls.write_text("")
+        services.install(caps.CTX)
+        self.assertEqual([c for c in self.launchctl_calls() if not c.startswith("print ")], [])
+        made = []
+        with mock.patch("athena.kernel.supervisor.Supervisor.main", lambda held: made.append(held) or 0):
+            services.run(caps.CTX)
+        self.assertEqual(sorted(c.name for c in made[0].children), ["beacon", "dash", "doctor", "menubar", "watch"],
+                         "a module's service is a child like any other")
+        caps.loaded = real  # the module removed; with_beacon's cleanup puts back the same
+        self.calls.write_text("")
+        self.assertIn("restarted local.athena: its services changed", services.install(caps.CTX))
+
+    def test_uninstall_removes_the_one_job_and_any_left_of_the_layout_before_it(self):
+        self.install()
+        (self.tmp / "agents" / "local.athena.dash.plist").write_bytes(plistlib.dumps(old_plist("dash", {})))
+        Path(f"{self.calls}.launchd").write_text("local.athena\nlocal.athena.dash\n")
+        self.assertEqual(self.cli("services", "uninstall").returncode, 0)
+        self.assertEqual(self.plists(), [])
+        self.assertEqual(self.loaded(), set())
+
+    def test_updates_and_rollbacks_find_the_one_job(self):
+        from athena.caps import install
+        from athena.caps.install import releases
+        self.install()
+        (self.tmp / "agents" / "local.athena.dash.plist").write_bytes(plistlib.dumps(old_plist("dash", {})))
+        self.assertEqual(releases.installed_jobs(), ["local.athena", "local.athena.dash"])
+        self.assertEqual(install._jobs_left(), ["local.athena.dash.plist", "local.athena.plist"])
 
 
 class QuitAndStart(FakeLaunchd):
-    def test_quit_stops_the_watchdog_first_then_the_rest_and_leaves_modules_itself_and_rex(self):
+    def test_quit_stops_athenas_own_watchdog_first_and_leaves_the_supervisor_modules_the_app_and_rex(self):
         self.install()
+        self.supervise()
         self.assertTrue(caps.CTX.backend.up())
         actions = services.stop(caps.CTX)
-        calls = self.launchctl_calls()
-        self.assertEqual(calls[:2], [f"disable gui/{UID}/local.athena.doctor", f"bootout gui/{UID}/local.athena.doctor"])
-        self.assertEqual(calls[2:], [f"{verb} gui/{UID}/local.athena.{name}" for name in ("dash", "watch") for verb in ("disable", "bootout")])
+        self.assertEqual(actions[:3], ["stopped local.athena.doctor", "stopped local.athena.dash", "stopped local.athena.watch"])
+        self.assertEqual(self.stops(), ["doctor", "dash", "watch"], "the watchdog first, so nothing brings the rest back")
+        self.assertEqual(self.running(), {"beacon", "menubar"}, "modules and the app itself are left")
+        self.assertEqual(self.launchctl_calls(), [], "the supervisor did it, asked through the mark it polls")
+        self.assertEqual(self.loaded(), {"local.athena"}, "the supervisor itself runs on")
         self.assertTrue(caps.CTX.backend.up(), "Rex runs the sessions, HQ's and the workers': Quit never stops it")
-        self.assertEqual(self.loaded(), {"local.athena.beacon", "local.athena.menubar"}, "modules and the app itself are left")
-        self.assertEqual(self.disabled(), {f"local.athena.{n}" for n in CORE}, "launchd won't load them at login either")
-        self.assertIn("left running: beacon", "\n".join(actions))
+        self.assertIn("left running: beacon", actions)
         self.assertTrue(services.is_stopped())
 
     def test_quit_also_stops_a_watch_doctor_started_outside_launchd_before_any_on_quit(self):
@@ -176,43 +304,65 @@ class QuitAndStart(FakeLaunchd):
         with mock.patch.object(watch, "stop_running", return_value=False):
             self.assertFalse(any("outside launchd" in a for a in services.stop(caps.CTX)), "none running: nothing said")
 
+    def test_with_no_supervisor_stop_and_start_say_the_same_lines(self):
+        self.install()
+        self.assertFalse(services.supervisor_runs())
+        actions = services.stop(caps.CTX)
+        self.assertEqual(actions[:3], ["stopped local.athena.doctor", "stopped local.athena.dash", "stopped local.athena.watch"])
+        self.assertEqual(self.launchctl_calls(), [])
+        self.assertTrue(services.is_stopped())
+        self.assertEqual(services.start(caps.CTX), ["started local.athena.dash", "started local.athena.watch", "started local.athena.doctor"])
+        self.assertEqual(self.launchctl_calls(), [f"enable gui/{UID}/local.athena", f"bootout gui/{UID}/local.athena",
+                                                  f"bootstrap gui/{UID} {self.tmp / 'agents' / 'local.athena.plist'}"],
+                         "the one job loaded again, to start them as it comes up")
+        self.assertFalse(services.is_stopped())
+        os.unlink(self.tmp / "agents" / "local.athena.plist")
+        self.assertEqual(services.start(caps.CTX), ["not installed: local.athena; `athena services install` writes it"])
+
     def test_nothing_comes_back_after_quit(self):
         self.install()
+        self.supervise()
         services.stop(caps.CTX)
-        after = len(self.launchctl_calls())
-        self.assertFalse(any(c.split()[0] in ("bootstrap", "kickstart", "enable") for c in self.launchctl_calls()))
         services.install(caps.CTX)  # even a reinstall keeps them stopped until Start
-        later = self.launchctl_calls()[after:]
-        self.assertFalse(any(c.split()[0] in ("bootstrap", "enable") and "menubar" not in c and "beacon" not in c for c in later), later)
-        self.assertEqual(self.loaded() & {f"local.athena.{n}" for n in CORE}, set())
         out = self.cli("services", "restart")
-        self.assertNotEqual(out.returncode, 0)
-        self.assertIn("stopped", out.stderr)
-        self.assertEqual(self.loaded() & {f"local.athena.{n}" for n in CORE}, set())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("athena stays stopped until Start", out.stdout, "the supervisor and the app restart; the rest stay held")
+        time.sleep(0.5)
+        self.assertEqual(self.running(), {"beacon", "menubar"})
 
-    def test_start_loads_them_again_with_the_watchdog_last(self):
+    def test_start_brings_them_back_with_the_watchdog_last(self):
         self.install()
+        self.supervise()
         services.stop(caps.CTX)
+        before = len(self.spawned)
         self.calls.write_text("")
-        services.start(caps.CTX)
-        calls = self.launchctl_calls()
-        bootstraps = [c.split()[-1] for c in calls if c.startswith("bootstrap")]
-        self.assertEqual([Path(p).stem for p in bootstraps], ["local.athena.dash", "local.athena.watch", "local.athena.doctor"])
-        for name in CORE:
-            self.assertLess(calls.index(f"enable gui/{UID}/local.athena.{name}"),
-                            calls.index(f"bootstrap gui/{UID} {services.agents_dir() / f'local.athena.{name}.plist'}"))
-        self.assertFalse(any("beacon" in c or "menubar" in c for c in calls))
-        self.assertEqual(self.loaded(), {f"local.athena.{n}" for n in (*CORE, "menubar", "beacon")})
-        self.assertEqual(self.disabled(), set())
+        actions = services.start(caps.CTX)
+        self.assertEqual(actions, ["started local.athena.dash", "started local.athena.watch", "started local.athena.doctor"])
+        tags = {pid: tag for tag, pid, *_ in self.starts()}
+        self.assertEqual([tags[pid] for pid in self.spawned[before:]], ["dash", "watch", "doctor"])
+        self.assertEqual(self.running(), {"beacon", "dash", "doctor", "menubar", "watch"})
+        self.assertEqual(self.launchctl_calls(), [])
         self.assertFalse(services.is_stopped())
 
-    def test_restart_kickstarts_athenas_own_jobs_only(self):
+    def test_stop_and_start_run_by_a_child_of_the_supervisor_finish_even_if_that_child_dies(self):
         self.install()
-        self.assertEqual(self.cli("services", "restart").returncode, 0)
-        self.assertEqual(sorted(self.launchctl_calls()), sorted(f"kickstart -k gui/{UID}/local.athena.{n}" for n in CORE))
+        self.supervise()
+        for action, gone in (("stop", lambda: services.is_stopped()), ("start", lambda: not services.is_stopped())):
+            caller = subprocess.Popen([str(BIN), "services", action], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+            self.addCleanup(lambda p=caller: (p.poll() is None and p.kill(), p.wait()))
+            self.wait_for(gone, message=f"{action} wrote its ask")
+            caller.kill()  # the menu bar, say, gone the moment it asked
+            caller.wait()
+            if action == "stop":
+                self.wait_for(lambda: self.running() == {"beacon", "menubar"}, message="the supervisor stopped them anyway")
+            else:
+                self.wait_for(lambda: self.running() == {"beacon", "dash", "doctor", "menubar", "watch"},
+                              message="the supervisor started them anyway")
 
-    def test_the_cli_says_each_step_and_status_reads_launchd(self):
+    def test_the_cli_says_each_step_and_status_reads_the_supervisor(self):
         services.install(caps.CTX)
+        self.supervise()
         out = self.cli("services", "stop")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.splitlines()[0], "stopped local.athena.doctor")
@@ -220,14 +370,36 @@ class QuitAndStart(FakeLaunchd):
         shown = json.loads(self.cli("services", "status", "--json").stdout)
         self.assertTrue(shown["stopped"])
         rows = {r["name"]: r for r in shown["services"]}
+        self.assertEqual(set(rows), {"dash", "doctor", "menubar", "watch"})
+        self.assertEqual(set(rows["doctor"]), {"name", "state", "pid", "every", "installed", "module"})
         self.assertEqual(rows["doctor"]["state"], "stopped")
         self.assertEqual(rows["menubar"]["state"], "running")
-        self.assertTrue(rows["menubar"]["pid"])
+        self.assertIn(rows["menubar"]["pid"], self.alive("menubar"))
         self.assertEqual(rows["doctor"]["every"], 60)
+        self.assertTrue(all(r["installed"] for r in rows.values()))
         self.assertEqual(self.cli("services", "start").returncode, 0)
         shown = json.loads(self.cli("services", "status", "--json").stdout)
         self.assertFalse(shown["stopped"])
         self.assertEqual({r["state"] for r in shown["services"]}, {"running"})
+
+    def test_status_says_each_state_the_menu_bar_reads(self):
+        services.install(caps.CTX)
+        shown = {r["name"]: r["state"] for r in services.status(caps.CTX)["services"]}
+        self.assertEqual(set(shown.values()), {"unknown"}, "loaded, but no supervisor answers yet")
+        Path(f"{self.calls}.launchd").write_text("")
+        self.assertEqual({r["state"] for r in services.status(caps.CTX)["services"]}, {"not loaded"})
+        self.mode("dash", "exit 1")
+        self.mode("menubar", "exit 0")
+        self.mode("doctor", "exit 0")
+        held = self.supervisor([fake(s.name, s.every, s.keep_alive, s.interactive) for s in services.wanted(caps.CTX)], lock=True)
+        held.step(time.time())
+        for name in ("dash", "menubar", "doctor"):
+            self.exit_of(held, name)
+        held.step(time.time())
+        shown = {r["name"]: r["state"] for r in services.status(caps.CTX)["services"]}
+        self.assertEqual(shown, {"dash": "exited 1", "doctor": "loaded", "menubar": "loaded", "watch": "running"})
+        os.unlink(self.tmp / "agents" / "local.athena.plist")
+        self.assertEqual({r["state"] for r in services.status(caps.CTX)["services"]}, {"not installed"})
 
     def test_quit_never_stops_rex_or_a_session_whatever_config_names(self):
         services.install(caps.CTX)
@@ -238,15 +410,16 @@ class QuitAndStart(FakeLaunchd):
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertTrue(caps.CTX.backend.up())
             self.assertEqual(caps.CTX.backend.spaces(), before)
-        self.assertNotIn("local.athena.doctor", self.loaded(), "athena's own jobs still stop")
+        self.assertIn("local.athena", self.loaded(), "the supervisor runs on; it holds athena's own services stopped")
         self.assertFalse(any(" rex " in f" {c} " for c in self.world_calls()))
 
     def test_each_on_quit_runs_once_the_watch_is_down_and_one_that_fails_stops_nothing(self):
         services.install(caps.CTX)
+        self.supervise()
         seen = []
 
         def card_off(ctx):
-            seen.append(set(self.loaded()))
+            seen.append(self.running())
             return "beacon: ExampleCard set to off until Start"
 
         def broken(ctx):
@@ -257,10 +430,10 @@ class QuitAndStart(FakeLaunchd):
         self.addCleanup(setattr, caps, "loaded", real)
         actions = services.stop(caps.CTX)
         self.assertEqual(len(seen), 1)
-        self.assertNotIn("local.athena.watch", seen[0], "after the watch, so its tick can't write the colour back")
+        self.assertNotIn("watch", seen[0], "after the watch, so its tick can't write the colour back")
         self.assertIn("beacon: ExampleCard set to off until Start", actions)
         self.assertIn("radio: on_quit failed: OSError: card gone", actions)
-        self.assertEqual(self.loaded() & {f"local.athena.{n}" for n in CORE}, set())
+        self.assertEqual(self.running() & set(CORE), set())
 
     def test_doctor_last_json_is_the_menus_contract_and_runs_nothing(self):
         out = json.loads(self.cli("doctor", "--last", "--json").stdout)
@@ -276,6 +449,148 @@ class QuitAndStart(FakeLaunchd):
         for row in out["checks"]:
             self.assertEqual(set(row), {"name", "ok", "detail", "short"})
         self.assertEqual(json.loads(store.path("health.json").read_text()), written, "--last reads it and runs nothing")
+
+    def old_layout_here(self, names=("doctor", "watch", "dash", "menubar")):
+        agents = self.tmp / "agents"
+        agents.mkdir(exist_ok=True)
+        for name in names:
+            (agents / f"local.athena.{name}.plist").write_bytes(plistlib.dumps(old_plist(name, {})))
+        Path(f"{self.calls}.launchd").write_text("".join(f"local.athena.{n}\n" for n in names))
+
+    def told(self) -> list:
+        """What doctor's notifications said, through the osascript stub."""
+        return [c for c in self.world_calls() if c.startswith("osascript ")]
+
+    def test_a_second_pass_while_the_move_still_runs_is_no_problem_and_tells_nothing(self):
+        self.old_layout_here()
+        started = []
+        with mock.patch.object(services, "_move", side_effect=lambda releases: started.append(1)):
+            health = doctor.run(caps.CTX, fix=True, now=1000)
+            self.assertEqual(started, [1])
+            self.assertNotIn("services", [p["check"] for p in health["problems"]])
+            with store.locked(services.MOVE_LOCK):  # its install still runs: building the menu bar app, say
+                for now in (1060, 1120, 1180):
+                    health = doctor.run(caps.CTX, fix=True, now=now)
+                    self.assertTrue(health["checks"]["services"]["ok"], health["checks"]["services"])
+                    self.assertNotIn("services", [p["check"] for p in health["problems"]])
+        self.assertEqual(started, [1], "one move, not one per pass")
+        self.assertFalse(any("layout" in c or "services" in c for c in self.told()), self.told())
+
+    def test_a_move_that_fails_every_time_keeps_the_old_doctor_is_tried_at_doctors_pace_and_told_once(self):
+        self.old_layout_here()
+        Path(f"{self.calls}.broken").write_text("local.athena\n")  # the one job's bootstrap fails, every time
+        tries = []
+        with mock.patch.object(services, "_move", side_effect=lambda releases: tries.append(services.install(caps.CTX))):
+            for now in range(1000, 1000 + 3000, 60):  # fifty passes, under an hour
+                doctor.run(caps.CTX, fix=True, now=now)
+        self.assertTrue(tries, "it was tried")
+        self.assertLessEqual(len(tries), doctor.REPAIRS_PER_HOUR, "repairs stay capped")
+        self.assertTrue(all(any(a.startswith("failed local.athena") for a in t) for t in tries))
+        self.assertIn("local.athena.doctor.plist", self.plists(), "the old doctor stays to try again")
+        self.assertIn("local.athena.doctor", self.loaded())
+        services_told = [c for c in self.told() if "services" in c]
+        self.assertEqual(len(services_told), 1, f"told once, not per attempt: {services_told}")
+        health = json.loads(store.path("health.json").read_text())
+        self.assertFalse(health["checks"]["services"]["ok"], "and the row stays failing, not flipping")
+
+    def install_as_doctors_move(self, releases):
+        """What _move starts, run here in-process: the install's own record and lock, its error going nowhere but the log."""
+        try:
+            services.install(caps.CTX)
+        except UserError:
+            pass
+
+    def services_row(self, now):
+        health = doctor.run(caps.CTX, fix=True, now=now)
+        return health["checks"]["services"], [p["check"] for p in health["problems"]]
+
+    def test_a_move_whose_app_build_raises_is_failed_with_the_build_error_and_told_once(self):
+        self.old_layout_here()
+        with mock.patch.object(menubar, "ensure_built", side_effect=UserError("the menu bar app did not build (1): swiftc broke")), \
+                mock.patch.object(services, "_move", side_effect=self.install_as_doctors_move) as moved:
+            row, problems = self.services_row(1000)
+            self.assertTrue(row["ok"], "not started: a quiet repair that went through")
+            self.assertEqual(services.move_state(), ("failed", "the menu bar app did not build (1): swiftc broke"))
+            rows = [self.services_row(now) for now in range(1060, 1060 + 600, 60)]
+        self.assertTrue(all(not r["ok"] and "swiftc broke" in r["detail"] for r, _ in rows), "failing, with the build's error, every pass")
+        self.assertTrue(all("services" in p for _, p in rows))
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1, "told once, not per try")
+        self.assertIn("swiftc broke", [c for c in self.told() if "services" in c][0])
+        self.assertLessEqual(moved.call_count, doctor.REPAIRS_PER_HOUR)
+        self.assertEqual(self.loaded(), {f"local.athena.{n}" for n in ("doctor", "watch", "dash", "menubar")}, "nothing moved")
+
+    def test_a_try_killed_mid_move_reads_failed_on_the_next_pass_not_as_never_started(self):
+        self.old_layout_here()
+        left = []
+        with mock.patch.object(services, "_install", side_effect=lambda ctx, dry_run=False: left.append(
+                store.path(services.MOVE).read_text()) or (_ for _ in ()).throw(KeyboardInterrupt())):
+            with self.assertRaises(KeyboardInterrupt):
+                services.install(caps.CTX)
+        self.assertEqual(json.loads(left[0])["state"], "running", "on record before any work, with the lock held")
+        store.path(services.MOVE).write_text(left[0])  # as a kill outright leaves it: no handler ran, and the OS freed the lock
+        since = json.loads(left[0])["since"]
+        self.assertEqual(services.move_state(now=since + 5)[0], "under way", "a try just started may not hold the lock yet")
+        state, said = services.move_state(now=since + 120)
+        self.assertEqual(state, "failed")
+        self.assertIn("cut off", said)
+        store.path(services.MOVE).write_text(json.dumps({**json.loads(left[0]), "since": time.time() - 120}))  # the next pass, later
+        with mock.patch.object(services, "_move") as moved:
+            row, problems = self.services_row(time.time())
+        self.assertFalse(row["ok"])
+        self.assertIn("services", problems)
+        moved.assert_called_once()
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1)
+
+    def test_a_retry_still_running_past_a_pass_after_a_failure_stays_failing_and_starts_no_second_try(self):
+        self.old_layout_here()
+        services._record("failed", "launchctl bootstrap failed (122)")
+        with mock.patch.object(services, "_move") as moved:
+            row, problems = self.services_row(1000)
+            self.assertFalse(row["ok"])
+            moved.assert_called_once()  # the retry
+            with store.locked(services.MOVE_LOCK):  # its install still runs, as the record it keeps says
+                services._record("running", "launchctl bootstrap failed (122)")
+                self.assertEqual(services.move_state()[0], "retrying")
+                for now in (1060, 1120, 1180, 1240):
+                    row, problems = self.services_row(now)
+                    self.assertFalse(row["ok"], "still failing until a try goes through")
+                    self.assertIn("a new try is under way", row["detail"])
+                    self.assertIn("services", problems)
+            self.assertEqual(moved.call_count, 1, "no second try beside the running one")
+        self.assertEqual(len([c for c in self.told() if "services" in c]), 1, "told once, at the failure")
+
+    def test_once_moved_a_leftover_record_is_cleared_and_there_is_no_row(self):
+        services._record("failed", "an old failure")
+        self.assertEqual(services.checks(caps.CTX), [])
+        self.assertFalse(store.path(services.MOVE).exists())
+
+    def test_a_quiet_repair_that_raises_is_a_problem_and_is_told(self):
+        mover = types.SimpleNamespace(__name__="athena_modules.mover", checks=lambda ctx: [
+            caps.Check("services", False, "4 job(s) of the earlier layout", repair=lambda: 1 / 0, grace=0, quiet=True)])
+        real = caps.loaded
+        caps.loaded = lambda: [*real(), mover]
+        self.addCleanup(setattr, caps, "loaded", real)
+        with mock.patch.object(doctor, "notify") as notify:
+            health = doctor.run(caps.CTX, fix=True)
+        self.assertIn("services", [p["check"] for p in health["problems"]])
+        self.assertIn("repair failed: division by zero", [p for p in health["problems"] if p["check"] == "services"][0]["detail"])
+        self.assertIn("services", [p["check"] for p in notify.call_args.args[0]])
+
+    def test_a_quiet_repair_that_went_through_is_no_problem_and_raises_no_notification(self):
+        """The move to the one job is doctor's repair: upkeep the human asked for fewer notices about, not a problem."""
+        moved = []
+        mover = types.SimpleNamespace(__name__="athena_modules.mover", checks=lambda ctx: [
+            caps.Check("services", False, "4 job(s) of the earlier layout", repair=lambda: moved.append(1), grace=0, quiet=True)])
+        real = caps.loaded
+        caps.loaded = lambda: [*real(), mover]
+        self.addCleanup(setattr, caps, "loaded", real)
+        with mock.patch.object(doctor, "notify") as notify:
+            health = doctor.run(caps.CTX, fix=True)
+        self.assertEqual(moved, [1])
+        self.assertIn("repaired services", health["actions"])
+        self.assertTrue(health["checks"]["services"]["ok"])
+        self.assertNotIn("services", [p["check"] for p in health["problems"]])
+        self.assertNotIn("services", [p["check"] for p in notify.call_args.args[0]])
 
     def test_doctor_revives_neither_dash_nor_watch_while_athena_is_stopped(self):
         revived = []
@@ -301,11 +616,12 @@ class LoginItem(FakeLaunchd):
     def test_services_installs_and_lists_the_menu_bar_app(self):
         out = self.cli("services", "install")
         self.assertEqual(out.returncode, 0, out.stderr)
-        plist = plistlib.loads((self.tmp / "agents" / "local.athena.menubar.plist").read_bytes())
-        self.assertEqual(plist["ProgramArguments"][1:], ["menubar", "run"])
-        self.assertEqual(plist["ProcessType"], "Interactive")
-        self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False}, "Quit's own exit is not restarted")
-        self.assertIn("local.athena.menubar", self.loaded())
+        self.assertEqual(self.plists(), ["local.athena.plist"], "the app is a child of the one job, not a job of its own")
+        plist = plistlib.loads((self.tmp / "agents" / "local.athena.plist").read_bytes())
+        self.assertEqual(plist["ProcessType"], "Interactive", "the app's responsiveness depends on it")
+        self.assertEqual([s for s in services.wanted(caps.CTX) if s.name == "menubar"],
+                         [caps.Service("menubar", ["menubar", "run"], None, True, True)], "Quit's own clean exit is not restarted")
+        self.assertIn("local.athena", self.loaded())
         listed = self.cli("services", "status").stdout
         self.assertRegex(listed, r"menubar\s+installed")
         self.assertIn("menubar", {r["name"] for r in json.loads(self.cli("services", "status", "--json").stdout)["services"]})
@@ -714,7 +1030,7 @@ def ink_box(png):
 
 
 class EndToEnd(App, FakeLaunchd):
-    """The app's Quit and Start against the real CLI, with launchd faked."""
+    """The app's Quit and Start against the real CLI, with launchd faked and the supervisor's children fake."""
 
     def test_quit_athena_stops_everything_in_order_then_the_app_and_start_brings_it_back(self):
         self.install_with_cli()
@@ -723,21 +1039,20 @@ class EndToEnd(App, FakeLaunchd):
         after = out.stdout.splitlines()
         self.assertIn("Start athena", after, "the app stays, with athena stopped and Start a click away")
         self.assertEqual(after[-1], "icon: stopped")
-        calls = self.launchctl_calls()
-        stops = [c for c in calls if c.split()[0] in ("disable", "bootout")]
-        self.assertEqual(stops[:2], [f"disable gui/{UID}/local.athena.doctor", f"bootout gui/{UID}/local.athena.doctor"])
-        self.assertFalse(any(c.split()[0] in ("bootstrap", "kickstart", "enable") for c in calls))
-        self.assertEqual(self.loaded(), {"local.athena.menubar", "local.athena.beacon"})
+        self.assertEqual(self.stops()[:1], ["doctor"], "the watchdog first")
+        self.assertFalse(any(c.split()[0] in ("bootstrap", "bootout", "kickstart", "enable", "disable") for c in self.launchctl_calls()))
+        self.assertEqual(self.running(), {"menubar", "beacon"})
+        self.assertEqual(self.loaded(), {"local.athena"}, "the one job runs on")
         self.assertTrue(caps.CTX.backend.up(), "Rex and its sessions run on")
         self.calls.write_text("")
         out = self.run_app("--click", "Start athena", cli=BIN)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("Quit athena", out.stdout.splitlines())
-        self.assertEqual(self.loaded(), {f"local.athena.{n}" for n in (*CORE, "menubar")} | {"local.athena.beacon"})
+        self.assertEqual(self.running(), {*CORE, "menubar", "beacon"})
 
     def install_with_cli(self):
         self.assertEqual(self.cli("services", "install").returncode, 0)
-        with open(f"{self.calls}.launchd", "a") as db:
-            db.write("local.athena.beacon\n")  # a module's job, which no core capability names
+        self.with_beacon()  # a module's service, which no core capability names: the supervisor here runs it too
+        self.supervise()
         self.calls.write_text("")
         store.ensure()

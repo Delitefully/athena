@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **One background item.** athena runs under one launchd job, `local.athena`, instead of one per service, so macOS shows
+  one "background item added" notice at install instead of five. Its program, `athena services run`, is a supervisor
+  that runs the doctor, the watch, the dash, the menu bar and each module's services as its children: it restarts one
+  that crashes with a delay that doubles from 1 to 60 seconds, runs `every` services on their timer (once after a
+  sleep, never twice at once), and stops them all with itself. Quit athena and Start work as before, through a file the
+  supervisor polls, and doctor's watch and dash repairs ask it to restart its own child rather than start a second
+  copy. An install with a job per service moves to the one job on `athena services install`, or by itself at doctor's
+  next pass once an update to this release has passed its health check (one more notice, once); a rollback to an
+  earlier release gets its jobs back. See `ARCHITECTURE.md`, Doctor and services.
 - **Pi workers.** `athena spawn --agent pi` launches a worker that runs Pi instead of Claude Code, on Pi's own default
   model (DeepSeek, say) unless `--model` names one, which is passed as written. Claude stays the default everywhere,
   and HQ is always Claude. athena's Pi extension (`pi-extension/athena.ts`, loaded per launch with `-e`, never installed)

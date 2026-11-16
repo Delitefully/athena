@@ -130,7 +130,7 @@ def _state_step(dry_run, real_world, profiles) -> list:
 
 
 def _services(action) -> str:
-    done = releases.installed_command("services", action)
+    done = releases.installed_command("services", action, timeout=releases.SERVICES_TIMEOUT)
     failed = [line for line in done.stdout.splitlines() if line.startswith("failed ")]
     if done.returncode and not failed:
         return f"  launchd jobs: skipped ({(done.stderr or done.stdout).strip()})"
@@ -274,7 +274,7 @@ def _still_running() -> list:
 
 def _jobs_left() -> list:
     services = caps.get("services")
-    return sorted(p.name for p in services.agents_dir().glob(f"{services.PREFIX}.*.plist")) if services else []
+    return sorted(p.name for p in services.installed_plists()) if services else []
 
 
 def uninstall(dry_run=False, force=False) -> int:

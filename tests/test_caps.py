@@ -378,9 +378,9 @@ class Services(Case):
     def test_a_state_path_with_spaces_survives(self):
         os.environ["ATHENA_STATE_DIR"] = str(self.tmp / "Application Support" / "athena")
         store.ensure()
-        plist = services.plist_for(caps.Service("x", ["watch"]))
+        plist = services.plist()
         self.assertIn(" ", plist["EnvironmentVariables"]["ATHENA_STATE_DIR"])
-        self.assertEqual(plist["ProgramArguments"][1:], ["watch"])
+        self.assertEqual(plist["ProgramArguments"][1:], ["services", "run"])
 
 
 class Hq(Case):

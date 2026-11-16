@@ -8,8 +8,8 @@ what needs them.
 Everything else is plumbing around those sessions:
 
 - **`athena`**, a command line in plain Python, which HQ, the workers, the background jobs and the menu bar all call;
-- **background jobs** under launchd: the **watch** (turns state changes into notices for HQ), **doctor** (checks and
-  repairs), the **dashboard** (a local web page for the human) and the **menu bar** app;
+- **background services**, all under one launchd job: the **watch** (turns state changes into notices for HQ), **doctor**
+  (checks and repairs), the **dashboard** (a local web page for the human) and the **menu bar** app;
 - **hooks** that Claude Code runs in each session athena starts, which record what the session is doing and hold a
   worker's turn open until it files a report;
 - **the state dir**, where all of it meets: plain files that every part reads and writes.
@@ -93,8 +93,8 @@ A capability is a module or package in `athena/caps/` with `SUMMARY` (one line) 
 
 | Function | What it gives | Who calls it |
 |---|---|---|
-| `checks(ctx)` | `[Check(name, ok, detail, repair, grace, short)]` | doctor, which owns grace, backoff and the repair budget |
-| `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | `athena services`, which writes them as launchd jobs |
+| `checks(ctx)` | `[Check(name, ok, detail, repair, grace, short, quiet)]` | doctor, which owns grace, backoff and the repair budget; a `quiet` check's repair that went through is upkeep, not a problem, and raises no notification |
+| `services(ctx)` | `[Service(name, argv, every, keep_alive, interactive)]` | `athena services run`, the one launchd job's supervisor, which runs each as its child |
 | `tick(ctx, now)` | watch lines | the watch, every loop |
 | `on_event(ctx, event)` | watch lines | the watch, for each new bus event |
 | `on_quit(ctx)` | a line to say, or `None` | `athena services stop`, once the watch is down |
@@ -322,7 +322,7 @@ counts as its worker's only under the pid its extension wrote to `run/<name>.pi.
 Files: `athena/caps/watch.py`, `athena/caps/follow.py`, `athena/caps/prs.py`, `athena/caps/slack.py`,
 `athena/caps/sessions.py`, `athena/caps/limits.py`; [docs/watch.md](docs/watch.md).
 
-The watch (`athena watch --tagged --wake`) is a long-running process, a launchd job of its own. It holds
+The watch (`athena watch --tagged --wake`) is a long-running process, a kept-alive child of the services supervisor. It holds
 `locks/watch.lock`, so only one runs. Every loop (20 seconds by default) it:
 
 1. folds the workers (ledger, status files, PRs) into a snapshot and diffs it against the last one;
@@ -415,7 +415,7 @@ the tail of each busy worker's screen, redrawn from status. It is for a glance, 
 
 ## Doctor and services
 
-Files: `athena/caps/doctor.py`, `athena/caps/services.py`.
+Files: `athena/caps/doctor.py`, `athena/caps/services.py`, `athena/kernel/supervisor.py`.
 
 **Doctor** is one stateless pass over everything athena needs. Its own checks are the Rex server, each running worker's
 hooks, disk, memory, the ledger and the config; every other line comes from a capability's or module's `checks(ctx)`: the
@@ -430,30 +430,77 @@ Doctor owns only the rules around a check:
 - no repairs without `doctor.lock`; on a full disk it still reports.
 
 What it repairs: a watch whose loop stopped, a dashboard that isn't answering, a ledger that lost workers (restored from
-its snapshot), an update left half-switched, and HQ's context (by asking HQ, once every two hours while it is idle, to
-rotate). It never starts the Rex server, a worker's Claude or HQ: Rex runs those, and doctor only says what is gone.
+its snapshot), an update left half-switched, an install still on one launchd job per service, and HQ's context (by
+asking HQ, once every two hours while it is idle, to rotate). It never starts the Rex server, a worker's Claude or HQ: Rex runs those, and doctor only says what is gone.
 
 Each pass writes `health.json` (each check, the problems and since when, what was repaired, and `hq_alive`) and keeps its
 memory under the `rex` key of `doctor.json`. `athena doctor --last --json` reads `health.json` and runs nothing. With
 `--fix`, a new problem also raises one macOS notification, repeated hourly while it lasts. The watch tells HQ once when
 doctor hasn't reported for five minutes, so each of the two watches the other.
 
-**Services** (`athena services install|uninstall|status|stop|start|restart`) turns every capability's `services(ctx)` into
-launchd agents in `~/Library/LaunchAgents`, labelled `local.athena.<name>`, logging to `logs/service-<name>.log`:
+**Services** (`athena services install|uninstall|status|stop|start|restart|run`) runs every capability's and module's
+`services(ctx)` under one launchd agent, `local.athena` in `~/Library/LaunchAgents`, so macOS shows one background item
+and one notice. Its program is `athena services run`, the supervisor (`kernel/supervisor.py`), which starts each service
+as its own child, in its own process group, logging to `logs/service-<name>.log` (the supervisor's own log is
+`logs/services.log`):
 
-| Job | Runs | How |
+| Service | Runs | How |
 |---|---|---|
 | `doctor` | `athena doctor --fix --quiet` | every 60 seconds |
 | `watch` | `athena watch --tagged --wake` | kept alive |
 | `dash` | `athena dash run` | kept alive |
 | `menubar` | `athena menubar run` | kept alive, interactive |
 
-A module may add jobs of its own. A plist whose bytes haven't changed is left as it is. `services stop` is the menu bar's
-**Quit athena**: it marks athena stopped (`services-stopped.json`), then disables and boots out doctor first (so nothing
-brings the rest back) and then the others, stops a watch doctor started outside launchd, and runs each loaded
-capability's and module's `on_quit`. A module's jobs and the menu bar stay. While stopped, doctor's watch and dash repairs
-stand back, as a repair would undo Quit. `services start` loads them again, doctor last. Quit never stops the Rex server,
-HQ or any worker.
+A module may add services of its own; they run under the supervisor like these, and one added or removed is picked up at
+the next `services install` or restart, as the supervisor reads them when it starts.
+
+What launchd did for each job, the supervisor does for each child. A kept-alive child that exits non-zero or on a
+signal starts again after a delay that doubles from 1 second up to 60, and goes back to 1 second once a run has lasted 60
+seconds; a crash-looping child never holds up the others. A clean exit stays down until the supervisor next starts, as
+launchd's `KeepAlive{SuccessfulExit: false}` did (the menu bar exits 0 when its app isn't built). An `every` child runs on
+its interval; a run still going when its time comes is not started twice, and after a gap longer than the interval (the
+Mac slept) it runs once. Each child holds a lock of its own (`run/services/<name>.lock`) while it lives, so a supervisor
+that starts while a child of an earlier one still runs waits for it instead of starting a second copy.
+
+The supervisor signals only children it started, through their `Popen` handle, and on TERM stops them all before it exits.
+They stay in its process group, so launchd clears them with the job even if the supervisor is killed outright. It holds
+`run/services.lock` while it runs, which is how anyone tells it runs, and says each child's state (starting, running,
+backing off, waiting, stopped) in `run/services.json`, which `services status --json` reads for the menu bar. The CLI
+reaches it only through launchctl (install, restart) or a file it polls:
+
+- **Quit athena** (`services stop`) writes `services-stopped.json`, naming what `athenas()` names: doctor first (so
+  nothing brings the rest back), then the watch and the dash. The supervisor stops those, in that order, and keeps them
+  stopped across a login while the mark is there. `stop` waits for it, stops a watch doctor started when no supervisor
+  ran, and runs each loaded capability's and module's `on_quit`. The supervisor, the menu bar and a module's services
+  stay. `services start` takes the mark away, and the supervisor starts them again, doctor last. With no supervisor
+  running, stop and start say the same lines, and start loads the one job. Quit never stops the Rex server, HQ or any
+  worker. While stopped, doctor's watch and dash repairs stand back, as a repair would undo Quit.
+- **Doctor's repairs** of the watch and the dash write `run/services-ask/<name>`: the supervisor restarts that child now
+  and clears its backoff. Only with no supervisor running does a repair (or `dash on`) start a copy of its own, so a
+  repair never races the supervisor for the dash's port or the watch's lock.
+
+`services restart` is launchd's `kickstart -k` of the one job: the supervisor and every child restart on the code
+`current` names. It first builds that release's menu bar app if it is missing or stale, as a release is copied without
+its build and `menubar run` exits clean (and stays down) without one. Run by a child of the supervisor (doctor, the menu bar), it ends that caller too, after launchd has it.
+While athena is stopped it still restarts the supervisor, and the mark keeps the rest stopped.
+
+The one job is `ProcessType` Interactive, as the menu bar app is one of its children; the supervisor puts every other
+child under darwin's background policy, as `ProcessType` Background did for its own job. A plist whose bytes haven't
+changed is left as it is, since each write shows the human a notice.
+
+**The layout before the one job** was one launchd job per service, `local.athena.<name>`. `services install` boots out
+and removes each, the old doctor's last, after the one job is loaded, and keeps the environment they carried. An update
+to this layout's first release runs the old release's updater, which only restarts the old jobs onto the new code and asks
+the new doctor for its verdict; so the move is doctor's `services` repair, which starts `athena services install` in a
+session of its own and does not wait for it (it may build the menu bar app first, and it ends the old doctor job). It
+waits while an update holds the install lock or has a switch on record. The move is upkeep, not a problem. Its state
+comes from two things alone: `locks/services-move.lock`, which the install holds while it runs, and its record
+`services-move.json`, written running when the install takes the lock, failed with what went wrong when it raises or
+leaves old jobs, and removed once the move is done. Not started is a quiet repair (no notification when it goes
+through); under way is ok, however long the menu bar app takes to build; failed (a try killed outright included) is an
+ordinary problem, told once and hourly after; retrying after a failure stays failing and starts no second try. Until
+the move, `stop`, `start` and `restart` act on the old jobs as they did. A rollback (`install --rollback`, or an update's own) to a release without the
+supervisor hands its layout back: that release's own `services install` writes its jobs, then the one job goes.
 
 ## The menu bar
 
@@ -461,7 +508,8 @@ Files: `athena/caps/menubar.py`, `menubar/`.
 
 The menu bar app is an AppKit status item in Swift (`menubar/Sources/`), built by `menubar/build.sh` with `swiftc` into
 `menubar/build/AthenaMenu.app`. `services install` builds it when it is missing or its sources changed (by content
-hash), and its login job runs `athena menubar run`, which hands over to the app.
+hash), and the services supervisor runs `athena menubar run` as its child, which hands over to the app. It adds no
+background item of its own: macOS counts the one launchd job, not the processes it starts.
 
 The app does everything through the CLI, so it never names launchctl or the Rex server. It polls `services status
 --json`, `status --json` and `modules --json` every 5 seconds, one poll at a time, and `doctor --last --json` at most
@@ -481,6 +529,8 @@ those in `athena/caps/`, plus a menu bar entry. Public modules live in `athena/m
 - `athena modules load|unload <name>` changes the list; a module switched off stays listed, off, in `modules.json`.
 - `athena modules --json` is the menu bar's list, one object per module (`name`, `title`, `public`, `loaded`, `state`,
   `detail`, `actions`).
+- A module's `services(ctx)` run under the services supervisor like the core ones, as children of the one launchd job;
+  Quit athena leaves them running.
 
 The two public modules:
 
@@ -556,14 +606,14 @@ Files: `athena/caps/install/` (`__init__.py`, `releases.py`, `update.py`).
 `bin/athena install` (from a checkout the first time) makes a release: a whole copy of the shipped files under
 `~/.local/share/athena/releases/<version>-<content hash>`, and a `current` link swapped atomically by one rename.
 `~/.local/bin/athena` is a small launcher that `exec`s through `current`. Everything athena hands out by path (hooks, prompts,
-launchd jobs) goes through `current`, so a running Claude's hook never sees a half-copied tree. Two releases are kept.
+the launchd job) goes through `current`, so a running Claude's hook never sees a half-copied tree. Two releases are kept.
 Install writes nothing in `~/.claude`, since hooks and permissions go in each session's own `--settings`, and never edits
 a shell profile: it prints the line to add.
 
 - `--check` reports the release, the launcher, `PATH` and the permission profiles; `--dry-run` changes nothing;
   `--rollback` goes back to the previous release; `--uninstall` removes the jobs, the launcher and the releases and
   keeps the state.
-- `--services` also installs the launchd jobs.
+- `--services` also installs the launchd job, `local.athena`, whose supervisor runs every service.
 - `--real-world` opens the door to real side effects on a state dir that lacks it; a state dir install creates gets it.
 
 `install.json`, beside the releases, is the one record of what runs: the current and previous release, where updates come
@@ -572,7 +622,8 @@ read off the folder or the link alone.
 
 **`athena update`** fetches the repository into a clone of its own, takes the newest `vX.Y.Z` tag above the running
 version (or main's head with `--channel main`; never an older version), makes the release beside the running one,
-records the switch, swaps `current`, restarts athena's launchd jobs, and asks the new release's doctor. Any check that
+records the switch, swaps `current`, restarts athena's launchd job (a release still on one job per service restarts each
+of those), and asks the new release's doctor. Any check that
 passed before and fails now, a doctor that doesn't answer, or a SIGTERM swaps back. A switch left on record by a killed
 update is undone by the next update or by doctor's `update` check, which otherwise only says which version runs and
 whether a newer one is out (one `ls-remote` a day).
@@ -599,10 +650,10 @@ The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. 
 | `watch.json` | `watch` | workers, PRs, review requests and stacks, for the dashboard |
 | `stack.json`, `open-prs-posted.json`, `ci-failed.json` | `prs`, `follow` | stacked PRs, posted PRs, CI incidents |
 | `slack-rex.json` | `slack` | each conversation's cursor |
-| `service-rex.json`, `services-stopped.json` | `services` | installed jobs, and Quit's mark |
+| `service-rex.json`, `services-stopped.json` | `services` | the services installed, and Quit's mark |
 | `board-rex.json` | `board` | where the board's block is |
 | `modules.json`, `revive.json` | `modules`, revive | modules switched off; Rex instances handled |
-| `run/` | many | runtime state: launchers and pids, a Pi worker's `<name>.pi.json` and `inbox/<name>/`, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json` |
+| `run/` | many | runtime state: launchers and pids, a Pi worker's `<name>.pi.json` and `inbox/<name>/`, `repo-sessions.json`, `sessions.json`, `ledger-live.json`, `config.good.json`, `watch-state.json`, `inbox.jsonl`, `follow.json`, `closes.json`, `limit.json`, `dash.json`, and the services supervisor's `services.json`, `services.lock`, `services-ask/` and `services/<name>.lock` |
 | `flame/index.sqlite` | `flame index` | the Flame page's index |
 | `scratch/<owner>/<name>/` | `athena scratch new` | disposable work with an owner and a ttl |
 | `locks/`, `ask.lock`, `doctor.lock` | `store.locked` | `flock` files |
@@ -610,7 +661,8 @@ The state dir is `~/Library/Application Support/athena`, or `ATHENA_STATE_DIR`. 
 | `trash/<date>/` | `store.to_trash` | anything athena removes |
 
 Outside the state dir: the releases and `install.json` under `~/.local/share/athena/`, the launcher at
-`~/.local/bin/athena`, the launchd jobs in `~/Library/LaunchAgents`, and each worker's worktree under `worktree_root`.
+`~/.local/bin/athena`, the launchd job `local.athena.plist` in `~/Library/LaunchAgents`, and each worker's worktree
+under `worktree_root`.
 
 ## The door to the outside world
 
@@ -648,6 +700,11 @@ Tests run only through `scripts/test.sh`, behind four walls:
 4. **A canary**: a Python audit hook in the test process and its `bin/athena` children records any reach for a real
    tool, a guarded path, the network or a foreign signal, and the harness fails any test whose log has an entry, even if
    the test swallowed the error.
+
+The services supervisor is tested with fake children (`tests/fixtures/fake_child.py`, and the `fake-services` fixture
+module for the real `athena services run`), never the real dash, watch or menu bar, and launchd is a stub that remembers
+what it loaded. Each fake child holds a lock while it lives, and each test ends by checking every one is gone. The upgrade
+tests run the tagged `v1.0.0`, the last release with one job per service, against this tree.
 
 `scripts/smoke.sh` runs real Claudes through spawn, status, send, the report gate and retire on a private Rex server
 and a scratch state dir. `scripts/chaos-rex.py` runs the [chaos catalogue](docs/chaos.md)'s cases that need real

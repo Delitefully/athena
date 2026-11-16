@@ -440,7 +440,7 @@ class Stubs(Case):
     def test_launchd_is_a_stub_and_writes_only_the_fake_folder(self):
         out = services.install(caps.CTX)
         self.assertTrue(any("wrote" in a for a in out))
-        self.assertTrue((self.tmp / "agents" / "local.athena.watch.plist").exists())
+        self.assertTrue((self.tmp / "agents" / "local.athena.plist").exists())
         self.assertTrue(any(c.startswith("launchctl bootstrap") for c in self.world_calls()))
 
     def test_with_no_stub_launchd_is_refused_and_writes_nothing(self):

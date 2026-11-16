@@ -258,8 +258,7 @@ class Upgrade(_HerdrHome):
         self.assertIn("✗ athena.board is off", done.stdout)
         (self.loaded / "athena.board").unlink()
         done = self.run_step("verify")
-        for job in ("doctor", "watch", "dash"):
-            self.assertIn(f"✗ local.athena.{job} is loaded", done.stdout)
+        self.assertIn("✗ local.athena is loaded", done.stdout)
         self.assertIn("✗ the watch has come round", done.stdout)
         self.assertNotEqual(done.returncode, 0)
 
@@ -267,8 +266,8 @@ class Upgrade(_HerdrHome):
         self.ok("snapshot")
         self.ok("move")
         self._bare_install("exit 0\n")
-        (self.loaded / "local.athena.doctor").write_text("")
-        self.fails.write_text("print local.athena.doctor\n")
+        (self.loaded / "local.athena").write_text("")
+        self.fails.write_text("print local.athena\n")
         done = self.run_step("rollback")
         self.assertNotEqual(done.returncode, 0)
         self.assertNotIn("rolled back", done.stdout)
@@ -356,13 +355,13 @@ class Upgrade(_HerdrHome):
         self.ok("stop-old")
         self.ok("move")
         self._bare_install("exit 0\n")
-        job = self.agents / "local.athena.doctor.plist"
+        job = self.agents / "local.athena.plist"
         job.write_text("x")
-        (self.loaded / "local.athena.doctor").write_text("")
+        (self.loaded / "local.athena").write_text("")
         (self.new / "health.json").write_text(json.dumps({"ts": os.path.getmtime(job) - 3600}))
-        self.assertIn("✗ the doctor job has run", self.run_step("verify").stdout)
+        self.assertIn("✗ doctor has run", self.run_step("verify").stdout)
         (self.new / "health.json").write_text(json.dumps({"ts": os.path.getmtime(job) + 1}))
-        self.assertIn("✓ the doctor job has run", self.run_step("verify").stdout)
+        self.assertIn("✓ doctor has run", self.run_step("verify").stdout)
 
     def test_verify_reads_a_busy_doctor_as_busy(self):
         self.ok("snapshot")
@@ -449,7 +448,7 @@ case "$*" in *--dry-run*) echo "  + release 1.0.0"; exit 0 ;; esac
 if grep -q "athena launcher" "{launcher}" 2>/dev/null; then echo "  = release 1.0.0"; exit 0; fi
 printf '#!/bin/sh\\n# athena launcher, written by `athena install`.\\n%s\\nexit 0\\n' '{answers}' > "{launcher}"
 chmod 755 "{launcher}"
-for job in doctor watch dash; do echo x > "{self.agents}/local.athena.$job.plist"; touch "{self.loaded}/local.athena.$job"; done
+echo x > "{self.agents}/local.athena.plist"; touch "{self.loaded}/local.athena"
 echo "  + release 1.0.0"
 """)
         stand_in.chmod(0o755)
@@ -560,7 +559,7 @@ exit 0
     def test_run_upgrades_and_a_second_run_changes_nothing(self):
         done = self.run_step("run")
         self.assertIn("✓ the ledger is at the new path", done.stdout, done.stdout + done.stderr)
-        launchd_only = {"the doctor job has run", "the watch has come round", "the dash on port"}
+        launchd_only = {"doctor has run", "the watch has come round", "the dash on port"}
         failed = [line for line in done.stdout.splitlines() if line.strip().startswith("✗")]
         self.assertTrue(all(any(part in line for part in launchd_only) for line in failed), failed)
         self.assertTrue(self.old.is_symlink() and (self.new / "ledger.jsonl").is_file(), "state moved, old path a link")
@@ -570,8 +569,7 @@ exit 0
             self.assertFalse((self.agents / f"{job}.plist").exists())
             self.assertTrue((self.home / "Library/LaunchAgents.athena-old" / f"{job}.plist").exists())
         self.assertTrue((self.agents / "athena.herdr.plist").exists(), "herdr's server job stays")
-        for job in ("doctor", "watch", "dash"):
-            self.assertTrue((self.agents / f"local.athena.{job}.plist").exists())
+        self.assertTrue((self.agents / "local.athena.plist").exists(), "one job runs every service")
         self.assertIn("athena launcher", (self.home / ".local/bin/athena").read_text())
         self.assertEqual(os.readlink(self.home / ".local/bin/athena-herdr"), str(self.home / "Developer/athena/bin/athena"))
         settings = json.loads(self.settings.read_text())
@@ -601,8 +599,8 @@ exit 0
 
     def test_rollback_puts_the_herdr_launcher_and_plugin_back(self):
         self.run_step("run")
-        self._bare_install(f'case "$*" in "hq status") echo \'{{"alive": false}}\' ;; "services uninstall") rm -f "{self.agents}"/local.athena.*.plist '
-                           f'"{self.loaded}"/local.athena.* ;; esac\nexit 0\n')
+        self._bare_install(f'case "$*" in "hq status") echo \'{{"alive": false}}\' ;; "services uninstall") rm -f "{self.agents}"/local.athena.plist '
+                           f'"{self.loaded}"/local.athena ;; esac\nexit 0\n')
         self.ok("rollback")
         self.assertEqual(os.readlink(self.home / ".local/bin/athena"), str(self.home / "Developer/athena/bin/athena"))
         self.assertTrue(json.loads(self.settings.read_text())["enabledPlugins"]["athena@athena"])

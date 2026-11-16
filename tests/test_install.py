@@ -138,8 +138,8 @@ class Install(Case):
         self.assertIn("wrote", out)
         agents = self.tmp / "agents"
         jobs = {p.name for p in agents.iterdir()}
-        self.assertEqual(jobs, {"local.athena.dash.plist", "local.athena.doctor.plist", "local.athena.menubar.plist", "local.athena.watch.plist"})
-        self.assertIn("/current/bin/athena", (agents / "local.athena.doctor.plist").read_text())
+        self.assertEqual(jobs, {"local.athena.plist"}, "one job runs every service")
+        self.assertIn("/current/bin/athena", (agents / "local.athena.plist").read_text())
         self.assertTrue(any("launchctl bootstrap" in c for c in self.world_calls()))
         self.assertEqual(self.installed("install", "--uninstall").returncode, 0)
         self.assertEqual(list(agents.iterdir()), [])

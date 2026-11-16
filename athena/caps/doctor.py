@@ -169,6 +169,10 @@ def run(ctx, fix=True, now=None) -> dict:
                 try:
                     check.repair()
                     actions.append(f"repaired {check.name}")
+                    if check.quiet:  # routine upkeep, done: no problem to tell, and no notification
+                        results[check.name] = {**results[check.name], "ok": True, "detail": f"{check.detail}; under way"}
+                        down.pop(check.name, None)
+                        continue
                 except Exception as exc:
                     detail += f"; repair failed: {exc}"
             else:

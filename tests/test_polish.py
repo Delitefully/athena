@@ -653,13 +653,13 @@ class SessionsDoorShut(Case):
 
 class Round1(Case):
     def test_a_failed_bootstrap_is_said_and_services_install_exits_nonzero(self):
-        """HQ's round 2: one job failing no longer stops the others; it is said, and the exit code says so too."""
+        """HQ's round 2: a job that fails to load is said, and the exit code says so too."""
         script = self.stubs / "launchctl"
         script.write_text('#!/bin/sh\ncase "$1" in bootstrap) echo refused >&2; exit 5 ;; print) exit 113 ;; esac\n')
         with mock.patch.dict(os.environ, {"ATHENA_BOOTSTRAP_WAIT": "0"}):
             done = self.cli("services", "install")
         self.assertNotEqual(done.returncode, 0)
-        self.assertIn("failed local.athena.", done.stdout)
+        self.assertIn("failed local.athena:", done.stdout)
         self.assertIn("bootstrap failed (5): refused", done.stdout)
 
     def test_a_failed_bootout_leaves_the_job_file(self):
