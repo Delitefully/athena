@@ -106,8 +106,9 @@ prompt (`athena hq`, revive and `athena hq rotate`, from `athena-cli`) go the sa
 
 - **Where the inbox is.** Claude Code gives each session a Unix socket and passes its path to hooks as
   `CLAUDE_CODE_MESSAGING_SOCKET`. HQ's SessionStart hook writes it to `hq-start.json` with the pid of HQ's Claude.
-- **When it is used.** Only while that pid is still HQ's running, named Claude. A socket an earlier HQ wrote down is never used,
-  and neither is a dead HQ's socket under a reused pid.
+- **When it is used.** Only while that pid is still HQ's running, named Claude, and the socket is that Claude's own (Claude Code
+  names it `<pid>.sock`). A socket an earlier HQ wrote down is never used, nor a dead HQ's socket under a reused pid, nor another
+  Claude's that ran HQ's hook.
 - **Why HQ takes it.** HQ's own `--settings` set `crossSessionInbound` to `accept`. A sender with no permission mode of its own (athena
   is no Claude session) is delivered, not held for the human's approval.
 - **The fallback.** When the inbox can't be reached (no socket on record, an HQ started before this release, a socket that

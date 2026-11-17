@@ -24,7 +24,7 @@ from athena.kernel.backend import BackendError
 
 SUMMARY = "one line per change, waking HQ for what matters"
 WAKE_LINES = 8
-SENDER = "athena-watch"  # the name HQ shows: `› Message from athena-watch: athena watch HH:MM: …`
+SENDER = "athena-watch"  # the name HQ shows: `› Message from @athena-watch: athena watch HH:MM: …`
 REPEAT_AFTER = 600
 STUCK_AFTER = float(os.environ.get("ATHENA_STUCK_SECONDS") or 1800)
 _SAFE = re.compile(r"[^A-Za-z0-9_.#:/>+ ·-]")

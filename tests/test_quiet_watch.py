@@ -23,8 +23,8 @@ HQ_PID = 4242
 class StandIn:
     """A stand-in inbox: a Unix socket that keeps every line each connection sent, as Claude Code's own does."""
 
-    def __init__(self, folder):
-        self.path = str(Path(folder) / "hq.sock")
+    def __init__(self, folder, pid=HQ_PID):
+        self.path = str(Path(folder) / f"{pid}.sock")  # Claude Code names a session's socket after its pid
         self.lines = []
         self.server = socket.socket(socket.AF_UNIX)
         self.server.bind(self.path)
@@ -70,13 +70,13 @@ class Delivery(Case):
         runs = mock.patch.object(agents, "stat_of", return_value="S")  # HQ's own Claude runs under that pid
         self.hq_runs = runs.start()
         self.addCleanup(runs.stop)
-        for slow in (mock.patch.object(inbox, "LINGER", 0.0), mock.patch.object(hq, "SETTLE", 0.0)):
+        for slow in (mock.patch.object(inbox, "LINGER", 0.0), mock.patch.object(hq, "SETTLE", 0.0), mock.patch.object(revive, "REVIVE_SETTLE", 0.0)):
             slow.start()
             self.addCleanup(slow.stop)
 
-    def stand_in(self) -> StandIn:
+    def stand_in(self, pid=HQ_PID) -> StandIn:
         folder = tempfile.mkdtemp(prefix="q", dir=SANDBOX["SOCKETS"])
-        box = StandIn(folder)
+        box = StandIn(folder, pid)
         self.addCleanup(box.close)
         return box
 
@@ -154,7 +154,7 @@ class Delivery(Case):
         self.assertRegex(check.detail, r"^falling back to typing: HQ's SessionStart hook recorded no inbox")
 
     def test_an_inbox_that_refuses_falls_back_to_typing_and_doctor_says_why(self):
-        gone = str(Path(tempfile.mkdtemp(prefix="q", dir=SANDBOX["SOCKETS"])) / "gone.sock")
+        gone = str(Path(tempfile.mkdtemp(prefix="q", dir=SANDBOX["SOCKETS"])) / f"{HQ_PID}.sock")  # HQ's by name, but nothing listens there
         self.record_inbox(gone)
         self.fallback_ready()
         self.assertTrue(watch.wake_hq(caps.CTX, [watch.Line("w1 report DONE", "wake")]))
@@ -194,6 +194,16 @@ class Delivery(Case):
         agents.pid_file(config.hq_name()).unlink()
         self.record_inbox(box.path, pid=None)
         self.assertRegex(inbox.check(config.hq_name()).detail, r"an earlier HQ's \(pid None\)", "no pid on either side is no match")
+
+    def test_another_claudes_socket_recorded_under_hqs_pid_is_not_used(self):
+        """Something else that ran HQ's hook with HQ's settings: its socket, under HQ's pid file, is still not HQ's Claude's own."""
+        box = self.stand_in(HQ_PID + 7)
+        self.record_inbox(box.path)
+        self.fallback_ready()
+        self.assertTrue(watch.wake_hq(caps.CTX, [watch.Line("w1 report DONE", "wake")]))
+        self.assertEqual(box.lines, [])
+        self.assertEqual(len(fake._load()["typed"]), 1)
+        self.assertIn(f"isn't the socket of HQ's Claude (pid {HQ_PID})", inbox.check(config.hq_name()).detail)
 
     # doctor
 
@@ -248,7 +258,7 @@ class Delivery(Case):
         self.assertEqual(box.bodies(), [("athena-cli", hq.ROUTINE)])
 
     def test_the_rotated_hqs_first_prompt_goes_to_its_new_inbox(self):
-        box = self.stand_in()
+        box = self.stand_in(HQ_PID + 1)
         record = hq.load()
 
         def relaunched(old, args, cwd):  # the new Claude's SessionStart writes its own inbox and pid
@@ -293,6 +303,23 @@ class Delivery(Case):
         revive._offer(caps.CTX, outcome, 1.0)
         self.assertEqual(outcome.state, State.PROMPTED)
         self.assertEqual([t for _, t in fake._load()["typed"]], [hq.ROUTINE])
+
+    def test_revive_waits_when_hqs_state_cant_be_read_on_the_fallback_nothing_was_typed(self):
+        store.write_json(store.path("hq-start.json"), {"session_id": "conv"})
+        outcome = Outcome(config.hq_name(), Kind.HQ, state=State.UP, session="conv", prompt=hq.ROUTINE)
+        calls = iter([{"state": "idle"}])
+
+        def state(*a, **k):  # _offer's own look says ready; the fallback's look can't say
+            try:
+                return next(calls)
+            except StopIteration:
+                raise agents.Unknown("ps failed")
+
+        with mock.patch.object(agents, "state", side_effect=state):
+            revive._offer(caps.CTX, outcome, 1.0)
+        self.assertEqual(outcome.state, State.UP, "waits for the next tick, not PROMPT_UNSURE")
+        self.assertIn("prompt waits", outcome.detail)
+        self.assertEqual(self.keystrokes(), [])
 
     def test_nothing_types_a_prompt_into_hq_but_the_delivery_function(self):
         root = Path(hq.__file__).parent

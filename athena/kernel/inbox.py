@@ -9,12 +9,14 @@ own SessionStart writes its own. HQ's --settings set crossSessionInbound to acce
 no permission mode of its own through to a bypass-mode HQ instead of holding it for the human's approval.
 """
 import json
+import os
 import re
 import socket
 import time
 import uuid
 
 from athena.kernel import agents, caps, store
+from athena.kernel.backend import BackendError
 
 TAG = "cross-session-message"
 SEND_TIMEOUT = 5.0
@@ -47,6 +49,9 @@ def socket_of(name) -> str:
     pid = agents.read_pid(name)
     if not pid or start.get("pid") != pid:
         raise Unreachable(f"the inbox on record is an earlier HQ's (pid {start.get('pid')}), not the running one's ({pid})")
+    stem = os.path.basename(path).rsplit(".sock", 1)[0]
+    if stem != str(pid) and not stem.startswith(f"{pid}-"):  # Claude Code names its socket after its own pid: <pid>.sock
+        raise Unreachable(f"the inbox on record ({path}) isn't the socket of HQ's Claude (pid {pid})")
     try:  # a dead HQ's pid can be reused, and Claude Code names its socket after the pid: only HQ's own running Claude counts
         if not agents.stat_of(name):
             raise Unreachable(f"HQ's Claude (pid {pid}) isn't running")
@@ -100,7 +105,10 @@ def deliver(backend, record, text, sender, wait_box=0.0, settle=0.0) -> str:
         return "inbox"
     except Unreachable:
         pass
-    now = agents.state(backend, record)
+    try:
+        now = agents.state(backend, record)
+    except BackendError as exc:  # nothing typed yet: as agents.send says it, so a caller waits rather than reads it as sent
+        raise agents.Refused("unknown", str(exc))
     if now["state"] not in agents.READY:
         raise agents.Refused("not_idle", f"HQ is {now['state']}, and its inbox can't be reached")
     agents.send(backend, record, text, wait_box=wait_box)
