@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Quiet watch.** What athena says to HQ (the watch's wakes, doctor's rotation ask, HQ's routine and a rotated or
+  revived HQ's first prompt) goes to HQ's cross-session inbox, a dim `› Message from @athena-watch: …` line, instead of
+  being typed into its input box. A half-typed prompt stays put, and a busy HQ reads it between tool calls. Typing stays
+  the fallback when the inbox can't be reached, and `athena doctor` says which route is in use (`hq-delivery`). An HQ
+  started before this release types until its next start. See `docs/watch.md`.
 - **Pi workers.** `athena spawn --agent pi` launches a worker that runs Pi instead of Claude Code, on Pi's own default
   model (DeepSeek, say) unless `--model` names one, which is passed as written. Claude stays the default everywhere,
   and HQ is always Claude. athena's Pi extension (`pi-extension/athena.ts`, loaded per launch with `-e`, never installed)

@@ -96,12 +96,28 @@ say, nothing is recorded and the next fetch asks again. On a repo's first sight,
 stays red until GitHub says. A commit or run GitHub has none of (404) is not ours, and is logged once. There is no setting to watch every failure on main again: that was the old
 default, removed as a bad one.
 
-## When HQ is busy
+## How a wake reaches HQ
 
-A wake is typed into HQ only when it is idle with an empty input box. Until then its lines are held, in `run/watch-state.json`,
-across restarts too, and each held line is logged once to `logs/watch-suppressed.log` as `HQ busy, held`. A held `slack-new` for a
-DM or group DM is urgent: it goes into HQ's inbox (`athena watch --inbox`) at once, so HQ can see it mid-turn. It is still typed
-when HQ goes idle, and not written to the inbox a second time.
+A wake goes to HQ as a cross-session message, the way workers' SendMessage reports arrive (`athena/kernel/inbox.py`). It goes into
+HQ's own inbox socket, never into the human's input box. HQ shows it as one dim line, `› Message from @athena-watch: athena watch
+HH:MM: … (ctrl+o to expand)`. An idle HQ starts a turn with it, a busy one reads it between tool calls, and anything the human has
+half typed in the box stays there, unsent. Doctor's rotation ask (from `athena-doctor`), HQ's routine and a rotated HQ's first
+prompt (`athena hq`, revive and `athena hq rotate`, from `athena-cli`) go the same way.
+
+- **Where the inbox is.** Claude Code gives each session a Unix socket and passes its path to hooks as
+  `CLAUDE_CODE_MESSAGING_SOCKET`. HQ's SessionStart hook writes it to `hq-start.json` with the pid of HQ's Claude.
+- **When it is used.** Only while that pid is still HQ's running, named Claude. A socket an earlier HQ wrote down is never used,
+  and neither is a dead HQ's socket under a reused pid.
+- **Why HQ takes it.** HQ's own `--settings` set `crossSessionInbound` to `accept`. A sender with no permission mode of its own (athena
+  is no Claude session) is delivered, not held for the human's approval.
+- **The fallback.** When the inbox can't be reached (no socket on record, an HQ started before this release, a socket that
+  refuses), the wake is typed as before. It goes in only while HQ is idle with an empty input box, and until then its lines are
+  held, in `run/watch-state.json`, across restarts too. Each held line is logged once to `logs/watch-suppressed.log` as `HQ busy,
+  held`. A held `slack-new` for a DM or group DM is urgent: it goes into athena's own inbox (`run/inbox.jsonl`, `athena watch
+  --inbox`) at once, so HQ can see it mid-turn. It is still sent when HQ goes idle, and not written there a second time.
+
+`athena doctor` says which route the next notice takes, in its `hq-delivery` line: `to HQ's inbox at <socket>`, or `falling back to
+typing: <why>`. Falling back is no failure, since typing still delivers.
 
 ## How the Slack doorbell reads a conversation
 
