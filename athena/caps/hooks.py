@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from athena.kernel import bus, caps, store
+from athena.kernel import agents, bus, caps, config, store
 
 SUMMARY = "claude code hook events and the report gate (internal)"
 SUMMARY_LIMIT = 300
@@ -340,11 +340,15 @@ def _log_error(text):
         pass
 
 
-def _hq_event(event):
+def _hq_event(event, env):
+    """SessionStart keeps HQ's inbox with the pid of the Claude it belongs to (kernel/inbox.py): each start writes its own, so a
+    rotated, revived or restarted HQ's comes with it, and one with no messaging forgets the last."""
     kind = event.get("hook_event_name")
     if kind == "SessionStart" and event.get("session_id"):
-        store.write_json(store.path("hq-start.json"), {"source": event.get("source"),
-                                                       "session_id": event["session_id"], "ts": time.time()})
+        started = {"source": event.get("source"), "session_id": event["session_id"], "ts": time.time()}
+        if env.get("CLAUDE_CODE_MESSAGING_SOCKET"):
+            started.update(messaging_socket=env["CLAUDE_CODE_MESSAGING_SOCKET"], pid=agents.read_pid(config.hq_name()))
+        store.write_json(store.path("hq-start.json"), started)
     elif kind == "UserPromptSubmit":
         items = caps.get("items")
         if items:
@@ -374,7 +378,7 @@ def main_hook(raw: str, env) -> str:
             return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": NO_RENAME}})
         return json.dumps(decision) if decision else ""
     if env.get("ATHENA_ROLE") == "hq":
-        _hq_event(event)
+        _hq_event(event, env)
     return ""
 
 

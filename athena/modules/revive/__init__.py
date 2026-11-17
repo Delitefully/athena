@@ -16,7 +16,7 @@ import shlex
 import time
 from collections import namedtuple
 
-from athena.kernel import agents, caps, ledger, store
+from athena.kernel import agents, caps, inbox, ledger, store
 from athena.kernel.backend import BackendError
 
 from . import plan, script
@@ -240,7 +240,8 @@ def _up(ctx, outcome) -> bool:
 
 
 def _offer(ctx, outcome, now):
-    """Its prompt, typed only once its Claude is ready and nobody's text is in its box. A refusal, or a state nobody could read,
+    """Its prompt, once its Claude is ready: HQ's to its inbox, else (or when that can't be reached) typed only while nobody's text
+    is in its box. A refusal, or a state nobody could read,
     waits for the next tick; only Rex failing while it types leaves the prompt unsure."""
     target = _target(outcome)
     try:
@@ -251,7 +252,11 @@ def _offer(ctx, outcome, now):
     if not ready:
         return
     try:
-        agents.send(ctx.backend, target, outcome.prompt)
+        if outcome.kind is Kind.HQ:  # to HQ's inbox, a collapsed line; typed only when that can't be reached (kernel/inbox.py)
+            hq = caps.get("hq")
+            inbox.deliver(ctx.backend, target, outcome.prompt, hq.SENDER, settle=hq.SETTLE)
+        else:
+            agents.send(ctx.backend, target, outcome.prompt)
         _move(outcome, State.PROMPTED, "", now)
     except agents.Refused as exc:
         outcome.detail = f"prompt waits: {exc}"

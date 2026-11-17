@@ -19,11 +19,12 @@ import time
 from collections import namedtuple
 
 from athena.cli import UserError
-from athena.kernel import agents, bus, caps, config, gitops, ledger, store, sandbox
+from athena.kernel import agents, bus, caps, config, gitops, inbox, ledger, store, sandbox
 from athena.kernel.backend import BackendError
 
 SUMMARY = "one line per change, waking HQ for what matters"
 WAKE_LINES = 8
+SENDER = "athena-watch"  # the name HQ shows: `› Message from athena-watch: athena watch HH:MM: …`
 REPEAT_AFTER = 600
 STUCK_AFTER = float(os.environ.get("ATHENA_STUCK_SECONDS") or 1800)
 _SAFE = re.compile(r"[^A-Za-z0-9_.#:/>+ ·-]")
@@ -520,8 +521,8 @@ _DM = re.compile(f"^{_SLACK}$")
 
 
 def hold(lines) -> list:
-    """Lines a wake could not be typed for, held from this loop on: each is logged once as held, and a DM's or group DM's `slack-new`
-    is urgent, so it goes into HQ's inbox at once, for HQ to see mid-turn. Returns the texts put in the inbox, which the wake that
+    """Lines a wake could not be sent for, held from this loop on: each is logged once as held, and a DM's or group DM's `slack-new`
+    is urgent, so it goes into athena's own inbox (run/inbox.jsonl, read by `watch --inbox`) at once, for HQ to see mid-turn. Returns the texts put in the inbox, which the wake that
     types them later leaves out of it."""
     inboxed = []
     for line in lines:
@@ -537,17 +538,16 @@ def hold(lines) -> list:
 
 
 def wake_hq(ctx, lines, wait_box=0.0, inboxed=()) -> bool:
-    """Type the wake into HQ only when it is idle, never mid-turn, and its box is empty; False keeps the lines for next time. The lines
-    were rebuilt from the allowlist (`safe`) where they were made, as the old athena's mod rebuilt them. A line `hold` already put in
-    the inbox is typed but not put there again."""
+    """One message to HQ's cross-session inbox (kernel/inbox.py), a collapsed line that never touches its input box, mid-turn too;
+    typed only when that inbox can't be reached, and then only while HQ is idle with an empty box. False keeps the lines for next
+    time. The lines were rebuilt from the allowlist (`safe`) where they were made, as the old athena's mod rebuilt them. A line
+    `hold` already put in athena's own inbox (run/inbox.jsonl) is sent but not put there again."""
     hq = store.read_dict(store.path("hq.json"))
     if not hq.get("block"):
         return False
     record = {**hq, "name": config.hq_name()}
     try:
-        if agents.state(ctx.backend, record)["state"] not in agents.READY:
-            return False
-        agents.send(ctx.backend, record, wake_text(lines), wait_box=wait_box)
+        inbox.deliver(ctx.backend, record, wake_text(lines), SENDER, wait_box=wait_box)
     except Exception:
         return False
     inboxed = list(inboxed)
@@ -580,7 +580,7 @@ def read_inbox() -> list:
 def _configure(p):
     p.add_argument("--once", action="store_true", help="one pass, then exit")
     p.add_argument("--tagged", action="store_true", help="JSON lines: each marked wake or not")
-    p.add_argument("--wake", action="store_true", help="type wakes into HQ when it is idle")
+    p.add_argument("--wake", action="store_true", help="wake HQ: a message to its inbox, typed only when that can't be reached")
     p.add_argument("--interval", type=float, default=20.0)
     p.add_argument("--inbox", action="store_true", help="print what the watch has told HQ since the last read, as data")
     p.add_argument("--stop", action="store_true", help="stop the running watch")
