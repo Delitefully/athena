@@ -14,7 +14,7 @@ from unittest import mock
 from harness import Case, ROOT, spawn_record, store
 
 from athena.caps import hq, items
-from athena.kernel import agents, caps, ledger
+from athena.kernel import agents, caps, inbox, ledger
 
 ATHENA_WORKER_RULES = [
     "## Before DONE", "**Self-review.**", "Wait for the PR's required checks to finish",
@@ -70,9 +70,9 @@ class Playbook(Case):
             self.assertIn("load the athena skill", prompt)
 
     def test_a_fresh_hq_is_sent_the_routine_that_loads_the_skill(self):
-        with mock.patch.object(agents, "wait"), mock.patch.object(agents, "send") as typed:
+        with mock.patch.object(agents, "wait"), mock.patch.object(inbox, "deliver") as sent:  # its inbox, else typed
             hq.open_hq(focus=False)
-        self.assertIn("load the athena skill", typed.call_args.args[2])
+        self.assertIn("load the athena skill", sent.call_args.args[2])
         self.assertIn("--plugin-dir", store.path("run", "athena.sh").read_text())
 
     def test_the_skill_keeps_athenas_procedures(self):

@@ -16,7 +16,7 @@ import shlex
 import time
 from collections import namedtuple
 
-from athena.kernel import agents, caps, ledger, store
+from athena.kernel import agents, caps, inbox, ledger, store
 from athena.kernel.backend import BackendError
 
 from . import plan, script
@@ -29,6 +29,7 @@ LOCK = "locks/revive.lock"
 SETTLE_LIMIT = 120   # seconds after Rex starts in which a pane in doubt (plan.DOUBT) is waited for, not skipped
 FOLLOW_LIMIT = 600   # seconds a revived pane has to show its Claude, and to take its prompt
 PACE_LIMIT = 60      # seconds the queue waits for a relaunched Claude to come up before the next pane is typed anyway
+REVIVE_SETTLE = 2.0  # seconds a tick waits for a revived HQ's SessionStart to write its inbox down: a tick, so not hq.SETTLE
 CONTINUE = "Rex restarted while you were mid-turn, and athena brought you back on this conversation: carry on where you left off."
 
 Instance = namedtuple("Instance", "id started_at")
@@ -240,7 +241,8 @@ def _up(ctx, outcome) -> bool:
 
 
 def _offer(ctx, outcome, now):
-    """Its prompt, typed only once its Claude is ready and nobody's text is in its box. A refusal, or a state nobody could read,
+    """Its prompt, once its Claude is ready: HQ's to its inbox, else (or when that can't be reached) typed only while nobody's text
+    is in its box. A refusal, or a state nobody could read,
     waits for the next tick; only Rex failing while it types leaves the prompt unsure."""
     target = _target(outcome)
     try:
@@ -251,7 +253,11 @@ def _offer(ctx, outcome, now):
     if not ready:
         return
     try:
-        agents.send(ctx.backend, target, outcome.prompt)
+        if outcome.kind is Kind.HQ:  # to HQ's inbox, a collapsed line; typed only when that can't be reached (kernel/inbox.py)
+            hq = caps.get("hq")
+            inbox.deliver(ctx.backend, target, outcome.prompt, hq.SENDER, settle=REVIVE_SETTLE)
+        else:
+            agents.send(ctx.backend, target, outcome.prompt)
         _move(outcome, State.PROMPTED, "", now)
     except agents.Refused as exc:
         outcome.detail = f"prompt waits: {exc}"

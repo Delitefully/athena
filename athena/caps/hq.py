@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from athena.cli import UserError
-from athena.kernel import agents, bus, caps, config, lab, sandbox, store
+from athena.kernel import agents, bus, caps, config, inbox, lab, sandbox, store
 from athena.kernel.backend import BackendError
 
 SUMMARY = "open, rotate or stop the chief of staff's session"
@@ -39,6 +39,9 @@ ASK_FORGOTTEN_AFTER = 3600
 ROTATE_ASK = ("athena doctor: your context is {ctx}. Write your in-flight threads (what you promised, what you wait on, what is half "
               "done) to {threads}, then run `athena hq rotate`. It rotates once you are idle, never while the human is typing.")
 ROTATE_ASK_EVERY = 2 * 3600
+SENDER = "athena-cli"  # the name HQ shows on its routine and rotation prompts; doctor's ask is DOCTOR's
+DOCTOR = "athena-doctor"
+SETTLE = 10.0  # seconds a fresh HQ, ready on screen, gets for its SessionStart hook to write its inbox down
 STATES = {"absent": "no HQ on this backend yet", "running": "running",
           "unrecorded": "HQ's Claude runs but its record is lost; no second one will be started",
           "lost": "HQ's record is lost and its Claude is gone; its conversation is known",
@@ -180,12 +183,13 @@ def open_hq(model=None, focus=True, routine=True) -> dict:
 
 
 def _send_routine(record):
-    """A session cannot start its own turn: HQ comes up idle until something types to it. Trouble here is said, not fatal."""
+    """A session cannot start its own turn: HQ comes up idle until something says something to it, to its inbox (typed only when
+    that can't be reached). Trouble here is said, not fatal."""
     target = _record_for_agents(record)
     backend = caps.CTX.backend
     try:
         agents.wait(backend, target, agents.READY, timeout=60)
-        agents.send(backend, target, ROUTINE)
+        inbox.deliver(backend, target, ROUTINE, SENDER, settle=SETTLE)
     except (agents.Refused, BackendError) as exc:
         print(f"HQ is up but its routine was not sent ({exc})", file=sys.stderr)
 
@@ -255,7 +259,7 @@ def _wait_quiet(backend, record, wait) -> bool:
 
 
 def _cycle(record, args, prompt, why, forget=False, unattended=False) -> dict:
-    """Exit HQ when it is quiet, start it again with `args`, then prompt it. A busy or typed-in HQ is left alone. As the old athena's: a
+    """Exit HQ when it is quiet, start it again with `args`, then prompt it, to its new inbox (typed only when that can't be reached). A busy or typed-in HQ is left alone. As the old athena's: a
     rotation HQ asked for answers Claude's background-work dialog with "Exit and stop tasks"; an `unattended` one never stops HQ's
     background work, and skips instead."""
     sandbox.require(UserError)
@@ -276,7 +280,7 @@ def _cycle(record, args, prompt, why, forget=False, unattended=False) -> dict:
     target = _record_for_agents(updated)
     try:
         agents.wait(ctx.backend, target, agents.READY, timeout=120)
-        agents.send(ctx.backend, target, prompt)
+        inbox.deliver(ctx.backend, target, prompt, SENDER, settle=SETTLE)
     except (agents.Refused, BackendError) as exc:
         raise UserError(f"{why}: HQ is back but its prompt was not sent ({exc})")
     finally:
@@ -634,14 +638,13 @@ def _asked_file():
 
 
 def _ask_to_rotate(used):
-    """As the old doctor: once its context holds hq_rotate_tokens, HQ is asked, at most once in two hours and only while it is idle with an empty box, to write its
-    threads and rotate itself. Nothing rotates it by force. This runs inside `doctor --json`, so it prints nothing."""
+    """As the old doctor: once its context holds hq_rotate_tokens, HQ is asked, at most once in two hours, to write its threads and
+    rotate itself: to its inbox, or typed only while it is idle with an empty box. Nothing rotates it by force. This runs inside
+    `doctor --json`, so it prints nothing."""
     record = _record_for_agents(load())
     backend = caps.CTX.backend
     try:
-        if agents.state(backend, record)["state"] not in agents.READY or agents.typing(backend, record):
-            return
-        agents.send(backend, record, ROTATE_ASK.format(ctx=against_line(used), threads=store.path("threads.md")))
+        inbox.deliver(backend, record, ROTATE_ASK.format(ctx=against_line(used), threads=store.path("threads.md")), DOCTOR)
     except (agents.Refused, BackendError):
         return
     store.write_json(_asked_file(), {"ts": time.time()})
@@ -660,7 +663,7 @@ def _running_checks(ctx, record) -> list:
     session = trusted_session(record)
     if session != record.get("session"):
         _amend(record, session=session)
-    out = [caps.Check("hq", True, f"running, conversation {session}", short="running")]
+    out = [caps.Check("hq", True, f"running, conversation {session}", short="running"), inbox.check(name())]
     now = agents.state(ctx.backend, _record_for_agents(record))
     memory = store.read_dict(store.path("run", "hq-blocked.json"))
     if now["state"] == "blocked":

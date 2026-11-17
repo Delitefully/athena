@@ -79,6 +79,7 @@ The kernel (`athena/kernel/`):
 | `config.py` | `config.json` in the state dir. Top-level keys (`model`, `effort`, `hq_model`, `hq_rotate_tokens`, `human_merge_repos`, Slack and CI keys, ...) and a `rex` block for the rest (`binary`, `server`, `caps`, `modules`, `dash_port`, `max_workers`, `claude` and `pi`, the two agents' commands, ...). A file that doesn't parse falls back to the last good copy, `run/config.good.json`. |
 | `backend.py` | The session backend interface: create a session or window, read a screen, type, press a key, close, label, follow events. |
 | `agents.py` | A Claude (or a Pi) in a place, independent of the backend: start it from a launcher, read what state it is in, type to it safely (a Pi: post to its inbox), make it exit, kill it. |
+| `inbox.py` | What athena says to HQ: a message to HQ's cross-session inbox socket, only while it is the running HQ's own; typed through `agents.py` only when that can't be reached. |
 | `gitops.py` | Git for what guards a launch and a removal: preflight, worktrees, unsaved work, backup refs under `refs/athena-backup/`, git-ignored work. Reads take no optional locks. |
 | `budget.py` | The machine budget checked before a launch: free memory, free disk, load. |
 | `caps.py` | The capability contract, discovery and loading. |
@@ -328,17 +329,18 @@ The watch (`athena watch --tagged --wake`) is a long-running process, a launchd 
 1. folds the workers (ledger, status files, PRs) into a snapshot and diffs it against the last one;
 2. reads new events from the bus;
 3. calls every capability's and module's `tick` and `on_event`;
-4. prints each resulting line, and types the ones that need HQ into it.
+4. prints each resulting line, and sends the ones that need HQ to it (its inbox; typed only as the fallback).
 
 Each line is `wake`, `routine` or `quiet`, decided where it is made. Routine lines go to the watch's log; quiet ones go to
 `logs/watch-suppressed.log` with their reason; a wake repeated within ten minutes is dropped (Slack's lines excepted). A
 capability whose `tick` raises becomes a `watch error` line, not a dead loop.
 
-**A wake** is typed into HQ as one prompt, `athena watch HH:MM: <line> · <line> · ...`, and only while HQ is idle with an
-empty input box; until then the lines are held. Each line is rebuilt from an allowlist of fixed shapes (names, states,
-report and check words, `#n`) before it goes out, and a line that fits none goes out as `a watch line not shown here
-(athena status)`. HQ reads a typed prompt as the person's own words, so nothing from a PR, a ticket or Slack is ever
-typed into it. The lines also go to `run/inbox.jsonl`, which `athena watch --inbox` prints as data.
+**A wake** goes to HQ as one message, `athena watch HH:MM: <line> · <line> · ...`, to HQ's cross-session inbox
+(`kernel/inbox.py`, docs/watch.md): a collapsed line that never touches the input box, read mid-turn too. Only when the
+inbox can't be reached is it typed, and then only while HQ is idle with an empty input box; until then the lines are held.
+Each line is rebuilt from an allowlist of fixed shapes (names, states, report and check words, `#n`) before it goes out,
+and a line that fits none goes out as `a watch line not shown here (athena status)`. HQ acts on a wake as it would on
+the person's own words, so nothing from a PR, a ticket or Slack ever reaches it that way. The lines also go to `run/inbox.jsonl`, which `athena watch --inbox` prints as data.
 
 The snapshot, the bus offset, the lines already told and any held wakes are saved in `run/watch-state.json` each loop,
 so a restarted watch carries on without telling anything twice. `athena doctor` restarts a watch whose loop hasn't come
@@ -502,8 +504,8 @@ as a backstop near the limit. Workers' settings leave compaction alone.
 
 **When.** HQ rotates once its context holds config `hq_rotate_tokens` (400k unless set), counted from the last usage in
 HQ's transcript. `athena status` and `athena doctor` show it as `hq context 171k of 400k (rotates at hq_rotate_tokens)`,
-and doctor asks HQ to rotate once it is past the line, at most every two hours, only while HQ is idle with an empty
-input box. HQ also rotates daily, by the skill. Nothing rotates HQ by force: HQ runs the command.
+and doctor asks HQ to rotate once it is past the line, at most every two hours, as a message to HQ's inbox (typed only
+when that can't be reached, and then only while HQ is idle with an empty input box). HQ also rotates daily, by the skill. Nothing rotates HQ by force: HQ runs the command.
 
 - `athena hq rotate` rotates now.
 - `athena hq rotate --if-context-over` rotates only past `hq_rotate_tokens`, and says why not otherwise.
@@ -518,7 +520,8 @@ input box. HQ also rotates daily, by the skill. Nothing rotates HQ by force: HQ 
    threads, the notes tail and the standing orders' path, at most 150 lines.
 3. The rest runs detached (`logs/hq-restart.log`), since HQ asked from its own Bash tool. It waits up to two minutes for
    HQ to be idle with an empty input box, else skips; `/exit`s HQ's Claude; starts a fresh one in the same session,
-   with no `--resume`; and types a prompt telling it to read `handoff.md` and run the session start.
+   with no `--resume`; and sends it a prompt, to its new inbox (typed only when that can't be reached), telling it to
+   read `handoff.md` and run the session start.
 4. The old conversation stays resumable, recorded in `hq.json` as `previous_session`, and `threads.md` moves to
    `threads.prev.md`.
 
@@ -670,7 +673,7 @@ Why the parts are the way they are:
   waits on (`prs.move`), clamshell (`decide`). A computed state can't drift from the record it comes from.
 - **The watch is its own process.** A slow GitHub or a failed loop never costs HQ a turn or a restart, and doctor
   restarts the watch alone.
-- **A wake is typed only from fixed words.** HQ reads a typed prompt as the human's own, so a line is rebuilt from an
+- **A wake carries only fixed words.** HQ acts on a wake as on the human's own words, so a line is rebuilt from an
   allowlist before it goes out, and nothing a PR, ticket or Slack message says reaches HQ that way.
 - **Rex runs the sessions.** Doctor never brings a Claude back or starts the Rex server; it says what is gone. A worker
   or HQ comes back through Rex (`athena hq`, revive) or is retired.
