@@ -86,7 +86,7 @@ def _save_work(name, path, repo, force, keep_worktree=False) -> dict:
     size = gitops.size_of(path, info["ignored"]) // (1 << 20)
     if size > limit:
         raise RetireError(f"{name} holds {size} MB of git-ignored work, over rex.ignored_copy_max_mb ({limit}), and --force copies it to the "
-                          "trash first. Move it, name it in rex.disposable if it can be regenerated, or raise the limit; nothing was changed.")
+                          "trash first. Move it, name it in rex.disposable or the repo's setup if it can be regenerated, or raise the limit; nothing was changed.")
     out["ignored"] = info["ignored"]
     if head:
         gitops.refuse_nested_repos(path, head)

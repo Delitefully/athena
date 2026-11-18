@@ -1,5 +1,6 @@
 """Git, for what guards a launch and a removal. Read commands take no optional locks, so looking never writes an index."""
 import fcntl
+import filecmp
 import fnmatch
 import os
 import re
@@ -10,7 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from athena.kernel import store
+from athena.kernel import config, store
 
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}  # no credential prompt: nobody is there to answer it
 _NO_FETCH = {"GIT_NO_LAZY_FETCH": "1"}  # for a look: a worktree or a fast-forward in a partial clone has to fetch
@@ -26,6 +27,7 @@ SECRET_SHAPED = (".env", ".env.*", "*.env", "*.env.local", ".envrc", ".npmrc", "
                  "*.sqlite", "*.sqlite3", "*.db")
 _PLAIN_NAME = re.compile(r"[A-Za-z0-9._-]+")
 STEM_LENGTH = 3
+SETUP_COPIES, SETUP_GENERATES = "# athena-copies:", "# athena-generates:"  # comment lines in repos/<repo>.setup
 _CLEARS = "Repair it, or if it is gone for good move it away: a retire with no repo left has nothing to prune."
 
 
@@ -410,14 +412,49 @@ def _config_names() -> tuple:
     and is_secret is checked again on every match."""
     data = store.read_json(store.state_dir() / "config.json", {})
     named = (data.get("rex") or {}).get("disposable") if isinstance(data, dict) and isinstance(data.get("rex"), dict) else None
-    if not isinstance(named, list):
-        return ()
+    return _allowed_names(named) if isinstance(named, list) else ()
+
+
+def _allowed_names(named) -> tuple:
     allowed = []
     for name in named:
         stem = name[:-1] if isinstance(name, str) and name.endswith("*") else name
         if isinstance(stem, str) and _PLAIN_NAME.fullmatch(stem) and not is_secret(stem) and (stem == name or len(stem) >= STEM_LENGTH):
             allowed.append(name)
     return tuple(allowed)
+
+
+def setup_declares(main) -> tuple:
+    """What the setup script beside config.json for this repo says it makes in a new worktree, in its comment lines: paths it
+    copies from the main checkout, and names of what it generates, held to rex.disposable's forms. A path that could reach
+    outside the worktree is dropped."""
+    try:
+        text = (config.config_file().parent / "repos" / f"{Path(main).name}.setup").read_text(errors="replace")
+    except OSError:
+        return (), ()
+    copies, generated = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        for prefix, into in ((SETUP_COPIES, copies), (SETUP_GENERATES, generated)):
+            if line.startswith(prefix):
+                into.extend(line[len(prefix):].split())
+    safe = tuple(c.strip("/") for c in copies if not c.startswith("/") and all(part not in ("", ".", "..") for part in c.strip("/").split("/")))
+    return safe, _allowed_names(generated)
+
+
+def _same_copy(worktree, main, entry, copies) -> bool:
+    """A file the setup copied from the main checkout and nobody has changed since: both plain files, byte for byte. Neither may
+    be reached through a link, or a main checkout's folder linked into the worktree would make a file its own copy."""
+    if not any(entry == c or entry.startswith(f"{c}/") for c in copies):
+        return False
+    mine, source = os.path.join(os.path.realpath(worktree), entry), os.path.join(main, entry)
+    try:
+        if not all(os.path.realpath(p) == p and os.path.isfile(p) for p in (mine, source)) or os.path.samefile(mine, source):
+            return False
+        filecmp.clear_cache()  # its cache goes by size and mtime, and a long-lived watch would trust an old answer
+        return filecmp.cmp(mine, source, shallow=False)
+    except OSError:
+        return False
 
 
 def is_secret(name) -> bool:
@@ -440,10 +477,13 @@ def ignored_work(worktree) -> list:
 
     A repository is always work. A file is a cache's only inside a folder that has a cache's name and that git ignores as a
     folder, or by its own name. In a build folder a secret-shaped file is still work; its other files count as output, and
-    that is the limit of this: a hand-made file kept in an ignored build/ goes with it.
+    that is the limit of this: a hand-made file kept in an ignored build/ goes with it. In a linked worktree, the repo's setup
+    adds its own: a file it copied that is still the main checkout's bytes, secret or not, and the names it generates.
     """
     listed = git(worktree, "ls-files", "--others", "--ignored", "--exclude-standard", "--no-empty-directory", "-z")
-    extra = _config_names()
+    main = main_checkout(worktree)
+    copies, generated = setup_declares(main) if os.path.realpath(worktree) != main else ((), ())
+    extra = _config_names() + generated
     entries = [e for e in listed.split("\0") if e]
     named = {}
     for entry in entries:
@@ -460,6 +500,8 @@ def ignored_work(worktree) -> list:
         name = entry.rsplit("/", 1)[-1]
         if entry.endswith("/"):
             work.append(entry)
+            continue
+        if _same_copy(worktree, main, entry, copies):
             continue
         folders = ["/".join(entry.split("/")[:n]) for n in range(1, entry.count("/") + 1)]
         tiers = [named[f] for f in folders if f in ignored]
