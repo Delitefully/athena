@@ -289,6 +289,8 @@ d2=$("$ar" item add "Ship the dash's docs first?" --name "dash docs" --option Ye
 d3=$("$ar" item add "Rename the palette?" --name "palette name" --option Keep --option Rename | cut -d' ' -f1)
 d4=$("$ar" item add "Which test first?" --name "test order" --option Smoke --option Unit | cut -d' ' -f1)
 d5=$("$ar" item add "Leave this one open?" --name "left open" --option Yes --option No | cut -d' ' -f1)
+d6=$("$ar" item add "Docs or tests?" --name "docs or tests" --option Docs --option Tests | cut -d' ' -f1)
+d7=$("$ar" item add "Ship tonight?" --name "ship tonight" --option Yes --option No | cut -d' ' -f1)
 do_palette athena_answer item="$d1" option=yes
 check "answer: rex do answers a decision from its arguments" said '"said": "Answered palette docs: Yes. athena takes it up'
 "$ar" dash on >/dev/null
@@ -309,6 +311,15 @@ app "id:$d4" "text:unit first, then smoke"
 do_palette athena_answer
 app_done
 check "answer: text typed instead of an option is a reply" said '"said": "Replied to test order: unit first, then smoke.'
+asked() { grep -c '"client_prompt_requested"' "$root/app.log" | tr -d ' '; }
+app "id:$d6"
+do_palette athena_answer text="tests, given up front"
+app_done
+check "answer: a text given is the answer, and only the decision is asked" test "$(asked)" = 1 -a -n "$(said '"said": "Replied to docs or tests: tests, given up front.' && echo y)"
+app "id:$d7"
+do_palette athena_answer option=no
+app_done
+check "answer: an option given is the answer, and only the decision is asked" test "$(asked)" = 1 -a -n "$(said '"said": "Answered ship tonight: No.' && echo y)"
 before=$(answers)
 for case in "cancel|cancelled; nothing was answered" "unsupported|the Rex app can't show questions: update it; nothing was answered" \
 	"silent|nobody answered in time; nothing was answered" "|no Rex app is connected to ask in; nothing was answered"; do
@@ -322,14 +333,15 @@ done
 check "and none of them queued anything" test "$(answers)" = "$before"
 sleep 7 # past the dashboard's undo window, as HQ reads the queue
 "$ar" ask queue >"$root/queue.json"
-/usr/bin/python3 - "$root/queue.json" "$d1" "$d2" "$d3" "$d4" "$d5" <<'E'
+/usr/bin/python3 - "$root/queue.json" "$d1" "$d2" "$d3" "$d4" "$d5" "$d6" "$d7" <<'E'
 import json, sys
 queue = {e["item"]: e for e in json.load(open(sys.argv[1]))}
-d1, d2, d3, d4, d5 = sys.argv[2:]
+d1, d2, d3, d4, d5, d6, d7 = sys.argv[2:]
 strip = lambda e: {k: v for k, v in e.items() if k not in ("seq", "at", "item", "ask")}
 same = strip(queue[d1]) == strip(queue[d2]) and queue[d1]["option"] == {"id": "yes", "label": "Yes", "do": "reply"}
 print(f"        queue: {d1} {strip(queue[d1])}; {d2} (the dashboard's) {strip(queue[d2])}")
-sys.exit(0 if same and queue[d3]["option"]["id"] == "rename" and queue[d4]["reply"] == "unit first, then smoke" and d5 not in queue else 1)
+given = queue[d6].get("reply") == "tests, given up front" and queue[d7]["option"]["id"] == "no"
+sys.exit(0 if same and given and queue[d3]["option"]["id"] == "rename" and queue[d4]["reply"] == "unit first, then smoke" and d5 not in queue else 1)
 E
 check "athena ask queue holds each palette answer as it holds the dashboard's, and nothing for the one left open" test $? = 0
 "$ar" dash off >/dev/null
@@ -369,6 +381,21 @@ do_palette athena_open target="item:$d5"
 check "open: a page needs the real world's browser, and a scratch state dir has the door shut" said 'opening a browser is off here'
 do_palette athena_open target=pr:https://example.com/x
 check "open: only what athena offers" said 'is not something athena offers to open now'
+for w in smoke-a smoke-b; do cp "$state/workers/$w.json" "$root/$w.before"; done
+/usr/bin/python3 - "$state/workers" <<'E'
+import json, sys
+for name in ("smoke-a", "smoke-b"):  # both report the same pull request
+    path = f"{sys.argv[1]}/{name}.json"
+    data = json.load(open(path))
+    data["report"] = {**(data.get("report") or {}), "pr": "https://github.com/acme/proj/pull/7"}
+    json.dump(data, open(path, "w"))
+E
+app id:pr:https://github.com/acme/proj/pull/7
+do_palette athena_open
+app_done
+check "open: two workers on one pull request offer it once, and Rex takes the list" said 'opening a browser is off here'
+check "and the list held it once" test "$(grep -o '"id": "pr:https://github.com/acme/proj/pull/7"' "$root/app.log" | wc -l | tr -d ' ')" = 1
+for w in smoke-a smoke-b; do cp "$root/$w.before" "$state/workers/$w.json"; done
 
 do_palette athena_retire worker=nobody confirm=true
 check "retire: only a live worker" said 'no live worker named nobody; nothing was retired.'

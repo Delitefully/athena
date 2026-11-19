@@ -124,23 +124,25 @@ rex.action{
     if option ~= nil and text ~= nil then
       fail(title, "give an option or a text, not both; nothing was answered.")
     end
-    if item == nil or (option == nil and text == nil) then
-      local waiting = athena_json(title, { "palette", "decisions" })
-      local why, detail
-      if item == nil then
-        if #waiting.items == 0 then
-          fail(title, "no decision is waiting for you.")
-        end
-        item, why, detail = rex.ui.pick{ title = "Answer a decision", placeholder = "Filter decisions", items = waiting.items }
-        if item == nil then
-          unanswered(title, why, detail, "nothing was answered")
-        end
+    local waiting -- what athena offers, asked for once, when a question needs it
+    if item == nil then
+      waiting = athena_json(title, { "palette", "decisions" })
+      if #waiting.items == 0 then
+        fail(title, "no decision is waiting for you.")
       end
+      local why, detail
+      item, why, detail = rex.ui.pick{ title = "Answer a decision", placeholder = "Filter decisions", items = waiting.items }
+      if item == nil then
+        unanswered(title, why, detail, "nothing was answered")
+      end
+    end
+    if option == nil and text == nil then -- an option or a text given is the answer: only the decision was asked for
+      waiting = waiting or athena_json(title, { "palette", "decisions" })
       local takes = waiting.answers[item]
       if takes == nil then
         fail(title, item .. " is not a decision waiting for your answer.")
       end
-      local chosen
+      local chosen, why, detail
       if #takes.options == 0 then
         chosen, why, detail = rex.ui.input{ title = takes.title, placeholder = "Your reply", confirm = "Send reply" }
         chosen = chosen and { text = chosen }

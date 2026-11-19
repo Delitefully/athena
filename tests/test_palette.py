@@ -308,6 +308,15 @@ class WorkersAndOpen(Case):
         pr = palette().targets()["items"][1]
         self.assertEqual((pr["title"], pr["subtitle"], pr["icon"]), ("proj#7", "alpha's pull request", "branch"))
 
+    def test_two_workers_on_one_pull_request_offer_it_once(self):
+        """rex.ui.pick refuses two items with one id, which would break Open for every target."""
+        store.write_json(store.path("workers", "beta.json"),
+                         {"state": "done", "report": {"status": "DONE", "pr": "https://github.com/acme/proj/pull/7"}})
+        ids = [t["id"] for t in palette().targets()["items"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(ids, ["worker:alpha", "pr:https://github.com/acme/proj/pull/7", "worker:beta", f"item:{self.item['id']}"])
+        self.assertEqual(palette().open_target("worker:beta")["focus"]["window_id"], "win-b")
+
     def test_a_worker_is_shown_by_the_lua_in_the_app_that_asked(self):
         self.assertEqual(palette().open_target("worker:alpha"),
                          {"said": "Showing alpha.", "focus": {"session_id": "s1", "window_id": "win-a"}})
@@ -379,6 +388,14 @@ class TheLua(Case):
         """From `rex do`, Rex delivers a client action only after the action returns: the window would move, then it would fail."""
         gate = self.lua.index('target:match("^worker:") and ctx.origin ~= "palette" and ctx.origin ~= "key"')
         self.assertLess(gate, self.lua.index('athena_json(title, { "palette", "open", target })'))
+
+    def test_a_given_answer_is_never_asked_for_again(self):
+        """An option or a text given in the arguments is the answer: only the decision may still be asked for."""
+        run = self.lua[self.lua.index('name = "athena_answer"'):self.lua.index('name = "athena_message"')]
+        gate = run.index("if option == nil and text == nil then")
+        self.assertLess(run.index("if item == nil then"), gate)
+        self.assertLess(gate, run.index("rex.ui.pick{\n          title = takes.title"))
+        self.assertLess(gate, run.index("rex.ui.input{ title = takes.title"))
 
     def test_its_icons_are_rexs_own(self):
         self.assertLessEqual(set(re.findall(r'icon = "([a-z]+)"', self.lua)), REX_ICONS)

@@ -194,12 +194,14 @@ def workers() -> dict:
 
 
 def targets() -> dict:
-    """What Open offers: each live worker's window and its pull request, then every open item's page."""
-    out = []
+    """What Open offers: each live worker's window and its pull request, then every open item's page. Each once: two workers
+    on one pull request offer it once, under the first, as a pick refuses two items with the same id."""
+    out, prs = [], set()
     for r in _live():
         out.append(_item(f"worker:{r['name']}", r["name"], r.get("title") or r.get("summary"), "terminal", r.get("state") or ""))
         url = _pr_of(r)
-        if url:
+        if url and url not in prs:
+            prs.add(url)
             repo, number = url[len("https://github.com/"):].split("/pull/")
             out.append(_item(f"pr:{url}", f"{repo.split('/')[1]}#{number}", f"{r['name']}'s pull request", "branch"))
     items = caps.get("items")
