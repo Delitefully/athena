@@ -33,7 +33,8 @@ PR_URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/
 # Rex's config file and the one line in it that loads the actions
 
 def config_path(env=None) -> Path:
-    """Where Rex reads its config, as Rex documents it. REX_CONFIG counts in the Rex server's environment, not this one's."""
+    """Where Rex reads its config, as Rex documents it, from this environment's REX_CONFIG and XDG_CONFIG_HOME. Rex itself reads
+    them from its server's environment: `athena palette` names the file, so a mismatch shows."""
     env = os.environ if env is None else env
     if env.get("REX_CONFIG"):
         return Path(env["REX_CONFIG"]).expanduser()
@@ -55,18 +56,22 @@ def line(lua=LUA, state_dir=None) -> str:
             f'if not ok then rex.log("warn", "athena palette: " .. tostring(err)) end end {MARK}')
 
 
-def _marked(text: str) -> list:
-    return [n for n, l in enumerate(text.splitlines()) if l.rstrip().endswith(MARK)]
+def _lines(text: str) -> list:
+    """The file's lines, split on newlines alone: whatever else a line holds (a CR, a form feed) stays as it was."""
+    return text.split("\n")[:-1] if text.endswith("\n") else text.split("\n") if text else []
+
+
+def _marked(lines: list) -> list:
+    return [n for n, l in enumerate(lines) if l.rstrip().endswith(MARK)]
 
 
 def installed(target) -> str:
     """`installed`, `another` (a marked line naming another file), `absent` (no line) or `no file`."""
     try:
-        text = Path(target).read_text()
+        lines = _lines(Path(target).read_bytes().decode())  # as it is on disk: read_text would turn a CRLF into LF
     except FileNotFoundError:
         return "no file"
-    lines = text.splitlines()
-    marked = _marked(text)
+    marked = _marked(lines)
     if not marked:
         return "absent"
     return "installed" if [lines[n] for n in marked] == [line()] else "another"
@@ -83,14 +88,14 @@ def install(target, explicit: bool) -> str:
     was = installed(target)
     if was == "installed":
         return "already"
-    text = "" if was == "no file" else target.read_text()
-    lines, marked = text.splitlines(), _marked(text)
+    lines = [] if was == "no file" else _lines(target.read_bytes().decode())
+    marked = _marked(lines)
     if marked:
         lines[marked[0]] = line()
         lines = [l for n, l in enumerate(lines) if n not in marked[1:]]
     else:
         lines.append(line())
-    store.write_text(target, "\n".join(lines) + "\n")
+    store.write_text(os.path.realpath(target), "\n".join(lines) + "\n")  # through a link, such as a dotfiles one: it stays a link
     return "updated" if marked else "installed"
 
 
@@ -210,7 +215,7 @@ def open_target(target: str) -> dict:
         raise UserError(f"{target} is not something athena offers to open now")
     kind, _, rest = target.partition(":")
     if kind == "worker":
-        row = next(r for r in _live() if r["name"] == rest)
+        row = next((r for r in _live() if r["name"] == rest), {})
         if not row.get("space") or not row.get("window"):
             raise UserError(f"{rest} has no Rex window on record")
         return {"said": f"Showing {rest}.", "focus": {"session_id": row["space"], "window_id": row["window"]}}

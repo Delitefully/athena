@@ -8,7 +8,7 @@ athena, which does the same thing its own command or the dashboard does.
 |---|---|---|
 | `athena_answer` | athena: Answer a Decision… | Pick a decision waiting for you, then one of its options, or type a reply. The answer joins the dashboard's answer queue, through the dashboard's own writer and checks, so HQ takes it up exactly as it does a click on the page. |
 | `athena_message` | athena: Message a Worker… | Pick a live worker, then type a message. `athena send` delivers it: typed safely into a Claude worker, or posted to a Pi worker's inbox. |
-| `athena_open` | athena: Open… | Pick a live worker, its pull request, or any open item. A worker's window comes to the front in the app you asked from. A pull request opens in your browser, and an item opens on its dashboard page. |
+| `athena_open` | athena: Open… | Pick a live worker, its pull request, or any open item. A worker's window comes to the front in the app you asked from. A pull request opens in your browser, and an item opens on its dashboard page (started if it isn't running). |
 | `athena_retire` | athena: Retire a Worker… | Pick a live worker, then choose **Retire** (or **Keep**). `athena retire` saves its work, stops it, and removes its worktree and window. Unsaved work stops the retire, as always. |
 
 Search the palette for "athena" to find them.
@@ -50,8 +50,12 @@ To remove the actions, delete the marked line and run `rex config reload`.
   ```
   rex do athena_answer item=a12 option=yes          rex do athena_answer item=a12 text="after the tests"
   rex do athena_message worker=rex-palette text="rebase on main, please"
-  rex do athena_open target=worker:rex-palette      rex do athena_retire worker=rex-palette confirm=true
+  rex do athena_open target=pr:https://github.com/o/r/pull/1      rex do athena_retire worker=rex-palette confirm=true
   ```
+
+  Showing a worker's window is the exception: only the Rex app that asked can show it, so Open refuses a `worker:` target
+  from a plain `rex do`, before it moves anything. `rex -C <app> do athena_open target=worker:w --origin palette` runs it
+  as the palette does.
 
 - **An unanswered question does nothing.** If a question is closed, times out, or can't be shown, the action stops before
   it acts, and says why: cancelled, nobody answered in time, no Rex app is connected to ask in, the Rex app can't show

@@ -4,7 +4,7 @@
 --
 -- Each argument given skips its question, so `rex do` can run any of them with nobody there:
 --   rex do athena_answer item=a12 option=yes        rex do athena_message worker=w text="..."
---   rex do athena_open target=worker:w              rex do athena_retire worker=w confirm=true
+--   rex do athena_open target=pr:<url>              rex do athena_retire worker=w confirm=true
 -- A question left unanswered (closed, timed out, no Rex app to ask it in) stops the action before it does anything, and says so.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", "")
@@ -186,7 +186,7 @@ rex.action{
     if text:match("^%s*$") then
       fail(title, "the message is empty; nothing was sent.")
     end
-    local _, still = athena_act(title, { "send", worker, "--", text }, "still typing it to " .. worker .. ": athena finishes on its own")
+    local _, still = athena_act(title, { "send", "--", worker, text }, "still typing it to " .. worker .. ": athena finishes on its own")
     return done(still or ("Sent to " .. worker .. "."))
   end,
 }
@@ -211,6 +211,12 @@ rex.action{
       if target == nil then
         unanswered(title, why, detail, "nothing was opened")
       end
+    end
+    -- A window is shown by the app that ran the action, which Rex knows only when an app ran it: from `rex do`, a client action
+    -- is delivered after the action has returned, if at all, so it would move the window and then fail. Refuse it first.
+    if target:match("^worker:") and ctx.origin ~= "palette" and ctx.origin ~= "key" then
+      fail(title, "showing a window needs the Rex app that asked: run it from the palette, or `rex -C <app> do athena_open "
+        .. "target=" .. target .. " --origin palette`; nothing was opened.")
     end
     local opened = athena_json(title, { "palette", "open", target })
     if opened.focus ~= nil then
@@ -256,7 +262,7 @@ rex.action{
         return done(worker .. " kept; nothing was retired.")
       end
     end
-    local out, still = athena_act(title, { "retire", worker }, "still retiring " .. worker .. ": athena finishes on its own")
+    local out, still = athena_act(title, { "retire", "--", worker }, "still retiring " .. worker .. ": athena finishes on its own")
     return done(still or out)
   end,
 }

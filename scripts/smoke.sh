@@ -355,9 +355,12 @@ check "message: only to a live worker, refused before any question" said 'no liv
 space_b=$(field smoke-b "r['space']")
 active() { rx session inspect "$space_b" --json | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_window_id"))'; }
 rx window focus -s "$space_b" "$(field smoke-a "r['window']")" >/dev/null
+do_palette athena_open target=worker:smoke-b
+check "open: a worker's window from plain rex do, with no app to show it, refused first" said 'showing a window needs the Rex app that asked'
+check "and nothing moved" test "$(active)" = "$(field smoke-a "r['window']")"
 app
 client=$(sed -n 's/.*"id": "\(client:[^"]*\)".*"type": "welcome".*/\1/p' "$root/app.log")
-rx -C "$client" do athena_open target=worker:smoke-b --json >"$root/do.out" 2>&1
+rx -C "$client" do athena_open target=worker:smoke-b --origin palette --json >"$root/do.out" 2>&1 # as the palette runs it
 app_done
 check "open: a worker's window is shown in the app that asked" said '"said": "Showing smoke-b."'
 check "smoke-b's window is its session's active one again" test "$(active)" = "$(field smoke-b "r['window']")"
@@ -463,8 +466,8 @@ wip=$(/usr/bin/python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['
 check "the unsaved file is kept under $wip" test "$(git -C "$root/t2/proj" show "$wip:unsaved.txt" 2>/dev/null)" = unsaved
 
 pids="$(cat "$state/run/smoke-a.pid") $(cat "$state/run/smoke-c.pid")"
-"$ar" retire smoke-a
-check "smoke-a retired" test $? = 0
+do_palette athena_retire worker=smoke-a confirm=true
+check "smoke-a retired from rex do, confirm=true in place of the question" said '"said": "smoke-a retired'
 app id:smoke-c id:retire
 do_palette athena_retire
 app_done

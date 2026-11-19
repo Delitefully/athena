@@ -41,6 +41,18 @@ class Install(Case):
         self.assertEqual(lines[1:], [palette().line()])
         self.assertEqual(palette().installed(target), "installed")
 
+    def test_a_linked_config_stays_a_link_and_its_other_lines_stay_byte_for_byte(self):
+        real = self.tmp / "dotfiles" / "init.lua"
+        real.parent.mkdir()
+        mine = b'rex.bind("cmd+d", "pane.split")\r\n-- a form feed \x0c stays\n-- no newline at the end'
+        real.write_bytes(mine)
+        target = self.tmp / "init.lua"
+        target.symlink_to(real)
+        self.assertEqual(palette().install(target, explicit=True), "installed")
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(real.read_bytes(), mine + b"\n" + palette().line().encode() + b"\n")
+        self.assertEqual(palette().install(target, explicit=True), "already")
+
     def test_a_missing_file_is_made(self):
         target = self.tmp / "nowhere" / "rex" / "init.lua"
         self.assertEqual(palette().installed(target), "no file")
@@ -349,7 +361,18 @@ class TheLua(Case):
         for verb in ("send", "retire"):
             self.assertIn(f'{{ "{verb}", ', self.lua)
             self.assertIsNotNone(caps.find_command(verb))
-        self.assertIn('{ "send", worker, "--", text }', self.lua, "a message that looks like a flag is still the message")
+        self.assertIn('{ "send", "--", worker, text }', self.lua, "a name or a message that looks like a flag is still one")
+        self.assertIn('{ "retire", "--", worker }', self.lua)
+        sent = self.cli("send", "--", "--all", "-h")
+        self.assertEqual((sent.returncode, sent.stderr.strip()), (1, "athena: no live worker named --all"))
+        retired = self.cli("retire", "--", "--all")
+        self.assertEqual(retired.returncode, 1)
+        self.assertIn("worker named --all", retired.stderr)
+
+    def test_a_worker_is_shown_only_when_an_app_asked(self):
+        """From `rex do`, Rex delivers a client action only after the action returns: the window would move, then it would fail."""
+        gate = self.lua.index('target:match("^worker:") and ctx.origin ~= "palette" and ctx.origin ~= "key"')
+        self.assertLess(gate, self.lua.index('athena_json(title, { "palette", "open", target })'))
 
     def test_its_icons_are_rexs_own(self):
         self.assertLessEqual(set(re.findall(r'icon = "([a-z]+)"', self.lua)), REX_ICONS)
