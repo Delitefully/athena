@@ -118,6 +118,25 @@ def summary(repo, branch):
         return None
 
 
+def merged(repo, branch):
+    """The branch's PR when it is MERGED into the default branch: its number, url, head and merge commit. None for anything
+    else, a missing or broken gh included, so a caller that trusts it fails closed."""
+    try:
+        slug = gitops.github_slug(repo)
+        if not (slug and branch):
+            return None
+        found = json.loads(gh("pr", "view", branch, "--repo", slug, "--json", "number,url,state,headRefOid,baseRefName,mergeCommit")
+                           or "null")
+        if not isinstance(found, dict) or found.get("state") != "MERGED" or found.get("baseRefName") != gitops.default_branch(repo):
+            return None
+    except (GhError, ValueError, gitops.GitError, lab.Refused):
+        return None
+    commit, head = (found.get("mergeCommit") or {}).get("oid"), found.get("headRefOid")
+    if not (commit and head):
+        return None
+    return {"number": found.get("number"), "url": found.get("url"), "head": head, "merge_commit": commit}
+
+
 def same_head(a, b) -> bool:
     """Two shas name one commit: one is a prefix of the other, at least 7 hex digits, any case."""
     a, b = str(a or "").lower(), str(b or "").lower()
