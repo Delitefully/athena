@@ -132,10 +132,18 @@ export ATHENA_BINARY="$rex_bin"
 export ATHENA_HQ=smoke-hq
 unset ATHENA_CONFIG ATHENA_ROLE ATHENA_TRUST CLAUDE_CONFIG_DIR
 
-echo '-- empty' >"$root/empty.lua"
+# This server's own Rex config, never the human's: the palette's questions wait 5 seconds here, so one left unanswered ends fast.
+cat >"$root/init.lua" <<'LUA'
+for _, ask in ipairs({ "pick", "input" }) do
+	local real = rex.ui[ask]
+	rex.ui[ask] = function(opts) opts.timeout = 5; return real(opts) end
+end
+LUA
 printf '%s' "$state" >"$root/.athena-server-owner"
+# The athena the palette runs inside the server talks to this server alone (with the door shut it may name no other).
 env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL="$SHELL" LANG="${LANG:-en_US.UTF-8}" PATH="$PATH" TMPDIR="$TMPDIR" \
-	REX_CONFIG="$root/empty.lua" "$rex_bin" -S "$endpoint" server start --state-dir "$root/rex" >/dev/null || exit 1
+	REX_CONFIG="$root/init.lua" "$rex_bin" -S "$endpoint" server start --state-dir "$root/rex" \
+	--env ATHENA_SERVER="$endpoint" --env ATHENA_BINARY="$rex_bin" >/dev/null || exit 1
 say "private server up at $endpoint"
 
 make_repo() { # dir
@@ -249,6 +257,142 @@ check "the watch told what changed since its last run" grep -q 'smoke-a' "$root/
 filed_by_command() { grep -q '"topic": "worker.state"' "$state/events.jsonl" && ! grep -q '"filed"' "$state/workers/smoke-c.json"; }
 check "a Stop took smoke-c's filed report in" filed_by_command
 
+# -- the palette: athena's actions in Rex's command palette, run with `rex do` on this server's own config. Questions go to
+# scripts/rex-app.py, a stand-in for the Rex app that answers as told; with none connected, no app is there to ask.
+
+app() { # answers..., then it serves for 12 seconds; its log is $root/app.log
+	/usr/bin/python3 -I "$here/scripts/rex-app.py" "$endpoint" "$@" --for 12 >"$root/app.log" 2>&1 &
+	app_pid=$!
+	wait_for 5 grep -q '"type": "welcome"' "$root/app.log"
+}
+app_done() { kill "$app_pid" 2>/dev/null; wait "$app_pid" 2>/dev/null; }
+do_palette() { # name, then rex do's KEY=VALUE pairs: its JSON or its error in $root/do.out, its exit status returned
+	rx do "$@" --json >"$root/do.out" 2>&1
+}
+said() { grep -qF -- "$1" "$root/do.out"; }
+answers() { wc -l <"$state/actions.jsonl" | tr -d ' '; }
+
+"$ar" palette install --config "$root/init.lua" >"$root/install.1"
+"$ar" palette install --config "$root/init.lua" >"$root/install.2"
+check "palette install wrote its line into this server's config once" test "$(grep -c '(athena palette install)$' "$root/init.lua")" = 1
+check "and a second install changed nothing" grep -q 'already loads them' "$root/install.2"
+if ! grep -qF "state_dir = \"$state\"" "$root/init.lua"; then # every athena the actions run is this scratch state's, or none runs
+	fail "the line names this run's scratch state dir"
+	exit 1
+fi
+pass "the line names this run's scratch state dir"
+rx config reload >/dev/null
+check "the server loaded the three athena actions" test "$(rx actions | grep -c '^athena_')" = 3
+
+d1=$("$ar" item add "Ship the palette's docs first?" --name "palette docs" --option Yes --option No --rec yes | cut -d' ' -f1)
+d2=$("$ar" item add "Ship the dash's docs first?" --name "dash docs" --option Yes --option No --rec yes | cut -d' ' -f1)
+d3=$("$ar" item add "Rename the palette?" --name "palette name" --option Keep --option Rename | cut -d' ' -f1)
+d4=$("$ar" item add "Which test first?" --name "test order" --option Smoke --option Unit | cut -d' ' -f1)
+d5=$("$ar" item add "Leave this one open?" --name "left open" --option Yes --option No | cut -d' ' -f1)
+d6=$("$ar" item add "Docs or tests?" --name "docs or tests" --option Docs --option Tests | cut -d' ' -f1)
+d7=$("$ar" item add "Ship tonight?" --name "ship tonight" --option Yes --option No | cut -d' ' -f1)
+do_palette athena_answer item="$d1" option=yes
+check "answer: rex do answers a decision from its arguments" said '"said": "Answered palette docs: Yes. athena takes it up'
+"$ar" dash on >/dev/null
+offered() { # the page, once it offers d2's answer: its token
+	token=$(curl -s "http://127.0.0.1:2897/" | tee "$root/dash.html" | sed -n 's/.*name="athena-token" content="\([0-9a-f]*\)".*/\1/p')
+	[ -n "$token" ] && grep -q "$d2" "$root/dash.html"
+}
+wait_for 20 offered
+posted=$(curl -s -o "$root/posted" -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-Athena-Token: $token" \
+	-H 'Origin: http://127.0.0.1:2897' --data "{\"item\": \"$d2\", \"option\": \"yes\"}" http://127.0.0.1:2897/api/action)
+check "and the dashboard took the same answer to another decision" test "$posted" = 202
+app "id:$d3" id:rename
+do_palette athena_answer
+app_done
+check "answer: asked in the palette, a decision and then its option" said '"said": "Answered palette name: Rename.'
+check "the decision question offered the decisions waiting" grep -q "\"id\": \"$d3\", \"subtitle\": \"Rename the palette?\"" "$root/app.log"
+app "id:$d4" "text:unit first, then smoke"
+do_palette athena_answer
+app_done
+check "answer: text typed instead of an option is a reply" said '"said": "Replied to test order: unit first, then smoke.'
+asked() { grep -c '"client_prompt_requested"' "$root/app.log" | tr -d ' '; }
+app "id:$d6"
+do_palette athena_answer text="tests, given up front"
+app_done
+check "answer: a text given is the answer, and only the decision is asked" test "$(asked)" = 1 -a -n "$(said '"said": "Replied to docs or tests: tests, given up front.' && echo y)"
+app "id:$d7"
+do_palette athena_answer option=no
+app_done
+check "answer: an option given is the answer, and only the decision is asked" test "$(asked)" = 1 -a -n "$(said '"said": "Answered ship tonight: No.' && echo y)"
+before=$(answers)
+for case in "cancel|cancelled; nothing was answered" "unsupported|the Rex app can't show questions: update it; nothing was answered" \
+	"silent|nobody answered in time; nothing was answered" "|no Rex app is connected to ask in; nothing was answered"; do
+	answer=${case%%|*}
+	[ -n "$answer" ] && app "$answer"
+	do_palette athena_answer
+	code=$?
+	[ -n "$answer" ] && app_done
+	check "answer, ${answer:-no app}: refused, and says so" test "$code" = 1 -a -n "$(said "${case#*|}" && echo y)"
+done
+check "and none of them queued anything" test "$(answers)" = "$before"
+sleep 7 # past the dashboard's undo window, as HQ reads the queue
+"$ar" ask queue >"$root/queue.json"
+/usr/bin/python3 - "$root/queue.json" "$d1" "$d2" "$d3" "$d4" "$d5" "$d6" "$d7" <<'E'
+import json, sys
+queue = {e["item"]: e for e in json.load(open(sys.argv[1]))}
+d1, d2, d3, d4, d5, d6, d7 = sys.argv[2:]
+strip = lambda e: {k: v for k, v in e.items() if k not in ("seq", "at", "item", "ask")}
+same = strip(queue[d1]) == strip(queue[d2]) and queue[d1]["option"] == {"id": "yes", "label": "Yes", "do": "reply"}
+print(f"        queue: {d1} {strip(queue[d1])}; {d2} (the dashboard's) {strip(queue[d2])}")
+given = queue[d6].get("reply") == "tests, given up front" and queue[d7]["option"]["id"] == "no"
+sys.exit(0 if same and given and queue[d3]["option"]["id"] == "rename" and queue[d4]["reply"] == "unit first, then smoke" and d5 not in queue else 1)
+E
+check "athena ask queue holds each palette answer as it holds the dashboard's, and nothing for the one left open" test $? = 0
+"$ar" dash off >/dev/null
+
+space_b=$(field smoke-b "r['space']")
+active() { rx session inspect "$space_b" --json | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_window_id"))'; }
+rx window focus -s "$space_b" "$(field smoke-a "r['window']")" >/dev/null
+do_palette athena_open target=worker:smoke-b
+check "open: a worker's window from plain rex do, with no app to show it, refused first" said 'showing a window needs the Rex app that asked'
+check "and nothing moved" test "$(active)" = "$(field smoke-a "r['window']")"
+app
+client=$(sed -n 's/.*"id": "\(client:[^"]*\)".*"type": "welcome".*/\1/p' "$root/app.log")
+rx -C "$client" do athena_open target=worker:smoke-b --origin palette --json >"$root/do.out" 2>&1 # as the palette runs it
+app_done
+check "open: a worker's window is shown in the app that asked" said '"said": "Showing smoke-b."'
+check "smoke-b's window is its session's active one again" test "$(active)" = "$(field smoke-b "r['window']")"
+check "and the app was asked to show that session" grep -q "\"action\": \"session.select\", \"args\": {\"session_id\": \"$space_b\"}" "$root/app.log"
+do_palette athena_open target="item:$d5"
+check "open: a page needs the real world's browser, and a scratch state dir has the door shut" said 'opening a browser is off here'
+do_palette athena_open target=pr:https://example.com/x
+check "open: only what athena offers" said 'is not something athena offers to open now'
+for w in smoke-a smoke-b; do cp "$state/workers/$w.json" "$root/$w.before"; done
+/usr/bin/python3 - "$state/workers" <<'E'
+import json, sys
+for name in ("smoke-a", "smoke-b"):  # both report the same pull request
+    path = f"{sys.argv[1]}/{name}.json"
+    data = json.load(open(path))
+    data["report"] = {**(data.get("report") or {}), "pr": "https://github.com/acme/proj/pull/7"}
+    json.dump(data, open(path, "w"))
+E
+app id:pr:https://github.com/acme/proj/pull/7
+do_palette athena_open
+app_done
+check "open: two workers on one pull request offer it once, and Rex takes the list" said 'opening a browser is off here'
+check "and the list held it once" test "$(grep -o '"id": "pr:https://github.com/acme/proj/pull/7"' "$root/app.log" | wc -l | tr -d ' ')" = 1
+for w in smoke-a smoke-b; do cp "$root/$w.before" "$state/workers/$w.json"; done
+
+do_palette athena_retire worker=nobody confirm=true
+check "retire: only a live worker" said 'no live worker named nobody; nothing was retired.'
+do_palette athena_retire worker=smoke-c
+check "retire: without a confirm, and no app to confirm in, refused" test $? = 1 -a -n "$(said 'no Rex app is connected to ask in; nothing was retired' && echo y)"
+app id:keep
+do_palette athena_retire worker=smoke-c
+app_done
+check "retire: Keep keeps it" said 'smoke-c kept; nothing was retired.'
+app cancel
+do_palette athena_retire worker=smoke-c
+app_done
+check "retire: a closed question retires nothing" said 'cancelled; nothing was retired'
+check "and smoke-c is still live" test "$(field smoke-c "r['phase']")" = live
+
 # The signal sandbox: a script a worker's Claude runs can't signal a process outside it. The outsider is a sleep this script started,
 # alone in its own process group. Inside, a direct SIGCONT to it and a SIGTERM to its whole group must both be refused, and it must
 # live. No signal ever goes to -1; scripts/sandbox-proof.sh is the full proof.
@@ -330,18 +474,43 @@ check "retire --force went through" test $? = 0
 wip=$(/usr/bin/python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wip_backup'])" "$root/forced")
 check "the unsaved file is kept under $wip" test "$(git -C "$root/t2/proj" show "$wip:unsaved.txt" 2>/dev/null)" = unsaved
 
-pids=""
-for w in smoke-a smoke-c; do
-	pids="$pids $(cat "$state/run/$w.pid")"
-	"$ar" retire "$w"
-	check "$w retired" test $? = 0
-done
+pids="$(cat "$state/run/smoke-a.pid") $(cat "$state/run/smoke-c.pid")"
+do_palette athena_retire worker=smoke-a confirm=true
+check "smoke-a retired from rex do, confirm=true in place of the question" said '"said": "smoke-a retired'
+app id:smoke-c id:retire
+do_palette athena_retire
+app_done
+check "smoke-c retired from the palette: a worker, then Retire" said '"said": "smoke-c retired'
+check "the worker question offered the live workers" grep -q '"id": "smoke-c"' "$root/app.log"
 
 gone() { for p in $pids; do if ps -p "$p" >/dev/null 2>&1; then return 1; fi; done; return 0; }
 check "their Claudes are gone" wait_for 10 gone
 check "no sessions left on the private server" test "$(rx ls --json | /usr/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)['sessions']))")" = 0
 check "no worktrees left" test "$(git -C "$root/t2/proj" worktree list | wc -l | tr -d ' ')" = 1
 check "ledger says retired" test "$("$ar" status smoke-a smoke-b smoke-c --json | /usr/bin/python3 -c "import json,sys; print(sum(r['phase']=='retired' for r in json.load(sys.stdin)))")" = 3
+
+# The palette's edges: no worker left to choose, and more open items than a pick may show (Rex takes at most 2,000).
+do_palette athena_retire
+check "retire, with no worker live: says so" said 'no worker is live; nothing was retired.'
+cp "$state/needs-you.json" "$root/needs-you.before"
+/usr/bin/python3 - "$here" <<'E'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from athena.caps import items
+data, now = items.load(), int(time.time())
+data["items"] += [{"id": f"a{90000 + n}", "kind": "request", "text": f"filler {n}", "name": f"filler {n}", "next": "athena",
+                   "options": [], "created": now, "updated": now, "log": []} for n in range(2100)]
+items.save(data)
+E
+app id:item:a90000
+do_palette athena_open
+app_done
+check "open, with over 2,000 open items: Rex took the first 2,000 as one pick" /usr/bin/python3 -c '
+import json, sys
+asked = [json.loads(l)["payload"]["payload"]["prompt"] for l in open(sys.argv[1]) if "client_prompt_requested" in l]
+sys.exit(0 if len(asked) == 1 and len(asked[0]["items"]) == 2000 else 1)' "$root/app.log"
+check "and the one chosen reached athena, which opens a page only through the door" said 'opening a browser is off here'
+cp "$root/needs-you.before" "$state/needs-you.json"
 
 # -- part 3: HQ on a real Claude and its rotation (Rex runs the sessions: nothing restarts or revives HQ)
 

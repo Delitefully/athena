@@ -170,6 +170,7 @@ and tell it what to start, such as the Linear tickets you want built. Then:
 - [Modules](docs/modules.md): the optional modules, and how to write your own.
 - [Worktrees and cleanup](docs/workspaces.md): worktrees and scratch spaces, and how cleanup never loses work.
 - [Flame](docs/flame.md): the page that shows where time and tokens went.
+- [The palette](docs/palette.md): athena's actions in Rex's command palette, and how to install them.
 - [Upgrading](docs/upgrade-from-herdr.md): moving over from athena's earlier, pre-Rex version.
 - [Release review](docs/release-review.md): what was checked and fixed before the current release.
 - [Chaos catalogue](docs/chaos.md): what can break at random, and what athena should do then.
