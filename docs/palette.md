@@ -42,6 +42,12 @@ do local ok, err = pcall(function() dofile(".../athena/caps/palette/palette.lua"
 
 To remove the actions, delete the marked line and run `rex config reload`.
 
+**Rex's server must be new enough.** Questions need a Rex server at API revision 17 or later
+(`rex api call server.version` prints `api_revision`). After a Rex update, the app runs the new version, but the server
+keeps running its old one until it restarts. An action on an older server says so, instead of asking. To restart onto the
+installed version, run **Restart Server…** from the palette (`client.server.restart`). That stops every program in every
+pane. athena's revive module then brings HQ and each live worker back on its own conversation.
+
 ## How each one behaves
 
 - **Arguments skip questions.** Every question has an argument that answers it, so `rex do` can run the action with

@@ -394,8 +394,14 @@ class TheLua(Case):
         run = self.lua[self.lua.index('name = "athena_answer"'):self.lua.index('name = "athena_message"')]
         gate = run.index("if option == nil and text == nil then")
         self.assertLess(run.index("if item == nil then"), gate)
-        self.assertLess(gate, run.index("rex.ui.pick{\n          title = takes.title"))
-        self.assertLess(gate, run.index("rex.ui.input{ title = takes.title"))
+        self.assertLess(gate, run.index('ui(title, "nothing was answered").pick{\n          title = takes.title'))
+        self.assertLess(gate, run.index('ui(title, "nothing was answered").input{ title = takes.title'))
+
+    def test_every_question_goes_through_the_check_for_a_server_that_can_ask(self):
+        """A Rex server before API revision 17 has no rex.ui: the action says so, not a Lua error about indexing nil."""
+        self.assertEqual(len(re.findall(r"\bui\(title, [^)]+\)\.(?:pick|input)\{", self.lua)), 7)
+        self.assertEqual(re.findall(r"rex\.ui\.(?:pick|input)", self.lua), [])
+        self.assertIn("questions need 17): restart Rex's server", self.lua)
 
     def test_its_icons_are_rexs_own(self):
         self.assertLessEqual(set(re.findall(r'icon = "([a-z]+)"', self.lua)), REX_ICONS)

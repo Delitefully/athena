@@ -85,6 +85,18 @@ local function athena_act(title, args, still)
   return (r.stdout:gsub("%s+$", ""))
 end
 
+-- Rex's questions (rex.ui), or a refusal that says why there are none: a Rex server older than API revision 17 has no rex.ui,
+-- and keeps running its old version until it restarts, even after the app has updated.
+local function ui(title, nothing)
+  if rex.ui == nil then
+    local version = rex.call("server.version") or {}
+    fail(title, "this Rex server can't ask questions (it is " .. tostring(version.rex_version or "older") .. ", API revision "
+      .. tostring(version.api_revision or "?") .. "; questions need 17): restart Rex's server to run the version installed; "
+      .. nothing .. ".")
+  end
+  return rex.ui
+end
+
 local function done(text)
   rex.log("info", "athena: " .. text)
   return { said = text }
@@ -104,7 +116,7 @@ local function live_worker(title, named, question, nothing)
   if #live.items == 0 then
     fail(title, "no worker is live; " .. nothing .. ".")
   end
-  local worker, why, detail = rex.ui.pick{ title = question, placeholder = "Filter workers", items = live.items }
+  local worker, why, detail = ui(title, nothing).pick{ title = question, placeholder = "Filter workers", items = live.items }
   if worker == nil then
     unanswered(title, why, detail, nothing)
   end
@@ -131,7 +143,7 @@ rex.action{
         fail(title, "no decision is waiting for you.")
       end
       local why, detail
-      item, why, detail = rex.ui.pick{ title = "Answer a decision", placeholder = "Filter decisions", items = waiting.items }
+      item, why, detail = ui(title, "nothing was answered").pick{ title = "Answer a decision", placeholder = "Filter decisions", items = waiting.items }
       if item == nil then
         unanswered(title, why, detail, "nothing was answered")
       end
@@ -144,10 +156,10 @@ rex.action{
       end
       local chosen, why, detail
       if #takes.options == 0 then
-        chosen, why, detail = rex.ui.input{ title = takes.title, placeholder = "Your reply", confirm = "Send reply" }
+        chosen, why, detail = ui(title, "nothing was answered").input{ title = takes.title, placeholder = "Your reply", confirm = "Send reply" }
         chosen = chosen and { text = chosen }
       else
-        chosen, why, detail = rex.ui.pick{
+        chosen, why, detail = ui(title, "nothing was answered").pick{
           title = takes.title,
           placeholder = takes.reply and "Choose, or type a reply" or "Choose an answer",
           items = takes.options,
@@ -181,7 +193,7 @@ rex.action{
     local text = args.text
     if text == nil then
       local why, detail
-      text, why, detail = rex.ui.input{ title = "Message " .. worker, placeholder = "What to tell it", confirm = "Send" }
+      text, why, detail = ui(title, "nothing was sent").input{ title = "Message " .. worker, placeholder = "What to tell it", confirm = "Send" }
       if text == nil then
         unanswered(title, why, detail, "nothing was sent")
       end
@@ -210,7 +222,7 @@ rex.action{
         fail(title, "athena has no worker, pull request or item to open.")
       end
       local why, detail
-      target, why, detail = rex.ui.pick{ title = "Open", placeholder = "Filter workers, pull requests and items", items = offered.items }
+      target, why, detail = ui(title, "nothing was opened").pick{ title = "Open", placeholder = "Filter workers, pull requests and items", items = offered.items }
       if target == nil then
         unanswered(title, why, detail, "nothing was opened")
       end
@@ -250,7 +262,7 @@ rex.action{
     local title = "Retire a Worker"
     local worker = live_worker(title, args.worker, "Retire a worker", "nothing was retired")
     if args.confirm ~= true then
-      local sure, why, detail = rex.ui.pick{
+      local sure, why, detail = ui(title, "nothing was retired").pick{
         title = "Retire " .. worker .. "?",
         items = {
           { id = "retire", title = "Retire " .. worker, icon = "gear",
