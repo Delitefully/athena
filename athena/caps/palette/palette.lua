@@ -111,6 +111,9 @@ rex.action{
   run = function(ctx, args)
     local title = "Answer a Decision"
     local item, option, text = args.item, args.option, args.text
+    if option ~= nil and text ~= nil then
+      fail(title, "give an option or a text, not both; nothing was answered.")
+    end
     if item == nil or (option == nil and text == nil) then
       local waiting = athena_json(title, { "palette", "decisions" })
       local why, detail
