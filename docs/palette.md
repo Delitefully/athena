@@ -61,7 +61,9 @@ To remove the actions, delete the marked line and run `rex config reload`.
   showing an empty list.
 - **What it offers is athena's.** Answer offers what the dashboard's Needs you offers as decisions. Permission prompts and
   the pull-request buttons (Re-check, Merge and the rest) stay on the dashboard. Open offers only what athena lists:
-  live workers, the pull requests they reported, and open items.
+  live workers, the pull requests they reported, and open items. A list holds at most 2,000 entries, Rex's limit for one
+  question; past that, the first 2,000 are shown (workers come before items).
+- **A worker named in an argument must be live.** Otherwise the action says so before asking anything.
 - **Retire asks twice.** Rex's `confirm` is only the label of a question's submit row, so the guard is a question of its own.
   The worker is retired only after **Retire** is chosen in that second question, or with `confirm=true` from `rex do`.
 - **A slow send or retire finishes on its own.** Rex gives an action 30 seconds. A send or retire still running after 20

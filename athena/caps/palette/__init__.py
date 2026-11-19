@@ -154,7 +154,7 @@ def answer(item_id: str, option=None, text=None) -> dict:
     dash = _dash()
     found = {item["id"]: item for item, _ in _decisions(dash)}
     if item_id not in found:
-        raise UserError(f"{item_id} is not a decision waiting for your answer")
+        raise UserError(f"{item_id} is not a decision waiting for your answer: answered already, snoozed, resolved or not one")
     from athena.caps.dash import server
     request = {"item": item_id, "option": option} if text is None else {"item": item_id, "text": text}
     try:

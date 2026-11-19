@@ -89,8 +89,17 @@ local function done(text)
   return { said = text }
 end
 
-local function choose_worker(title, question, nothing)
+-- The worker named, if it is live, else the one chosen from the live ones: never a question about a worker that isn't there.
+local function live_worker(title, named, question, nothing)
   local live = athena_json(title, { "palette", "workers" })
+  if named ~= nil then
+    for _, w in ipairs(live.items) do
+      if w.id == named then
+        return named
+      end
+    end
+    fail(title, "no live worker named " .. named .. "; " .. nothing .. ".")
+  end
   if #live.items == 0 then
     fail(title, "no worker is live; " .. nothing .. ".")
   end
@@ -165,7 +174,7 @@ rex.action{
   args = { worker = "string?", text = "string?" },
   run = function(ctx, args)
     local title = "Message a Worker"
-    local worker = args.worker or choose_worker(title, "Message a worker", "nothing was sent")
+    local worker = live_worker(title, args.worker, "Message a worker", "nothing was sent")
     local text = args.text
     if text == nil then
       local why, detail
@@ -230,7 +239,7 @@ rex.action{
   args = { worker = "string?", confirm = "boolean?" },
   run = function(ctx, args)
     local title = "Retire a Worker"
-    local worker = args.worker or choose_worker(title, "Retire a worker", "nothing was retired")
+    local worker = live_worker(title, args.worker, "Retire a worker", "nothing was retired")
     if args.confirm ~= true then
       local sure, why, detail = rex.ui.pick{
         title = "Retire " .. worker .. "?",

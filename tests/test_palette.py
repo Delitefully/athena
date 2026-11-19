@@ -314,6 +314,17 @@ class WorkersAndOpen(Case):
                 on.assert_called_once()
                 browser.assert_called_with(f"{dash.url()}item/{self.item['id']}")
 
+    def test_more_than_a_pick_takes_is_cut_to_its_2000(self):
+        data = items().load()
+        now = int(time.time())
+        data["items"] += [{"id": f"a{n}", "kind": "request", "text": f"item {n}", "name": f"item {n}", "next": "athena", "options": [],
+                           "created": now, "updated": now, "log": []} for n in range(1000, 3001)]
+        items().save(data)
+        offered = palette().targets()["items"]
+        self.assertEqual(len(offered), palette().PICK_MAX)
+        self.assertEqual([t["id"] for t in offered[:3]], ["worker:alpha", "pr:https://github.com/acme/proj/pull/7", "worker:beta"],
+                         "the workers first: the cut takes items off the end")
+
     def test_a_report_pr_that_is_not_a_github_pull_request_is_not_offered(self):
         store.write_json(store.path("workers", "beta.json"), {"state": "done", "report": {"pr": "javascript:alert(1)"}})
         self.assertFalse(any(t["id"].startswith("pr:javascript") for t in palette().targets()["items"]))

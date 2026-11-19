@@ -350,7 +350,7 @@ check "message, cancelled at the words: refused, and says so" test "$code" = 1 -
 do_palette athena_message worker=smoke-a text="   "
 check "message: an empty one is refused" said 'the message is empty; nothing was sent.'
 do_palette athena_message worker=nobody text=hello
-check "message: only to a live worker" said 'no live worker named nobody'
+check "message: only to a live worker, refused before any question" said 'no live worker named nobody; nothing was sent.'
 
 space_b=$(field smoke-b "r['space']")
 active() { rx session inspect "$space_b" --json | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_window_id"))'; }
@@ -367,6 +367,8 @@ check "open: a page needs the real world's browser, and a scratch state dir has 
 do_palette athena_open target=pr:https://example.com/x
 check "open: only what athena offers" said 'is not something athena offers to open now'
 
+do_palette athena_retire worker=nobody confirm=true
+check "retire: only a live worker" said 'no live worker named nobody; nothing was retired.'
 do_palette athena_retire worker=smoke-c
 check "retire: without a confirm, and no app to confirm in, refused" test $? = 1 -a -n "$(said 'no Rex app is connected to ask in; nothing was retired' && echo y)"
 app id:keep
@@ -473,6 +475,31 @@ check "their Claudes are gone" wait_for 10 gone
 check "no sessions left on the private server" test "$(rx ls --json | /usr/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)['sessions']))")" = 0
 check "no worktrees left" test "$(git -C "$root/t2/proj" worktree list | wc -l | tr -d ' ')" = 1
 check "ledger says retired" test "$("$ar" status smoke-a smoke-b smoke-c --json | /usr/bin/python3 -c "import json,sys; print(sum(r['phase']=='retired' for r in json.load(sys.stdin)))")" = 3
+
+# The palette's edges: no worker left to choose, and more open items than a pick may show (Rex takes at most 2,000).
+do_palette athena_message
+check "message, with no worker live: says so, and asks nothing" said 'no worker is live; nothing was sent.'
+do_palette athena_retire
+check "retire, with no worker live: says so" said 'no worker is live; nothing was retired.'
+cp "$state/needs-you.json" "$root/needs-you.before"
+/usr/bin/python3 - "$here" <<'E'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from athena.caps import items
+data, now = items.load(), int(time.time())
+data["items"] += [{"id": f"a{90000 + n}", "kind": "request", "text": f"filler {n}", "name": f"filler {n}", "next": "athena",
+                   "options": [], "created": now, "updated": now, "log": []} for n in range(2100)]
+items.save(data)
+E
+app id:item:a90000
+do_palette athena_open
+app_done
+check "open, with over 2,000 open items: Rex took the first 2,000 as one pick" /usr/bin/python3 -c '
+import json, sys
+asked = [json.loads(l)["payload"]["payload"]["prompt"] for l in open(sys.argv[1]) if "client_prompt_requested" in l]
+sys.exit(0 if len(asked) == 1 and len(asked[0]["items"]) == 2000 else 1)' "$root/app.log"
+check "and the one chosen reached athena, which opens a page only through the door" said 'opening a browser is off here'
+cp "$root/needs-you.before" "$state/needs-you.json"
 
 # -- part 3: HQ on a real Claude and its rotation (Rex runs the sessions: nothing restarts or revives HQ)
 
