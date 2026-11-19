@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Retire after a squash merge.** `athena retire <w>` no longer needs `--force` for a worker whose PR was squash-merged:
+  when its branch reads as unpushed, retire asks `gh` for the branch's PR, and a PR merged into the default branch at the
+  worktree's very head counts as saved (`w retired; its commits are saved, merged as <sha> in #<n>`). A commit made after
+  the merge still refuses, and is named; so does a rewritten head, and anything uncommitted or git-ignored, as before. The
+  head is still backed up under `refs/athena-backup/<w>/`. See `docs/workspaces.md`.
 - **Quiet watch.** What athena says to HQ (the watch's wakes, doctor's rotation ask, HQ's routine and a rotated or
   revived HQ's first prompt) goes to HQ's cross-session inbox, a dim `› Message from @athena-watch: …` line, instead of
   being typed into its input box. A half-typed prompt stays put, and a busy HQ reads it between tool calls. Typing stays

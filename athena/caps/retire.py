@@ -56,6 +56,21 @@ def _may_forget(name, path, repo, keep_worktree):
         raise RetireError(f"{name} stays tracked, and nothing was removed: {why}")
 
 
+def _merged_pr(path, repo, branch, head):
+    """(the branch's PR merged into the default branch, the commits of this head that came after the PR's own). A squash
+    merge puts the work on the default branch as a new commit, so the branch reads as unpushed; the PR, merged at this very
+    head, says it is saved. Commits past its head are listed as unsaved, and a head the PR's isn't under is None."""
+    prs = caps.get("prs")
+    pr = prs.merged(repo, branch) if prs and repo and head else None
+    if not pr:
+        return None, None
+    if prs.same_head(pr["head"], head):
+        return pr, []
+    if not gitops.ok(path, "merge-base", "--is-ancestor", pr["head"], head):
+        return pr, None
+    return pr, gitops.git(path, "log", "--format=%h %s", "--abbrev=12", f"{pr['head']}..{head}").splitlines()
+
+
 def _save_work(name, path, repo, force, keep_worktree=False) -> dict:
     """Keeps a head ref, and with --force a ref of the changes. Refuses, naming it, whatever only this worktree holds. With
     --keep-worktree nothing goes, so only a vanished or broken worktree's own record that holds work refuses."""
@@ -77,10 +92,22 @@ def _save_work(name, path, repo, force, keep_worktree=False) -> dict:
         raise RetireError(f"git cannot say what {path} holds ({info.get('error')}); {name} stays tracked")
     if keep_worktree:
         return out
+    why = ""
+    if info["ahead"] and not force:
+        pr, after = _merged_pr(path, repo, info["branch"], head)
+        if pr:
+            merged = f"merged as {pr['merge_commit'][:12]} in #{pr['number']}"
+            if after == []:
+                info["ahead"], out["merged"] = 0, pr
+            elif after:
+                info["ahead"] = len(after)
+                why = f"; its PR {merged}, but these came after it: {', '.join(after[:8])}{', ...' if after[8:] else ''}"
+            else:
+                why = f"; its PR {merged} at {pr['head'][:12]}, which this head {head[:12]} does not build on"
     if (info["dirty"] or info["ahead"] or info["ignored"]) and not force:
         listed = ", ".join(info["ignored"][:8]) + (", ..." if info["ignored"][8:] else "")
         also = f" and git-ignored: {listed}" if info["ignored"] else ""
-        raise RetireError(f"{name} still holds {len(info['dirty'])} uncommitted and {info['ahead']} unpushed{also}; its head is "
+        raise RetireError(f"{name} still holds {len(info['dirty'])} uncommitted and {info['ahead']} unpushed{also}{why}; its head is "
                           f"kept at {out['backup']}. Save them, or use --force, which keeps them first.")
     limit = int(config.rex("ignored_copy_max_mb"))
     size = gitops.size_of(path, info["ignored"]) // (1 << 20)
@@ -254,7 +281,9 @@ def _run(args):
         if out.get("wip_backup"):
             print(f"{args.name} retired; its unsaved work is at {out['wip_backup']}")
         else:
-            print(f"{args.name} retired" + (f"; head kept at {out['backup']}" if out.get("backup") else ""))
+            merged = out.get("merged")
+            print(f"{args.name} retired" + (f"; its commits are saved, merged as {merged['merge_commit'][:12]} in #{merged['number']}"
+                                            if merged else "") + (f"; head kept at {out['backup']}" if out.get("backup") else ""))
         earlier = [kept for kept in out["kept"] if kept not in (out.get("backup"), out.get("wip_backup"), out.get("ignored_kept"))]
         if earlier:
             print(f"also kept: {', '.join(earlier)}")
