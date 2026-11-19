@@ -74,7 +74,7 @@ def installed(target) -> str:
     marked = _marked(lines)
     if not marked:
         return "absent"
-    return "installed" if [lines[n] for n in marked] == [line()] else "another"
+    return "installed" if [lines[n].rstrip("\r") for n in marked] == [line()] else "another"
 
 
 def install(target, explicit: bool) -> str:

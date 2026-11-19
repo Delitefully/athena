@@ -2,7 +2,8 @@
 -- it again on `rex config reload`. This file only asks the questions: what is offered, what an answer may be and every write are
 -- athena's (`athena palette ...`, `athena send`, `athena retire`). docs/palette.md has the whole story.
 --
--- Each argument given skips its question, so `rex do` can run any of them with nobody there:
+-- Each argument given skips its question, so `rex do` can run them with nobody there (all but showing a worker's window,
+-- which only the Rex app that asked can do):
 --   rex do athena_answer item=a12 option=yes        rex do athena_message worker=w text="..."
 --   rex do athena_open target=pr:<url>              rex do athena_retire worker=w confirm=true
 -- A question left unanswered (closed, timed out, no Rex app to ask it in) stops the action before it does anything, and says so.

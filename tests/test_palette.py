@@ -53,6 +53,12 @@ class Install(Case):
         self.assertEqual(real.read_bytes(), mine + b"\n" + palette().line().encode() + b"\n")
         self.assertEqual(palette().install(target, explicit=True), "already")
 
+    def test_the_line_in_a_crlf_config_reads_as_installed(self):
+        target = self.tmp / "init.lua"
+        target.write_bytes(b"-- mine\r\n" + palette().line().encode() + b"\r\n")
+        self.assertEqual(palette().installed(target), "installed")
+        self.assertEqual(palette().install(target, explicit=True), "already")
+
     def test_a_missing_file_is_made(self):
         target = self.tmp / "nowhere" / "rex" / "init.lua"
         self.assertEqual(palette().installed(target), "no file")
