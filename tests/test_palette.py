@@ -373,13 +373,11 @@ class TheLua(Case):
         self.assertEqual(verbs, {"decisions", "workers", "targets", "answer", "open"})
         for verb in verbs:
             self.assertEqual(self.cli("palette", verb, "--help").returncode, 0, verb)
-        for verb in ("send", "retire"):
+        for verb in ("retire",):
             self.assertIn(f'{{ "{verb}", ', self.lua)
             self.assertIsNotNone(caps.find_command(verb))
-        self.assertIn('{ "send", "--", worker, text }', self.lua, "a name or a message that looks like a flag is still one")
-        self.assertIn('{ "retire", "--", worker }', self.lua)
-        sent = self.cli("send", "--", "--all", "-h")
-        self.assertEqual((sent.returncode, sent.stderr.strip()), (1, "athena: no live worker named --all"))
+        self.assertIn('{ "retire", "--", worker }', self.lua, "a name that looks like a flag is still a name")
+        self.assertNotIn('"send"', self.lua, "messaging a worker is not one of the actions: the human types to it")
         retired = self.cli("retire", "--", "--all")
         self.assertEqual(retired.returncode, 1)
         self.assertIn("worker named --all", retired.stderr)
@@ -391,7 +389,7 @@ class TheLua(Case):
 
     def test_a_given_answer_is_never_asked_for_again(self):
         """An option or a text given in the arguments is the answer: only the decision may still be asked for."""
-        run = self.lua[self.lua.index('name = "athena_answer"'):self.lua.index('name = "athena_message"')]
+        run = self.lua[self.lua.index('name = "athena_answer"'):self.lua.index('name = "athena_open"')]
         gate = run.index("if option == nil and text == nil then")
         self.assertLess(run.index("if item == nil then"), gate)
         self.assertLess(gate, run.index('ui(title, "nothing was answered").pick{\n          title = takes.title'))
@@ -399,7 +397,7 @@ class TheLua(Case):
 
     def test_every_question_goes_through_the_check_for_a_server_that_can_ask(self):
         """A Rex server before API revision 17 has no rex.ui: the action says so, not a Lua error about indexing nil."""
-        self.assertEqual(len(re.findall(r"\bui\(title, [^)]+\)\.(?:pick|input)\{", self.lua)), 7)
+        self.assertEqual(len(re.findall(r"\bui\(title, [^)]+\)\.(?:pick|input)\{", self.lua)), 6)
         self.assertEqual(re.findall(r"rex\.ui\.(?:pick|input)", self.lua), [])
         self.assertIn("questions need 17): restart Rex's server", self.lua)
 

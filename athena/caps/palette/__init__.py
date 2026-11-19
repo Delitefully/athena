@@ -4,7 +4,6 @@
 palette (`rex.ui.pick`, `rex.ui.input`), and hands the answer back to athena:
 
     athena_answer   Answer a Decision...   the dashboard's own answer, through the dashboard's own writer
-    athena_message  Message a Worker...    `athena send`
     athena_open     Open...                a worker's window, its pull request, an item's page on the dashboard
     athena_retire   Retire a Worker...     `athena retire`, once Retire is chosen in a second question
 
@@ -23,7 +22,7 @@ from athena.kernel import caps, lab, store, world
 SUMMARY = "athena's actions in Rex's command palette: install them, and what they ask"
 LUA = Path(os.path.abspath(__file__)).with_name("palette.lua")
 MARK = "-- athena's palette actions (athena palette install)"
-ACTIONS = (("athena_answer", "Answer a Decision…"), ("athena_message", "Message a Worker…"), ("athena_open", "Open…"),
+ACTIONS = (("athena_answer", "Answer a Decision…"), ("athena_open", "Open…"),
            ("athena_retire", "Retire a Worker…"))
 PICK_MAX = 2000  # what rex.ui.pick takes
 LINE_MAX = 160  # a subtitle, cut to one line of the palette

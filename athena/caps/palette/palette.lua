@@ -1,10 +1,10 @@
 -- athena's actions in Rex's command palette. The line `athena palette install` puts in Rex's config loads this file; Rex reads
 -- it again on `rex config reload`. This file only asks the questions: what is offered, what an answer may be and every write are
--- athena's (`athena palette ...`, `athena send`, `athena retire`). docs/palette.md has the whole story.
+-- athena's (`athena palette ...`, `athena retire`). docs/palette.md has the whole story.
 --
 -- Each argument given skips its question, so `rex do` can run them with nobody there (all but showing a worker's window,
 -- which only the Rex app that asked can do):
---   rex do athena_answer item=a12 option=yes        rex do athena_message worker=w text="..."
+--   rex do athena_answer item=a12 option=yes
 --   rex do athena_open target=pr:<url>              rex do athena_retire worker=w confirm=true
 -- A question left unanswered (closed, timed out, no Rex app to ask it in) stops the action before it does anything, and says so.
 
@@ -14,7 +14,7 @@ local ATHENA = root and (root .. "/bin/athena")
 local ENV -- set by the line that loads this file: athena's state dir, whatever the Rex server's own environment says
 
 local LIST_WAIT = 10 -- seconds for athena to say what to offer
-local ACT_WAIT = 20 -- seconds to wait on a send or a retire before leaving it to finish on its own: Rex gives an action 30
+local ACT_WAIT = 20 -- seconds to wait on a retire before leaving it to finish on its own: Rex gives an action 30
 
 local NO_ANSWER = {
   cancelled = "cancelled",
@@ -68,7 +68,7 @@ local function athena_json(title, args)
   return out
 end
 
--- An athena command that takes its time (a send, a retire). It runs detached, so the action's time limit never stops it half
+-- An athena command that takes its time (a retire). It runs detached, so the action's time limit never stops it half
 -- way: past ACT_WAIT it carries on alone and the action says so.
 local function athena_act(title, args, still)
   local h, err = rex.exec.start(athena_argv(title, args), { detach = true, env = ENV })
@@ -177,32 +177,6 @@ rex.action{
     end
     local given = text ~= nil and ("--text=" .. text) or ("--option=" .. option)
     return done(athena_json(title, { "palette", "answer", item, given }).said)
-  end,
-}
-
-rex.action{
-  name = "athena_message",
-  title = "athena: Message a Worker…",
-  description = "Type a message to one of athena's live workers, the way athena sends one.",
-  category = "athena",
-  keywords = "athena worker message send tell",
-  args = { worker = "string?", text = "string?" },
-  run = function(ctx, args)
-    local title = "Message a Worker"
-    local worker = live_worker(title, args.worker, "Message a worker", "nothing was sent")
-    local text = args.text
-    if text == nil then
-      local why, detail
-      text, why, detail = ui(title, "nothing was sent").input{ title = "Message " .. worker, placeholder = "What to tell it", confirm = "Send" }
-      if text == nil then
-        unanswered(title, why, detail, "nothing was sent")
-      end
-    end
-    if text:match("^%s*$") then
-      fail(title, "the message is empty; nothing was sent.")
-    end
-    local _, still = athena_act(title, { "send", "--", worker, text }, "still typing it to " .. worker .. ": athena finishes on its own")
-    return done(still or ("Sent to " .. worker .. "."))
   end,
 }
 

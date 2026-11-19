@@ -282,7 +282,7 @@ if ! grep -qF "state_dir = \"$state\"" "$root/init.lua"; then # every athena the
 fi
 pass "the line names this run's scratch state dir"
 rx config reload >/dev/null
-check "the server loaded the four athena actions" test "$(rx actions | grep -c '^athena_')" = 4
+check "the server loaded the three athena actions" test "$(rx actions | grep -c '^athena_')" = 3
 
 d1=$("$ar" item add "Ship the palette's docs first?" --name "palette docs" --option Yes --option No --rec yes | cut -d' ' -f1)
 d2=$("$ar" item add "Ship the dash's docs first?" --name "dash docs" --option Yes --option No --rec yes | cut -d' ' -f1)
@@ -345,24 +345,6 @@ sys.exit(0 if same and given and queue[d3]["option"]["id"] == "rename" and queue
 E
 check "athena ask queue holds each palette answer as it holds the dashboard's, and nothing for the one left open" test $? = 0
 "$ar" dash off >/dev/null
-
-do_palette athena_message worker=smoke-a text="$(report palette-a)"
-check "message: rex do sends to a worker from its arguments" said '"said": "Sent to smoke-a."'
-check "and it reached smoke-a, which filed the report it asked for" wait_for 60 concern_is smoke-a palette-a
-app id:smoke-a "text:$(report palette-asked-a)"
-do_palette athena_message
-app_done
-check "message: asked in the palette, a worker and then the words" wait_for 60 concern_is smoke-a palette-asked-a
-check "the worker question offered the live workers" grep -q '"id": "smoke-c"' "$root/app.log"
-app id:smoke-a cancel
-do_palette athena_message
-code=$?
-app_done
-check "message, cancelled at the words: refused, and says so" test "$code" = 1 -a -n "$(said 'cancelled; nothing was sent' && echo y)"
-do_palette athena_message worker=smoke-a text="   "
-check "message: an empty one is refused" said 'the message is empty; nothing was sent.'
-do_palette athena_message worker=nobody text=hello
-check "message: only to a live worker, refused before any question" said 'no live worker named nobody; nothing was sent.'
 
 space_b=$(field smoke-b "r['space']")
 active() { rx session inspect "$space_b" --json | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_window_id"))'; }
@@ -499,6 +481,7 @@ app id:smoke-c id:retire
 do_palette athena_retire
 app_done
 check "smoke-c retired from the palette: a worker, then Retire" said '"said": "smoke-c retired'
+check "the worker question offered the live workers" grep -q '"id": "smoke-c"' "$root/app.log"
 
 gone() { for p in $pids; do if ps -p "$p" >/dev/null 2>&1; then return 1; fi; done; return 0; }
 check "their Claudes are gone" wait_for 10 gone
@@ -507,8 +490,6 @@ check "no worktrees left" test "$(git -C "$root/t2/proj" worktree list | wc -l |
 check "ledger says retired" test "$("$ar" status smoke-a smoke-b smoke-c --json | /usr/bin/python3 -c "import json,sys; print(sum(r['phase']=='retired' for r in json.load(sys.stdin)))")" = 3
 
 # The palette's edges: no worker left to choose, and more open items than a pick may show (Rex takes at most 2,000).
-do_palette athena_message
-check "message, with no worker live: says so, and asks nothing" said 'no worker is live; nothing was sent.'
 do_palette athena_retire
 check "retire, with no worker live: says so" said 'no worker is live; nothing was retired.'
 cp "$state/needs-you.json" "$root/needs-you.before"

@@ -415,11 +415,11 @@ transcripts that holds their shape and cost, never their text ([docs/flame.md](d
 **The board** (`athena board`, `athena/caps/board.py`) is a read-only panel in a block beside HQ: a row per worker and
 the tail of each busy worker's screen, redrawn from status. It is for a glance, never for typing.
 
-**The palette** (`athena/caps/palette/`) puts four athena actions in Rex's command palette: answer a decision, message a
-worker, open a worker's window, PR or item, and retire a worker. `palette.lua` is a Rex config file that asks the questions
+**The palette** (`athena/caps/palette/`) puts three athena actions in Rex's command palette: answer a decision, open a
+worker's window, PR or item, and retire a worker. `palette.lua` is a Rex config file that asks the questions
 (`rex.ui.pick`, `rex.ui.input`). Everything else is athena's: `athena palette` lists what to offer, and an answer goes
-through the dashboard's own `take_action`, so it joins the answer queue above as a click would. A message goes through
-`athena send`, and a retire through `athena retire`. `athena palette install` adds one marked line to Rex's config,
+through the dashboard's own `take_action`, so it joins the answer queue above as a click would. A retire goes through
+`athena retire`. `athena palette install` adds one marked line to Rex's config,
 naming the Lua through `current` and the state dir it is for ([docs/palette.md](docs/palette.md)).
 
 ## Doctor and services

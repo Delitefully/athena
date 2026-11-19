@@ -1,13 +1,12 @@
 # athena in Rex's command palette
 
-Four athena actions in Rex's command palette, for things you would otherwise type into HQ or click on the dashboard.
+Three athena actions in Rex's command palette, for things you would otherwise type into HQ or click on the dashboard.
 Each one asks its questions in the palette (Rex's custom UI: `rex.ui.pick` and `rex.ui.input`), then hands the answer to
 athena, which does the same thing its own command or the dashboard does.
 
 | Action | In the palette | What it does |
 |---|---|---|
 | `athena_answer` | athena: Answer a Decision… | Pick a decision waiting for you, then one of its options, or type a reply. The answer joins the dashboard's answer queue, through the dashboard's own writer and checks, so HQ takes it up exactly as it does a click on the page. |
-| `athena_message` | athena: Message a Worker… | Pick a live worker, then type a message. `athena send` delivers it: typed safely into a Claude worker, or posted to a Pi worker's inbox. |
 | `athena_open` | athena: Open… | Pick a live worker, its pull request, or any open item. A worker's window comes to the front in the app you asked from. A pull request opens in your browser, and an item opens on its dashboard page (started if it isn't running). |
 | `athena_retire` | athena: Retire a Worker… | Pick a live worker, then choose **Retire** (or **Keep**). `athena retire` saves its work, stops it, and removes its worktree and window. Unsaved work stops the retire, as always. |
 
@@ -55,7 +54,6 @@ pane. athena's revive module then brings HQ and each live worker back on its own
 
   ```
   rex do athena_answer item=a12 option=yes          rex do athena_answer item=a12 text="after the tests"
-  rex do athena_message worker=rex-palette text="rebase on main, please"
   rex do athena_open target=pr:https://github.com/o/r/pull/1      rex do athena_retire worker=rex-palette confirm=true
   ```
 
@@ -65,7 +63,7 @@ pane. athena's revive module then brings HQ and each live worker back on its own
 
 - **An unanswered question does nothing.** If a question is closed, times out, or can't be shown, the action stops before
   it acts, and says why: cancelled, nobody answered in time, no Rex app is connected to ask in, the Rex app can't show
-  questions, or the app is showing another question. The message always ends "nothing was answered" (or sent, opened,
+  questions, or the app is showing another question. The message always ends "nothing was answered" (or opened,
   retired). With `rex do`, it is the error, and the exit status is 1.
 - **Nothing to choose is said, not shown.** With no decision waiting or no worker live, the action says so instead of
   showing an empty list.
@@ -78,7 +76,7 @@ pane. athena's revive module then brings HQ and each live worker back on its own
   be among the 2,000 offered.
 - **Retire asks twice.** Rex's `confirm` is only the label of a question's submit row, so the guard is a question of its own.
   The worker is retired only after **Retire** is chosen in that second question, or with `confirm=true` from `rex do`.
-- **A slow send or retire finishes on its own.** Rex gives an action 30 seconds. A send or retire still running after 20
+- **A slow retire finishes on its own.** Rex gives an action 30 seconds. A retire still running after 20
   seconds carries on in the background, and the action says so. It is never stopped halfway.
 - **Questions wait 5 minutes** (Rex's default). The first Rex app to answer wins, on any of your devices.
 

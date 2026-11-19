@@ -7,8 +7,8 @@
   worktree's very head counts as saved (`w retired; its commits are saved, merged as <sha> in #<n>`). A commit made after
   the merge still refuses, and is named; so does a rewritten head, and anything uncommitted or git-ignored, as before. The
   head is still backed up under `refs/athena-backup/<w>/`. See `docs/workspaces.md`.
-- **athena in Rex's command palette.** Four actions, built on Rex's custom UI: answer a decision (into the dashboard's own
-  answer queue), message a worker, open a worker's window, pull request or item, and retire a worker after an explicit
+- **athena in Rex's command palette.** Three actions, built on Rex's custom UI: answer a decision (into the dashboard's own
+  answer queue), open a worker's window, pull request or item, and retire a worker after an explicit
   Retire. `athena palette install` adds one line to Rex's config, then `rex config reload`. Each action takes arguments in
   place of its questions, so `rex do` runs it unattended, and a question left unanswered does nothing and says why.
   See `docs/palette.md`.
