@@ -52,7 +52,7 @@ keep running.
 | `worker-plugin/` | The plugin each worker loads: a Claude Code mod that draws the worker's progress band. |
 | `pi-extension/` | `athena.ts`, the Pi extension a Pi worker loads with `-e`: its hooks, report gate and inbox. |
 | `menubar/` | The menu bar app, in Swift, built on the Mac by `menubar/build.sh`. |
-| `scripts/` | `test.sh` (the only way to run the tests), `smoke.sh` and `chaos-rex.py` (runs against a private Rex server), `scratch-state.py` (a sanitized copy of a state dir), `measure.sh` (timings of the hot paths), among others. |
+| `scripts/` | `test.sh` (the only way to run the tests), `smoke.sh` and `chaos-rex.py` (runs against a private Rex server), `scratch-state.py` (a sanitized copy of a state dir), `rex-app.py` (a stand-in Rex app that answers prompts, for smoke), `measure.sh` (timings of the hot paths), among others. |
 | `tests/` | The unit and contract tests, run in a sandbox with an isolated HOME and the fake backend. |
 | `docs/` | Longer pages on single parts, linked from the sections below. |
 
@@ -109,7 +109,7 @@ The capabilities, by what they are for:
   `trust`, `brief`, `profiles`, `sessions`.
 - **What the sessions say:** `hooks`, `report`, `rules`, `progress`, `limits`.
 - **Following work:** `watch`, `prs`, `follow`, `reviews`, `slack`.
-- **The human's view:** `status`, `items`, `dash/`, `board`, `flame/`, `menubar`.
+- **The human's view:** `status`, `items`, `dash/`, `board`, `flame/`, `menubar`, `palette/`.
 - **Keeping it running:** `doctor`, `services`, `install/`, `config`, `modules`.
 - **The Mac:** `workspaces`, `disk`, `heavy`.
 
@@ -415,6 +415,13 @@ transcripts that holds their shape and cost, never their text ([docs/flame.md](d
 **The board** (`athena board`, `athena/caps/board.py`) is a read-only panel in a block beside HQ: a row per worker and
 the tail of each busy worker's screen, redrawn from status. It is for a glance, never for typing.
 
+**The palette** (`athena/caps/palette/`) puts four athena actions in Rex's command palette: answer a decision, message a
+worker, open a worker's window, PR or item, and retire a worker. `palette.lua` is a Rex config file that asks the questions
+(`rex.ui.pick`, `rex.ui.input`). Everything else is athena's: `athena palette` lists what to offer, and an answer goes
+through the dashboard's own `take_action`, so it joins the answer queue above as a click would. A message goes through
+`athena send`, and a retire through `athena retire`. `athena palette install` adds one marked line to Rex's config,
+naming the Lua through `current` and the state dir it is for ([docs/palette.md](docs/palette.md)).
+
 ## Doctor and services
 
 Files: `athena/caps/doctor.py`, `athena/caps/services.py`.
@@ -652,7 +659,7 @@ Tests run only through `scripts/test.sh`, behind four walls:
    tool, a guarded path, the network or a foreign signal, and the harness fails any test whose log has an entry, even if
    the test swallowed the error.
 
-`scripts/smoke.sh` runs real Claudes through spawn, status, send, the report gate and retire on a private Rex server
+`scripts/smoke.sh` runs real Claudes through spawn, status, send, the report gate, retire and the palette's actions on a private Rex server
 and a scratch state dir. `scripts/chaos-rex.py` runs the [chaos catalogue](docs/chaos.md)'s cases that need real
 processes, on a private server.
 

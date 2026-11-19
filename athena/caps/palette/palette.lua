@@ -202,11 +202,17 @@ rex.action{
     end
     local opened = athena_json(title, { "palette", "open", target })
     if opened.focus ~= nil then
-      local _, err = rex.session.focus_window{ session_id = opened.focus.session_id, window_id = opened.focus.window_id }
+      -- Its window becomes its session's active one (a session this action isn't attached to until it asks), then the app
+      -- that asked shows that session.
+      local session = opened.focus.session_id
+      local _, err = rex.call("session.attach", { session_id = session })
+      if err == nil then
+        _, err = rex.call("session.focus_window", { session_id = session, window_id = opened.focus.window_id })
+      end
       if err ~= nil then
         fail(title, err)
       end
-      rex.client.queue("session.select", { session_id = opened.focus.session_id })
+      rex.client.queue("session.select", { session_id = session })
     end
     return done(opened.said)
   end,
