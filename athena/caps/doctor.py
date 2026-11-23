@@ -36,7 +36,19 @@ def _workers_hooks(ctx) -> list:
     """Rex runs the sessions: doctor never brings a worker back. It only looks that a running one's hooks said hello."""
     workers = [w for w in ledger.live() if ledger.managed(w) and w.get("block") and not ledger.is_retiring(w)]
     running = agents.running([w["name"] for w in workers])
-    return [check for w in workers if w["name"] in running for check in _said_hello(w)]
+    return [check for w in workers if w["name"] in running for check in _said_hello(w) + _reports_status(ctx, w)]
+
+
+def _reports_status(ctx, worker) -> list:
+    """A running Claude that never reports its status to Rex is read from its screen, which is only a guess."""
+    name = worker["name"]
+    try:
+        if not agents.unreported(worker, name, None) or ctx.backend.program_status(agents.place_of(worker)):
+            return []  # the age first: a Claude in its grace costs Rex no call
+    except BackendError:
+        return []  # slow isn't dead: the server check says so
+    return [caps.Check(f"status:{name}", False, "Claude reports no status to Rex (OSC 7501 probe likely failed), so its state is "
+                       "read from its screen; restart its Claude")]
 
 
 def _said_hello(worker) -> list:

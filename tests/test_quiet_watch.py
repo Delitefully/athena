@@ -267,7 +267,7 @@ class Delivery(Case):
             return {**old, "session": None}
 
         self.record_inbox("/nowhere/old.sock")  # the old HQ's: forgotten by the rotation, never used
-        with mock.patch.object(hq, "_wait_quiet", return_value=True), mock.patch.object(agents, "graceful_exit", return_value=True), \
+        with mock.patch.object(hq, "_wait_quiet", return_value=None), mock.patch.object(agents, "graceful_exit", return_value=True), \
                 mock.patch.object(hq, "_launch", side_effect=relaunched), mock.patch.object(agents, "wait", return_value={"state": "idle"}):
             hq._cycle(record, ["--name", "x"], hq.ROTATED.format(handoff="h.md"), "rotation", forget=True)
         self.wait_for(box)
