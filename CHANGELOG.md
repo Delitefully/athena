@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **HQ rotates when Rex has no status for it.** A Claude whose OSC 7501 probe got no reply (one started as Rex restarted)
+  never reports a program status, so its state read `starting` forever and `athena hq rotate` skipped every time. Past a
+  three-minute startup grace (`ATHENA_STATUS_GRACE`), a Claude with no status record is read from its screen instead.
+  Idle needs positive evidence: an empty input box between its two rules, and the nearest status row above it a finished
+  turn's (`✻ Brewed for 9m 13s`, or a recap). The nearest row a spinner, or "esc to interrupt" in the footer, is working.
+  Anything else (a dialog, a menu, typed text, no status row in view, a screen that can't be read) stays starting, and a
+  rotation acts on a screen-read idle only once it reads idle again 3 s later. A real record always wins, and a Pi is
+  never read this way. A skipped rotation now says why (`HQ state=starting (no program
+  status from Rex)`, `someone is typing in HQ's box`), and `athena doctor` flags HQ (`hq-status`) or a worker
+  (`status:<w>`) whose Claude reports nothing to Rex, and says to restart it.
 - **Retire after a squash merge.** `athena retire <w>` no longer needs `--force` for a worker whose PR was squash-merged:
   when its branch reads as unpushed, retire asks `gh` for the branch's PR, and a PR merged into the default branch at the
   worktree's very head counts as saved (`w retired; its commits are saved, merged as <sha> in #<n>`). A commit made after

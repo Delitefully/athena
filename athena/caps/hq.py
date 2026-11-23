@@ -32,6 +32,7 @@ ROTATED = ("Fresh HQ after `athena hq rotate`: load the athena skill, then read 
            "check `athena doctor` shows the watch running, re-create the fallback sweep cron with the sweep subagent brief, act on "
            "`athena ask queue`. Then tell me in at most five lines what needs me and what is live.")
 TYPING_WAIT = float(os.environ.get("ATHENA_TYPING_WAIT") or 120)
+SCREEN_CONFIRM = 3.0  # seconds between the two idle reads that a state read from the screen needs
 LINE = object()  # `--if-context-over` with no percent: rotate once HQ's context holds config hq_rotate_tokens
 BLOCKED_LIMIT = 600
 LAST_WORDS = 2000
@@ -245,17 +246,29 @@ def _record_for_agents(record) -> dict:
     return {**record, "name": name()}
 
 
-def _wait_quiet(backend, record, wait) -> bool:
+def _wait_quiet(backend, record, wait):
+    """None once HQ is idle with an empty box, within `wait`; else why it never was, as last seen."""
     deadline = time.monotonic() + wait
+    why = "HQ was not looked at"
     while time.monotonic() < deadline:
         try:
             now = agents.state(backend, record)
-            if now["state"] in agents.READY and not agents.typing(backend, record):
-                return True
-        except BackendError:
-            pass
+            if now["state"] not in agents.READY:
+                why = f"HQ state={now['state']}" + (f" ({now['msg']})" if now.get("msg") else "")
+            elif agents.typing(backend, record):
+                why = "someone is typing in HQ's box"
+            elif now.get("kind") != agents.UNREPORTED:
+                return None
+            else:  # read from its screen, a guess: idle again a few seconds on, or it isn't
+                time.sleep(SCREEN_CONFIRM)
+                again = agents.state(backend, record)
+                if again["state"] in agents.READY and not agents.typing(backend, record):
+                    return None
+                why = f"HQ state={again['state']}" + (f" ({again['msg']})" if again.get("msg") else "")
+        except BackendError as exc:
+            why = f"Rex did not answer ({exc})"
         time.sleep(1)
-    return False
+    return why
 
 
 def _cycle(record, args, prompt, why, forget=False, unattended=False) -> dict:
@@ -265,8 +278,9 @@ def _cycle(record, args, prompt, why, forget=False, unattended=False) -> dict:
     sandbox.require(UserError)
     ctx = caps.CTX
     target = _record_for_agents(record)
-    if not _wait_quiet(ctx.backend, target, TYPING_WAIT):
-        raise UserError(f"{why} skipped: HQ is busy or someone is typing in its box")
+    busy = _wait_quiet(ctx.backend, target, TYPING_WAIT)
+    if busy:
+        raise UserError(f"{why} skipped: {busy}")
     with store.locked("locks/hq.lock"):
         try:
             gone = agents.graceful_exit(ctx.backend, target, grace=15, stop_tasks=not unattended)
@@ -673,6 +687,9 @@ def _running_checks(ctx, record) -> list:
         out.append(caps.Check("hq-blocked", age < BLOCKED_LIMIT, f"blocked {int(age / 60)} min: {now.get('msg') or now.get('kind')}"))
     elif memory:
         store.path("run", "hq-blocked.json").unlink(missing_ok=True)
+    if now.get("kind") == agents.UNREPORTED:
+        out.append(caps.Check("hq-status", False, "Claude reports no status to Rex (OSC 7501 probe likely failed), so its state "
+                              "is read from its screen; restart it with `athena hq stop && athena hq`"))
     used = context_tokens(session)
     if rotate_due(used):
         asked = float(store.read_dict(_asked_file()).get("ts") or 0)
