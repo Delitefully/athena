@@ -24,8 +24,11 @@ _OPTION = re.compile(r"\d+\. ")
 STATUS_GRACE = float(os.environ.get("ATHENA_STATUS_GRACE") or 180)  # running this long with no program status: Rex never will hear one
 NO_STATUS = "no program status from Rex"
 UNREPORTED = "unreported"  # the kind of a state read from the screen, as Rex has no record for that Claude
-_BUSY = re.compile(r"^\s*[·✢✳✶✻✽*]\s*\S[^\n]*…|esc\s*to\s*interrupt", re.M)  # Claude's spinner row, or its footer's hint; Rex drops spaces
-BUSY_ROWS = 20  # the rows above the box that can hold the spinner, a todo list between them; busy words further up are scrollback
+_MOVE = re.compile(r"\x1b\[(\d*)C")  # Rex draws spaces as cursor moves
+_SPINNER = re.compile(r"[·✢✳✶✻✽*]\s*\S[^\n]*…")  # at the row's start: Claude's spinner row, its verb or todo text then …
+_DONE = re.compile(r"[·✢✳✶✻✽]\s*\S+\s+for\s+\d|※\s*recap")  # the row a finished turn leaves, "✻ Brewed for 9m 13s"; or a recap
+_HINT = re.compile(r"esc\s*to\s*interrupt")
+_RULE = re.compile(r"\s*─{3,}")
 
 
 class Refused(Exception):
@@ -267,7 +270,10 @@ def state(backend, record, name=None) -> dict:
     if STARTUP.search(backend.screen(place)):
         return {**out, "state": "blocked", "kind": "startup", "msg": "startup prompt"}
     if unreported(record, name, reported):
-        guessed = screen_state(backend.screen(place, styled=True))
+        try:
+            guessed = screen_state(backend.screen(place, styled=True))
+        except BackendError:
+            guessed = "starting"
         return {**out, "state": guessed, "kind": UNREPORTED, "msg": NO_STATUS + ("" if guessed == "starting" else "; read from its screen")}
     return {**out, "state": "starting"}
 
@@ -287,16 +293,23 @@ def unreported(record, name, reported) -> bool:
 
 
 def screen_state(styled_screen: str) -> str:
-    """What a Claude that reports nothing is doing, from its screen: working with its spinner or "esc to interrupt" by the box, idle
-    with an empty box and neither, else starting. Working is looked for first, since a working Claude's box is empty too."""
+    """What a Claude that reports nothing is doing, from its screen. Idle needs positive evidence, as rotation /exits an idle one:
+    its input box (a ❯ row between two rules) empty, and the nearest status row above the box, at any distance, a finished
+    turn's. Working: that row a spinner, or "esc to interrupt" in the footer below the box. Anything else (a dialog, a menu,
+    typed text, no status row in view) is starting."""
     rows = styled_screen.splitlines()
-    plain = [_ANY_ESC.sub("", row) for row in rows]
+    plain = [_ANY_ESC.sub("", _MOVE.sub(lambda m: " " * int(m.group(1) or 1), row)) for row in rows]
     box = next((at for at in range(len(plain) - 1, -1, -1) if plain[at].lstrip().startswith("❯")), None)
-    if box is None:
+    if box is None or box == 0 or box + 1 >= len(plain) or not (_RULE.match(plain[box - 1]) and _RULE.match(plain[box + 1])):
         return "starting"
-    if _BUSY.search("\n".join(plain[max(0, box - BUSY_ROWS):])):
+    if any(_HINT.search(row) for row in plain[box + 2:]):
         return "working"
-    return "idle" if box_text(styled_screen) == "" else "starting"
+    for row in reversed(plain[:box - 1]):
+        if _SPINNER.match(row):
+            return "working"
+        if _DONE.match(row):
+            return "idle" if box_text("\n".join(rows[:box + 1])) == "" else "starting"
+    return "starting"
 
 
 def _faint_after(params: str, faint: bool) -> bool:

@@ -32,6 +32,7 @@ ROTATED = ("Fresh HQ after `athena hq rotate`: load the athena skill, then read 
            "check `athena doctor` shows the watch running, re-create the fallback sweep cron with the sweep subagent brief, act on "
            "`athena ask queue`. Then tell me in at most five lines what needs me and what is live.")
 TYPING_WAIT = float(os.environ.get("ATHENA_TYPING_WAIT") or 120)
+SCREEN_CONFIRM = 3.0  # seconds between the two idle reads that a state read from the screen needs
 LINE = object()  # `--if-context-over` with no percent: rotate once HQ's context holds config hq_rotate_tokens
 BLOCKED_LIMIT = 600
 LAST_WORDS = 2000
@@ -256,8 +257,14 @@ def _wait_quiet(backend, record, wait):
                 why = f"HQ state={now['state']}" + (f" ({now['msg']})" if now.get("msg") else "")
             elif agents.typing(backend, record):
                 why = "someone is typing in HQ's box"
-            else:
+            elif now.get("kind") != agents.UNREPORTED:
                 return None
+            else:  # read from its screen, a guess: idle again a few seconds on, or it isn't
+                time.sleep(SCREEN_CONFIRM)
+                again = agents.state(backend, record)
+                if again["state"] in agents.READY and not agents.typing(backend, record):
+                    return None
+                why = f"HQ state={again['state']}" + (f" ({again['msg']})" if again.get("msg") else "")
         except BackendError as exc:
             why = f"Rex did not answer ({exc})"
         time.sleep(1)

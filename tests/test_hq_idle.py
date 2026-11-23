@@ -18,6 +18,21 @@ FOOTER_ONLY = f"\n{RULE}\n❯ \n{RULE}\n  Opus 5.5 · high\n⏵⏵automodeon (sh
 TYPED = f"✻ Brewed for 9m 13s\n\n{RULE}\n❯ half a thought\n{RULE}\n  Opus 5.5 · high\n"
 OLD_WORDS = "  I said esc to interrupt earlier, and\n· Thinking… too\n" + "\n" * 24  # far above the box: scrollback, not now
 NO_BOX = "Loading…\n"
+FOOT = "  Opus 5.5 · high\n  ⏵⏵ auto mode on (shift+tab to cycle)\n"  # a footer with no "esc to interrupt": cut off, or never there
+PERMISSION = (f"✻ Brewed for 9m 13s\n\n{RULE}\n Bash command\n   rm -rf build\n Do you want to proceed?\n ❯ 1. Yes\n"
+              "   2. Yes, and don't ask again\n   3. No, and tell Claude what to do differently (esc)\n")
+MENU = (f"✻ Brewed for 9m 13s\n\n{RULE}\n ☐ Approach\n\nWhich approach?\n\n❯ 1. Small\n     Keep it small\n  2. Wide\n"
+        "  3. Type something.\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n")
+BACKGROUND = f"✻ Brewed for 9m 13s\n\n{RULE}\n Background work is running\n ❯ 1. Exit and stop tasks\n   2. Cancel\n"
+OLD_BOX = f"❯ an older prompt of mine\n  ⎿  answered\n\n✻ Brewed for 9m 13s\n\n{RULE}\n Some dialog with no box\n   1. Go on\n"
+LONG_TODO = "✳ Running the tests… (2m 3s)\n" + "".join(f"  ◻ step {n} of the plan\n" for n in range(32)) + f"\n{RULE}\n❯ \n{RULE}\n{FOOT}"
+NO_DONE_ROW = f"⏺ Here is what I found.\n  Two things.\n\n{RULE}\n❯ \n{RULE}\n{FOOT}"
+QUOTED_HINT = f"✻ Brewed for 9m 13s\n\n{RULE}\n❯ \n{RULE}\n{FOOT}".replace("✻ Brewed", "⏺ It said esc to interrupt.\n\n✻ Brewed")
+FAINT, PLAIN, ORANGE = "\x1b[2m", "\x1b[0m", "\x1b[38;2;215;119;87m"
+STYLED_IDLE = (f"{ORANGE}✻{PLAIN} Brewed\x1b[1Cfor\x1b[1C9m\x1b[1C13s\n\n{RULE}\n❯\x1b[1C\x1b[7m \x1b[27m{FAINT}Try \"fix the tests\"{PLAIN}\n"
+               f"{RULE}\n{FOOT}")
+STYLED_WORKING = (f"{ORANGE}✶{PLAIN}\x1b[1CInfusing…\x1b[1C(3m\x1b[1C15s)\n\n{RULE}\n❯\x1b[1C\x1b[7m \x1b[27m{FAINT}Try \"x\"{PLAIN}\n"
+                  f"{RULE}\n{FOOT}")
 
 
 class Fallback(Case):
@@ -82,6 +97,44 @@ class State(Fallback):
             now = self.now()
             self.assertEqual((now["state"], now["kind"], now["msg"]), ("starting", "unreported", "no program status from Rex"), screen)
 
+    def test_never_idle_without_positive_evidence(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        for name, screen in (("permission prompt", PERMISSION), ("selection menu", MENU), ("background-work dialog", BACKGROUND),
+                             ("a dialog under an older ❯ row", OLD_BOX), ("typed text", TYPED), ("no done row above the box", NO_DONE_ROW)):
+            self.show(screen)
+            self.assertEqual(self.now()["state"], "starting", name)
+
+    def test_a_spinner_thirty_rows_above_the_box_with_no_footer_hint_is_working(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        self.show(LONG_TODO)
+        self.assertEqual(self.now()["state"], "working")
+
+    def test_the_footer_hint_counts_only_below_the_box(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        self.show(QUOTED_HINT)
+        self.assertEqual(self.now()["state"], "idle")
+
+    def test_a_styled_screen_with_a_faint_placeholder_and_a_coloured_spinner(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        self.show(STYLED_IDLE)
+        self.assertEqual(self.now()["state"], "idle")
+        self.show(STYLED_WORKING)
+        self.assertEqual(self.now()["state"], "working")
+
+    def test_a_screen_read_that_fails_or_is_empty_is_starting(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        self.show("")
+        self.assertEqual(self.now()["state"], "starting")
+        real = caps.CTX.backend.screen
+
+        def styled_fails(place, styled=False):
+            if styled:
+                raise BackendError("timeout", "rex did not answer")
+            return real(place)
+        self.show(IDLE)
+        with mock.patch.object(caps.CTX.backend, "screen", side_effect=styled_fails):
+            self.assertEqual(self.now()["state"], "starting")
+
     def test_no_record_within_the_grace_is_starting(self):
         self.started_ago(agents.STATUS_GRACE - 30)
         self.show(IDLE)
@@ -132,6 +185,21 @@ class Skip(Fallback):
 
     def test_the_skip_names_a_backend_that_did_not_answer(self):
         with mock.patch.object(agents, "state", side_effect=BackendError("timeout", "rex did not answer")):
+            self.assertIn("rotation skipped: Rex did not answer", self.cycle())
+
+    def test_a_screen_read_idle_needs_a_second_idle_read(self):
+        idle = {"state": "idle", "kind": agents.UNREPORTED, "msg": "no program status from Rex; read from its screen"}
+        working = {**idle, "state": "working"}
+        with mock.patch.object(hq, "SCREEN_CONFIRM", 0.0), mock.patch.object(agents, "typing", return_value=False):
+            with mock.patch.object(agents, "state", side_effect=[idle, working] * 50):
+                self.assertEqual(hq._wait_quiet(caps.CTX.backend, {}, 0.5),
+                                 "HQ state=working (no program status from Rex; read from its screen)")
+            with mock.patch.object(agents, "state", side_effect=[idle, idle]):
+                self.assertIsNone(hq._wait_quiet(caps.CTX.backend, {}, 5))
+
+    def test_a_failing_screen_read_never_raises_out_of_the_rotation(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        with mock.patch.object(caps.CTX.backend, "screen", side_effect=BackendError("timeout", "rex did not answer")):
             self.assertIn("rotation skipped: Rex did not answer", self.cycle())
 
     def test_a_quiet_hq_is_not_skipped(self):
