@@ -24,8 +24,8 @@ _OPTION = re.compile(r"\d+\. ")
 STATUS_GRACE = float(os.environ.get("ATHENA_STATUS_GRACE") or 180)  # running this long with no program status: Rex never will hear one
 NO_STATUS = "no program status from Rex"
 UNREPORTED = "unreported"  # the kind of a state read from the screen, as Rex has no record for that Claude
-_BUSY = re.compile(r"^\s*[·✢✳✶✻✽*]\s*\S+…|esc\s*to\s*interrupt", re.M)  # Claude's spinner row, or its footer's hint; Rex drops spaces
-BUSY_ROWS = 8  # the rows above the box that can hold the spinner: busy words further up are scrollback
+_BUSY = re.compile(r"^\s*[·✢✳✶✻✽*]\s*\S[^\n]*…|esc\s*to\s*interrupt", re.M)  # Claude's spinner row, or its footer's hint; Rex drops spaces
+BUSY_ROWS = 20  # the rows above the box that can hold the spinner, a todo list between them; busy words further up are scrollback
 
 
 class Refused(Exception):

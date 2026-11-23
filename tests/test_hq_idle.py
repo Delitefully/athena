@@ -16,7 +16,7 @@ IDLE = f"✻ Brewed for 9m 13s · done 3:14 PM\n\n{RULE}\n❯ \n{RULE}\n  Opus 5
 WORKING = f"· Infusing… (3m 15s · ↓ 8.1k tokens)\n\n{RULE}\n❯ \n{RULE}\n  Opus 5.5 · high\n  ⏵⏵ auto mode on · 1 shell · esc to interrupt\n"
 FOOTER_ONLY = f"\n{RULE}\n❯ \n{RULE}\n  Opus 5.5 · high\n⏵⏵automodeon (shift+tabtocycle)·esctointerrupt·←1agent\n"  # Rex draws spaces as cursor moves
 TYPED = f"✻ Brewed for 9m 13s\n\n{RULE}\n❯ half a thought\n{RULE}\n  Opus 5.5 · high\n"
-OLD_WORDS = "  I said esc to interrupt earlier, and · Thinking… too\n" + "\n" * 12  # far above the box: scrollback, not now
+OLD_WORDS = "  I said esc to interrupt earlier, and\n· Thinking… too\n" + "\n" * 24  # far above the box: scrollback, not now
 NO_BOX = "Loading…\n"
 
 
@@ -62,6 +62,12 @@ class State(Fallback):
     def test_esc_to_interrupt_in_the_footer_alone_is_working_even_with_its_spaces_gone(self):
         self.started_ago(agents.STATUS_GRACE + 5)
         self.show(FOOTER_ONLY)
+        self.assertEqual(self.now()["state"], "working")
+
+    def test_a_spinner_of_several_words_above_a_todo_list_is_working(self):
+        self.started_ago(agents.STATUS_GRACE + 5)
+        todos = "".join(f"  ◻ step {n} of the plan\n" for n in range(10))
+        self.show(f"✳ Running the tests… (2m 3s)\n{todos}\n{RULE}\n❯ \n{RULE}\n  Opus 5.5 · high\n  ⏵⏵ auto mode on\n")
         self.assertEqual(self.now()["state"], "working")
 
     def test_busy_words_far_up_in_scrollback_do_not_count(self):

@@ -680,7 +680,7 @@ def _running_checks(ctx, record) -> list:
         out.append(caps.Check("hq-blocked", age < BLOCKED_LIMIT, f"blocked {int(age / 60)} min: {now.get('msg') or now.get('kind')}"))
     elif memory:
         store.path("run", "hq-blocked.json").unlink(missing_ok=True)
-    if now["kind"] == agents.UNREPORTED:
+    if now.get("kind") == agents.UNREPORTED:
         out.append(caps.Check("hq-status", False, "Claude reports no status to Rex (OSC 7501 probe likely failed), so its state "
                               "is read from its screen; restart it with `athena hq stop && athena hq`"))
     used = context_tokens(session)
