@@ -88,7 +88,7 @@ class InstallFromACleanCheckout(_Checkout):
 
     def test_install_twice_then_uninstall(self):
         first = self.install("--services")
-        self.assertIn("Installed athena 1.0.0.", first)
+        self.assertIn(f"Installed athena {(ROOT / 'VERSION').read_text().strip()}.", first)
         version = self.athena("--version")
         self.assertEqual((version.returncode, version.stdout.strip()), (0, f"athena {(ROOT / 'VERSION').read_text().strip()}"))
         doctor = self.athena("doctor", "--json")
