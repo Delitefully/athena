@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import unittest
+from unittest import mock
 
 from harness import Case, ROOT, store
 
@@ -257,7 +258,8 @@ class RexBinary(Case):
     def test_no_rex_binary_in_config_means_the_resolved_default(self):
         os.environ.pop("ATHENA_BINARY", None)
         self.write_config(rex={})
-        self.assertEqual(config.rex("binary"), config.rex_binary())
+        with mock.patch.object(config, "rex_binary", return_value="/resolved/rex"):
+            self.assertEqual(config.rex("binary"), "/resolved/rex")
 
     def test_an_explicit_rex_binary_in_config_still_wins(self):
         os.environ.pop("ATHENA_BINARY", None)
