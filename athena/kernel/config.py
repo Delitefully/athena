@@ -28,9 +28,12 @@ DEFAULTS = {
 }
 ENV = {"projects_dir": "ATHENA_HQ_CWD", "worktree_root": "ATHENA_WORKTREE_ROOT", "model": "ATHENA_MODEL",
        "effort": "ATHENA_EFFORT"}
+# Rex's Nov 2026 update dropped "Beta" from its app's name; an install not yet updated keeps the old one, second here.
+REX_APPS = ("/Applications/Rex.app", "/Applications/Rex Beta.app")
+REX_SERVER = "Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
 REX_DEFAULTS = {
     "backend": "rex",
-    "binary": "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex",
+    "binary": None,  # rex_binary(), resolved when read
     "server": None,
     "size": "160x48",
     "caps": None,
@@ -157,7 +160,15 @@ def rex(key):
         value = os.environ[env]
         return int(value) if isinstance(REX_DEFAULTS.get(key), int) else value
     value = (load().get("rex") or {}).get(key)
+    if value is None and key == "binary":
+        return rex_binary()
     return REX_DEFAULTS.get(key) if value is None else value
+
+
+def rex_binary(apps=REX_APPS) -> str:
+    """The Rex server in the first of `apps` that has one. None has: the first's, so doctor names where it looked."""
+    servers = [os.path.join(app, REX_SERVER) for app in apps]
+    return next((server for server in servers if os.path.exists(server)), servers[0])
 
 
 def hq_name() -> str:

@@ -226,5 +226,44 @@ class ScratchCopy(Case):
         self.assertNotEqual(out.returncode, 0)
 
 
+class RexBinary(Case):
+    """Rex's update dropped "Beta" from its app's name: the default finds either, the new name first. Never the real /Applications."""
+
+    def apps(self, *present):
+        apps = (self.tmp / "Applications" / "Rex.app", self.tmp / "Applications" / "Rex Beta.app")
+        for app in apps:
+            if app.name in present:
+                server = app / config.REX_SERVER
+                server.parent.mkdir(parents=True)
+                server.write_text("")
+        return tuple(map(str, apps)), [str(app / config.REX_SERVER) for app in apps]
+
+    def test_the_default_apps_are_the_new_name_then_the_old(self):
+        self.assertEqual(config.REX_APPS, ("/Applications/Rex.app", "/Applications/Rex Beta.app"))
+        self.assertEqual(config.REX_SERVER, "Contents/Helpers/Rex Server.rex/Contents/MacOS/rex")
+
+    def test_rex_app_wins_when_both_are_there(self):
+        apps, servers = self.apps("Rex.app", "Rex Beta.app")
+        self.assertEqual(config.rex_binary(apps), servers[0])
+
+    def test_rex_beta_app_when_only_it_is_there(self):
+        apps, servers = self.apps("Rex Beta.app")
+        self.assertEqual(config.rex_binary(apps), servers[1])
+
+    def test_neither_names_the_new_path_so_doctor_says_where_it_looked(self):
+        apps, servers = self.apps()
+        self.assertEqual(config.rex_binary(apps), servers[0])
+
+    def test_no_rex_binary_in_config_means_the_resolved_default(self):
+        os.environ.pop("ATHENA_BINARY", None)
+        self.write_config(rex={})
+        self.assertEqual(config.rex("binary"), config.rex_binary())
+
+    def test_an_explicit_rex_binary_in_config_still_wins(self):
+        os.environ.pop("ATHENA_BINARY", None)
+        self.write_config(rex={"binary": "/somewhere/else/rex"})
+        self.assertEqual(config.rex("binary"), "/somewhere/else/rex")
+
+
 if __name__ == "__main__":
     unittest.main()

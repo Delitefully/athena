@@ -39,12 +39,15 @@ live="(subpath \"$home/.local/state/athena\") (subpath \"$home/Library/Applicati
 for snapshot in "$home/.local/state"/athena.bak-*; do # snapshots of live state, an upgrade's or by hand
 	[ -e "$snapshot" ] && live="$live (subpath \"$snapshot\")"
 done
+# Every name the Rex app has had (athena/kernel/config.py REX_APPS): the sandbox refuses each one's binaries.
+rex_apps=$(cd "$here" && /usr/bin/python3 -B -c 'from athena.kernel import config; print(" ".join("(subpath \"%s\")" % app for app in config.REX_APPS))') &&
+	[ -n "$rex_apps" ] || { echo "test.sh: could not read REX_APPS from athena/kernel/config.py" >&2; exit 1; }
 profile="(version 1)
 (allow default)
 (deny file-write* (subpath \"$home\") (subpath \"/Volumes\") (literal \"$probe_write\"))
 (allow file-write* (subpath \"$here\") (subpath \"$run\"))
 (deny file-read-data (subpath \"/Volumes\") (subpath \"$home/.claude\") (literal \"$home/.claude.json\") $live)
-(deny process-exec $tools (literal \"$probe_exec\") (subpath \"/Applications/Rex Beta.app\") (subpath \"$home/.local/share/claude\") (literal \"$home/.local/bin/claude\"))
+(deny process-exec $tools (literal \"$probe_exec\") $rex_apps (subpath \"$home/.local/share/claude\") (literal \"$home/.local/bin/claude\"))
 (deny signal)
 (allow signal (target same-sandbox))
 (deny network-outbound)
