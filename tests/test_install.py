@@ -31,7 +31,7 @@ class Install(Case):
 
     def test_fresh_install_runs_from_anywhere_and_writes_nothing_in_claude(self):
         out = self.run_install()
-        self.assertIn("Installed athena 1.0.0.", out)
+        self.assertIn(f"Installed athena {(ROOT / 'VERSION').read_text().strip()}.", out)
         done = subprocess.run([str(self.bin), "--help"], capture_output=True, text=True, cwd=self.tmp, env=os.environ)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("Commands:", done.stdout)

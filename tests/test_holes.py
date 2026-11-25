@@ -1718,7 +1718,9 @@ class SmokeRefusal(Case):
                               cwd=str(self.tmp))
 
     def test_a_live_path_that_does_not_exist_yet_is_refused(self):
-        missing = lab.LIVE_PATHS[2]
+        # Built here: LIVE_PATHS[2] was there only on a machine with a .bak snapshot of live state.
+        missing = os.path.join(lab.LIVE_PATHS[1], f"not-made-yet-{os.getpid()}")
+        self.assertFalse(os.path.exists(missing))
         for spelled in (missing, missing.upper(), os.path.join(missing, "workers")):
             out = self._smoke("--state-dir", spelled, "--server", "unix:///nonexistent/s.sock")
             self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
