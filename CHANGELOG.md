@@ -8,6 +8,11 @@
   worktree's very head counts as saved (`w retired; its commits are saved, merged as <sha> in #<n>`). A commit made after
   the merge still refuses, and is named; so does a rewritten head, and anything uncommitted or git-ignored, as before. The
   head is still backed up under `refs/athena-backup/<w>/`. See `docs/workspaces.md`.
+- **athena in Rex's command palette.** Three actions, built on Rex's custom UI: answer a decision (into the dashboard's own
+  answer queue), open a worker's window, pull request or item, and retire a worker after an explicit
+  Retire. `athena palette install` adds one line to Rex's config, then `rex config reload`. Each action takes arguments in
+  place of its questions, so `rex do` runs it unattended, and a question left unanswered does nothing and says why.
+  See `docs/palette.md`.
 - **Quiet watch.** What athena says to HQ (the watch's wakes, doctor's rotation ask, HQ's routine and a rotated or
   revived HQ's first prompt) goes to HQ's cross-session inbox, a dim `› Message from @athena-watch: …` line, instead of
   being typed into its input box. A half-typed prompt stays put, and a busy HQ reads it between tool calls. Typing stays
