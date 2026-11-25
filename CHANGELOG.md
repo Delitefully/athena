@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.1
 
+- **Rex.app.** Rex renamed its app to Rex.app; athena finds it again (falls back to Rex Beta.app).
 - **Retire after a squash merge.** `athena retire <w>` no longer needs `--force` for a worker whose PR was squash-merged:
   when its branch reads as unpushed, retire asks `gh` for the branch's PR, and a PR merged into the default branch at the
   worktree's very head counts as saved (`w retired; its commits are saved, merged as <sha> in #<n>`). A commit made after

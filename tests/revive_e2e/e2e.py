@@ -19,7 +19,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CHECKOUT = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else HERE.parent.parent
-REX = "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
+sys.path.insert(0, str(HERE.parent.parent))
+from athena.kernel import config  # noqa: E402
+
+REX = config.rex_binary()
 IDS = {"athena": "33333333-3333-4333-8333-3333333333a0", "w1": "33333333-3333-4333-8333-3333333333a1",
        "w2": "33333333-3333-4333-8333-3333333333a2", "busy": "33333333-3333-4333-8333-3333333333a3"}
 SCRATCH = Path(f"/private/tmp/claude-{os.getuid()}")

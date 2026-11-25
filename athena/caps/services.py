@@ -66,7 +66,7 @@ def label(service) -> str:
 def _defaults() -> dict:
     """What each carried variable means unset: one set to this says nothing, so it is left out of the plist."""
     return {"ATHENA_HQ": "athena", "ATHENA_DASH_PORT": str(config.REX_DEFAULTS["dash_port"]),
-            "ATHENA_BINARY": str(config.REX_DEFAULTS["binary"]), "ATHENA_CONFIG": str(store.state_dir() / "config.json")}
+            "ATHENA_BINARY": config.rex_binary(), "ATHENA_CONFIG": str(store.state_dir() / "config.json")}
 
 
 def _written_env(target) -> dict:

@@ -20,9 +20,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
-from athena.kernel import lab  # noqa: E402
+from athena.kernel import config, lab  # noqa: E402
 
-REX = os.environ.get("ATHENA_BINARY") or "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
+REX = os.environ.get("ATHENA_BINARY") or config.rex_binary()
 AR = str(HERE / "bin" / "athena")
 HAIKU = "claude-haiku-5-5"
 CLAUDE_ENV = ("HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "TERM")

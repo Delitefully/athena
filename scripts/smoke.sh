@@ -11,7 +11,7 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 ar="$here/bin/athena"
-rex_bin=${ATHENA_BINARY:-"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"}
+rex_bin=${ATHENA_BINARY:-$(cd "$here" && /usr/bin/python3 -B -c 'from athena.kernel import config; print(config.rex_binary())')}
 keep=0
 given_state=""
 given_server=""
